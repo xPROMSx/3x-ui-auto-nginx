@@ -1,103 +1,41 @@
-# x-ui-pro-refactor
+# 3x-ui Stack
 
-Refactored single-file installer for 3x-ui VPN panel (based on x-ui-pro).
+Maintained deployment stack derived from [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), using the panel from [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Development is independent; do not synchronize upstream automatically.
 
 ## Repository structure
 
-```
-x-ui-latest.sh          — main installer script (single file, run remotely)
-x-ui-patch.sh           — apply current features to an existing install (no DB changes)
-x-ui-adguard.sh         — optional: AdGuard Home on the panel domain (DoH at
-                          /dns-query, admin UI at random /adg-<rand>/ path)
-assets/
-  backup/x-ui-backup.sh — backup / restore / list script
-  clash/clash.yaml      — Clash/Mihomo subscription template (served by UA sniffing)
-  diagnostics/
-    index.html          — network diagnostics page (speed test, MTR, test files)
-    mtr-backend.py      — localhost-only backend: MTR, LibreSpeed endpoints, clash.yaml generator
-    librespeed/         — vendored LibreSpeed engine (speedtest.js, speedtest_worker.js, LGPL)
-  fake-sites/
-    site-01 … site-50/  — static HTML cover pages (index.html per site)
-```
+- `x-ui-latest.sh`: fresh installer/rebuild; stops and removes the previous installation and panel database.
+- `x-ui-patch.sh`: reads an existing database and regenerates managed nginx/web assets; no database changes. Back up first and validate generated configuration on a disposable host.
+- `x-ui-adguard.sh`: optional AdGuard Home integration. Reapply its nginx snippet after installer/patch regeneration when needed.
+- `assets/backup/x-ui-backup.sh`: Backup/Restore v2, same OS ID/version and architecture.
+- `assets/clash/clash.yaml`: Clash/Mihomo subscription template.
+- `assets/diagnostics/`: MTR backend, diagnostics page and vendored LibreSpeed files.
+- `assets/fake-sites/`: cover pages.
+- `tests/test_personal_xhttp.py`: complete current transport, nginx security, firewall and panel-version regression suite.
+- `tests/test_personal_backup.py`: complete current Backup/Restore regression suite.
+- `.github/workflows/stack-xhttp.yml` and `stack-backup.yml`: PR/push validation on `main`; manual dispatch available.
+- `README.md` and `README_EN.md`: Russian/English user documentation.
+- `CONTRIBUTING.md`: development, checks, protection and emergency recovery.
 
-Scripts download assets at install time from this repo's raw GitHub URL
-(`https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/...`) — changes take
-effect on servers only after push to `main`.
+## Runtime sources and compatibility
 
-## What x-ui-latest.sh does
+Canonical asset base: `https://raw.githubusercontent.com/xPROMSx/3x-ui-stack/main`.
+Installer and patch must use this same `GITHUB_RAW`; panel/CLI releases still come from MHSanaei/3x-ui. Keep upstream attribution and third-party release references.
 
-1. Checks OS (Ubuntu 24.04/26.04, Debian 12/13) and rejects QEMU-emulated CPUs
-2. Parses CLI arguments (`-install n` to skip package install — default `y`, `-subdomain`, `-reality_domain`, `-auto_domain y`, `-version <ver>`, `-uninstall y`)
-3. Validates domains (panel ≠ REALITY), then stops/cleans any previous install
-4. Installs packages (`install_packages`) — nginx-full, certbot, sqlite3, ufw, mtr, python3 …
-5. Obtains Let's Encrypt certs via certbot standalone (`get_ssl_certs`) — panel + reality domains
-6. Installs 3x-ui panel from MHSanaei/3x-ui latest release (`install_panel`)
-7. Configures nginx (`configure_nginx`) — SNI stream (443 → reality:8443 / panel:7443),
-   per-domain vhosts, shared includes snippet, rate-limit zones
-8. Pushes all settings and inbounds into x-ui.db (`configure_xui_db`).
-   Share-link endpoints use the `hosts` table (supersedes legacy `externalProxy`
-   arrays in stream_settings): one host per inbound — REALITY gets
-   `security=same`, the rest front through nginx :443 with `security=tls`,
-   fingerprint firefox
-9. Installs Clash subscription template (`install_clash_sub`) → `/var/www/subpage/clash.yaml.tpl`;
-   Clash/Mihomo user agents get generated clash.yaml, `?provider=1` bypasses it
-10. Downloads a random fake cover site (`install_fake_site`) → `/var/www/html/`
-11. Installs network diagnostics (`install_diagnostics`) → `/var/www/diagnostics/` +
-    `mtr-backend` systemd service (hardened, dedicated user, localhost-only).
-    Access is gated by the 3x-ui panel session via an nginx SSO bridge at
-    `/<panel_path>/diag`: auth_request validates the session against
-    `GET <basePath>/panel/` (with X-Requested-With → 401 instead of a login
-    redirect), then issues a path-scoped `diag_key` cookie and redirects to the
-    diag page. Hitting the diag path directly without the cookie 302-bounces
-    through that bridge, so a bookmarked diag link "just works" once logged into
-    the panel (API/asset sub-locations stay 404 without the cookie). The 3x-ui
-    session cookie is Path-scoped to the panel base path, which is why the bridge
-    must live under the panel path
-12. Tunes kernel/BBR (`tune_system`)
-13. Sets up cron (`setup_cron`) — daily x-ui restart + nginx reload; monthly certbot renew
-    with pre/post hooks stopping/starting nginx (certs are standalone-issued)
-14. Configures UFW (`setup_firewall`) — 22/80/443 tcp, 443 udp
-15. Prints panel URL + credentials (`show_results`)
+Do not rename historical filesystem paths `/usr/local/lib/3x-ui-pro` or `/etc/sysctl.d/99-3x-ui-pro.conf` without a separate backup-compatible migration. Test filenames/classes and archived `personal-v*` releases are historical identifiers.
 
-## Speed test (LibreSpeed)
+## Architecture
 
-Upload over HTTP/2 is throttled per-stream by the h2 flow-control window, so a
-single big POST measures ~4x low. The diagnostics page uses the vendored
-LibreSpeed engine: parallel streams, XHR-progress measurement, no telemetry, no
-database. h2 must stay enabled on the vhosts — trojan-gRPC needs it. Endpoints:
-download = static `testfiles/test-100m.bin`; upload = `api/st/up` (Python sink,
-`proxy_request_buffering off`); ping = `api/st/ping` (nginx `return 200`);
-IP = `api/st/getip`. Speedtest locations use `limit_conn`, not `limit_req`
-(the engine fires many requests).
+The installer creates REALITY/TCP, XHTTP stream-up over a Unix socket, Hysteria2/UDP, WebSocket and Trojan gRPC inbounds. nginx routes public TCP 443 by SNI to REALITY on 8443 or the panel TLS vhost on 7443. The REALITY target uses 9443. Hysteria2 uses UDP 443.
 
-## Inbounds created
+WS and Trojan gRPC routes must use known paths and fixed backend ports. Never restore variable `/<port>/...` proxying. Diagnostics use panel-session authentication and a hardened localhost backend. Active UFW policy is preserved; enabling inactive UFW requires successful SSH-port discovery.
 
-| Protocol | Port           | Transport      |
-|----------|----------------|----------------|
-| vless    | 8443           | REALITY / TCP  |
-| vless    | `$ws_port`     | WebSocket      |
-| vless    | UDS socket     | XHTTP (gRPC)   |
-| trojan   | `$trojan_port` | gRPC           |
+## Validation and changes
 
-## Running
+Read actual code before making claims. Run both complete suites in the Ubuntu CI environment with nginx and SQLite installed. Never execute the destructive installer on the development machine. See CONTRIBUTING.md for exact commands.
 
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-latest.sh) \
-  -subdomain panel.example.com -reality_domain r.example.com
-```
+Use feature branches and PRs to `main`. Preserve `personal`, old branches, tags and releases until the maintainer completes the final migration audit. Add no new license covering inherited code.
 
-Patch an existing install (re-reads ports/paths from x-ui.db and nginx):
+## Companion project
 
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-patch.sh)
-```
-
-Add AdGuard Home on the panel domain (standalone, re-run safe, `-uninstall y`
-to remove). AGH binds localhost only; nginx bridges `/dns-query` (DoH,
-`allow_unencrypted_doh`) and a random `/adg-<rand>/` admin path via
-`snippets/adguard.conf` included in the panel vhost. Installer/patch
-regenerate the vhost and drop that include — re-run this script after them:
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/mozaroc/3x-ui-pro/main/x-ui-adguard.sh)
-```
+[Telemt WEB Manager](https://github.com/xPROMSx/telemt-web-manager) complements the stack with Telemt WEB proxy installation and management. Keep its prominent, relevant README block; do not imply automatic installation or port-conflict-free coexistence.
