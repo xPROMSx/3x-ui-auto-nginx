@@ -1,4 +1,4 @@
-# 3x-ui Stack
+# 3x-ui Auto Nginx
 
 Maintained deployment stack derived from [mozaroc/3x-ui-pro](https://github.com/mozaroc/3x-ui-pro), using the panel from [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Development is independent; do not synchronize upstream automatically.
 
@@ -19,7 +19,7 @@ Maintained deployment stack derived from [mozaroc/3x-ui-pro](https://github.com/
 
 ## Runtime sources and compatibility
 
-Canonical asset base: `https://raw.githubusercontent.com/xPROMSx/3x-ui-stack/main`.
+Canonical asset base: `https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main`.
 Installer and patch must use this same `GITHUB_RAW`; panel/CLI releases still come from MHSanaei/3x-ui. Keep upstream attribution and third-party release references.
 
 Do not rename historical filesystem paths `/usr/local/lib/3x-ui-pro` or `/etc/sysctl.d/99-3x-ui-pro.conf` without a separate backup-compatible migration. Test filenames/classes and archived `personal-v*` releases are historical identifiers.
@@ -34,7 +34,7 @@ WS and Trojan gRPC routes must use known paths and fixed backend ports. Never re
 
 Read actual code before making claims. Run both complete suites in the Ubuntu CI environment with nginx and SQLite installed. Never execute the destructive installer on the development machine. See CONTRIBUTING.md for exact commands.
 
-Use feature branches and PRs to `main`. Preserve `personal`, old branches, tags and releases until the maintainer completes the final migration audit. Add no new license covering inherited code.
+Use feature branches and PRs to `main`. Preserve `personal`, historical branches, tags and releases. Their removal is outside routine maintenance. Add no new license covering inherited code.
 
 ## Companion project
 
