@@ -7,7 +7,7 @@ Maintained deployment stack derived from [mozaroc/3x-ui-pro](https://github.com/
 - `x-ui-latest.sh`: fresh installer/rebuild; stops and removes the previous installation and panel database.
 - `x-ui-patch.sh`: reads an existing database and regenerates managed nginx/web assets; no database changes. Back up first and validate generated configuration on a disposable host.
 - `x-ui-adguard.sh`: optional AdGuard Home integration. Reapply its nginx snippet after installer/patch regeneration when needed.
-- `assets/backup/x-ui-backup.sh`: Backup/Restore v2, same OS ID/version and architecture.
+- `assets/backup/x-ui-backup.sh`: Backup/Restore v3, same OS ID/version and architecture.
 - `assets/clash/clash.yaml`: Clash/Mihomo subscription template.
 - `assets/diagnostics/`: MTR backend, diagnostics page and vendored LibreSpeed files.
 - `assets/fake-sites/`: cover pages.
