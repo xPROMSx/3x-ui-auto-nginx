@@ -38,4 +38,4 @@ Use feature branches and PRs to `main`. Preserve `personal`, historical branches
 
 ## Companion project
 
-[Telemt WEB Manager](https://github.com/xPROMSx/telemt-web-manager) complements the stack with Telemt WEB proxy installation and management. Keep its prominent, relevant README block; do not imply automatic installation or port-conflict-free coexistence.
+[Telegram Web Proxy Manager](https://github.com/xPROMSx/telegram-web-proxy-manager) complements the stack with Telemt WEB proxy installation and management. Keep its prominent, relevant README block; do not imply automatic installation or port-conflict-free coexistence.
