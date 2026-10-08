@@ -34,7 +34,7 @@ Read actual code before making claims. Run canonical completeness and all applic
 
 Required GitHub check contexts are `Stack XHTTP and security`, `Stack Backup and restore`, `Real services (ubuntu-24.04)` and `Real services (ubuntu-26.04)`. Preserve these names; branch protection depends on them.
 
-Use feature branches and PRs to `main`. Preserve `personal`, historical branches, tags and releases. Their removal is outside routine maintenance. Add no new license covering inherited code.
+Use feature branches and PRs to `main`. Preserve `personal`, historical branches, tags and releases. Their removal is outside routine maintenance. The maintainer has adopted `GPL-3.0-only` for original xPROMSx developments and changes; see `LICENSE` and `THIRD_PARTY_NOTICES.md`. Preserve previous authors' rights and the documented unresolved status of inherited material; do not claim repository-wide GPL clearance.
 
 ## Companion project
 
