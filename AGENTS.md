@@ -8,7 +8,7 @@ This file is the canonical repository guidance for Codex.
 - Do not force-push or delete protected/history branches as part of routine work.
 - The repository remains a fork of `mozaroc/3x-ui-pro`, but upstream is reference-only; do not auto-sync it.
 - Preserve attribution to `mozaroc/3x-ui-pro` and `MHSanaei/3x-ui`.
-- Do not add a new repository-wide license for inherited code without a separate maintainer decision.
+- The maintainer has adopted `GPL-3.0-only` for original xPROMSx developments and changes. See `LICENSE` and `THIRD_PARTY_NOTICES.md` for the partial scope; preserve previous authors' rights and do not claim inherited material has been relicensed.
 
 ## Critical compatibility
 
