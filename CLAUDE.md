@@ -5,22 +5,20 @@ Maintained deployment stack derived from [mozaroc/3x-ui-pro](https://github.com/
 ## Repository structure
 
 - `x-ui-latest.sh`: fresh installer/rebuild; stops and removes the previous installation and panel database.
-- `x-ui-patch.sh`: reads an existing database and regenerates managed nginx/web assets; no database changes. Back up first and validate generated configuration on a disposable host.
-- `x-ui-adguard.sh`: optional AdGuard Home integration. Reapply its nginx snippet after installer/patch regeneration when needed.
+- `assets/adguard/managed.sh`: active managed AdGuard Home component for the integrated installer and Backup/Restore.
 - `assets/backup/x-ui-backup.sh`: Backup/Restore v3, same OS ID/version and architecture.
 - `assets/clash/clash.yaml`: Clash/Mihomo subscription template.
 - `assets/diagnostics/`: MTR backend, diagnostics page and vendored LibreSpeed files.
 - `assets/fake-sites/`: cover pages.
-- `tests/test_personal_xhttp.py`: complete current transport, nginx security, firewall and panel-version regression suite.
-- `tests/test_personal_backup.py`: complete current Backup/Restore regression suite.
-- `.github/workflows/stack-xhttp.yml` and `stack-backup.yml`: PR/push validation on `main`; manual dispatch available.
+- `tests/run_ci.py`: canonical runner for nonroot, root, integration and services suites; see CONTRIBUTING.md for privilege contexts and commands.
+- `.github/workflows/stack-xhttp.yml`, `stack-backup.yml` and `stack-services.yml`: PR/push validation on `main`; manual dispatch available.
 - `README.md` and `README_EN.md`: Russian/English user documentation.
 - `CONTRIBUTING.md`: development, checks, protection and emergency recovery.
 
 ## Runtime sources and compatibility
 
 Canonical asset base: `https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main`.
-Installer and patch must use this same `GITHUB_RAW`; panel/CLI releases still come from MHSanaei/3x-ui. Keep upstream attribution and third-party release references.
+The installer uses `GITHUB_RAW` for project-owned assets; panel/CLI releases still come from MHSanaei/3x-ui. Keep upstream attribution and third-party release references.
 
 Do not rename historical filesystem paths `/usr/local/lib/3x-ui-pro` or `/etc/sysctl.d/99-3x-ui-pro.conf` without a separate backup-compatible migration. Test filenames/classes and archived `personal-v*` releases are historical identifiers.
 
@@ -32,7 +30,9 @@ WS and Trojan gRPC routes must use known paths and fixed backend ports. Never re
 
 ## Validation and changes
 
-Read actual code before making claims. Run both complete suites in the Ubuntu CI environment with nginx and SQLite installed. Never execute the destructive installer on the development machine. See CONTRIBUTING.md for exact commands.
+Read actual code before making claims. Run canonical completeness and all applicable suites in the Ubuntu CI environment, preserving their root/non-root privilege contexts. Check all tracked shell scripts with Bash syntax and ShellCheck error-only. Never execute the destructive installer on the development machine. See CONTRIBUTING.md for exact commands.
+
+Required GitHub check contexts are `Stack XHTTP and security`, `Stack Backup and restore`, `Real services (ubuntu-24.04)` and `Real services (ubuntu-26.04)`. Preserve these names; branch protection depends on them.
 
 Use feature branches and PRs to `main`. Preserve `personal`, historical branches, tags and releases. Their removal is outside routine maintenance. Add no new license covering inherited code.
 
