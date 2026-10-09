@@ -38,6 +38,6 @@ Do not rename those job contexts casually because branch protection depends on t
 
 ## Documentation
 
-Keep `README.md` and `README_EN.md` semantically aligned. README should stay user-first: simple installation and product value first, technical internals below.
+Use `README_RU.md` as the maintainer-reviewed Russian source of truth for product wording and claims. GitHub's default `README.md` is the English adaptation. Keep all seven full translations (`README.md`, `README_RU.md`, `README_AR.md`, `README_FA.md`, `README_ZH_CN.md`, `README_ES.md`, `README_TR.md`) semantically consistent. Preserve exact commands, version/OS requirements, destructive-reinstall warnings, backup/recovery instructions, subscriptions, and licensing attribution; localize prose naturally rather than literally. Keep `README_EN.md` as a small compatibility pointer for existing links. Readmes remain user-first: benefits and installation before technical details.
 
 `CLAUDE.md` is retained for compatibility with other tooling, but Codex should treat this `AGENTS.md` plus `CONTRIBUTING.md` as the primary working instructions.
