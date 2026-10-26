@@ -116,6 +116,8 @@ if name == 'systemctl':
         sys.exit(0 if active else 3)
     if command == 'show' and service == 'AdGuardHome':
         print(str(root / 'etc/systemd/system/AdGuardHome.service') if 'FragmentPath' in ' '.join(args) else '12345')
+    if command == 'show' and service == 'x-ui' and 'MainPID' in args:
+        print('12346' if services.get(service) == 'active' else '0')
     if command == 'disable':
         enabled[service] = False; enabled_path.write_text(json.dumps(enabled))
     if command == 'cat':
@@ -147,6 +149,14 @@ if name == 'systemctl':
                 (root / 'etc/x-ui/x-ui.db').write_bytes(b'corrupt')
 elif name == 'ss':
     services = json.loads((root/'services.json').read_text())
+    if args == ['-H', '-lntp']:
+        if services.get('x-ui') == 'active' and os.environ.get('PANEL_LISTENER') != 'missing':
+            import sqlite3
+            with sqlite3.connect(root/'etc/x-ui/x-ui.db') as db:
+                port = db.execute("SELECT value FROM settings WHERE key='webPort'").fetchone()[0]
+            pid = '54321' if os.environ.get('PANEL_LISTENER') == 'foreign' else '12346'
+            print(f'LISTEN 0 128 127.0.0.1:{port} 0.0.0.0:* users:(("x-ui",pid={pid},fd=7))')
+        sys.exit(0)
     if services.get('x-ui') == 'active':
         broken = os.environ.get('DEAD_XRAY') or (os.environ.get('FAIL_INCOMING_XRAY') and
                     (root/'var/www/html/recovery-marker').read_text() == 'incoming')
@@ -753,7 +763,11 @@ class PersonalBackup(unittest.TestCase):
                         self.assertEqual(restored.get(name,'inactive'),'inactive' if state=='failed' else state)
                     self.assertEqual(json.loads((f.root/'enabled.json').read_text()),flags)
                     if active!='active':self.assertNotIn(['systemctl','start',service],f.commands())
-                    self.assertFalse(any(c[0] in ('curl','ss') for c in f.commands()))
+                    self.assertFalse(any(c[0]=='curl' for c in f.commands()))
+                    # Only an active panel's configured web listener is required;
+                    # stopped services and user-modified Xray topology stay valid.
+                    self.assertEqual([c for c in f.commands() if c[0]=='ss'],
+                        [['ss','-H','-lntp']] if states['x-ui']=='active' else [])
                     with sqlite3.connect(f.path('/etc/x-ui/x-ui.db')) as db:
                         self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0],'ok')
                         self.assertEqual({name:db.execute('SELECT * FROM "'+name+'" ORDER BY rowid').fetchall()
@@ -1193,7 +1207,8 @@ class PersonalBackup(unittest.TestCase):
                     self.assertEqual(db.execute('PRAGMA quick_check').fetchone()[0],'ok')
                     self.assertEqual(db.execute('SELECT id,enable,settings,stream_settings FROM inbounds ORDER BY id').fetchall(),expected)
                 self.assertEqual(archive.read_bytes(),original)
-                self.assertFalse(any(c[0] in ('curl','ss') for c in f.commands()))
+                self.assertFalse(any(c[0]=='curl' for c in f.commands()))
+                self.assertTrue(all(c==['ss','-H','-lntp'] for c in f.commands() if c[0]=='ss'))
                 self.assertFalse(list(f.path('/var/backups/x-ui').glob('.rollback-*')))
 
     def test_backup_still_fails_for_corrupt_db_or_failed_service_resume(self):

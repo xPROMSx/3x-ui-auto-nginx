@@ -35,3 +35,32 @@ jobs:
           CI_JOB_STATUS: ${{ job.status }}
           CI_FRESH: 'true'
         run: python3 tests/ci_scope.py --summary
+
+  clean-restore:
+    name: Clean Restore (ubuntu-${{ matrix.version }})
+    runs-on: ubuntu-${{ matrix.version }}
+    # Source installation plus separate clean-target recovery/cold boot and
+    # Security faults cannot share the existing 45-minute Fresh job budget.
+    # Local TCG measurements exceed 60 minutes; see CONTRIBUTING's phase budget.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['24.04', '26.04']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Classify diff and validate documentation scope
+        id: scope
+        run: python3 tests/ci_scope.py
+      - name: Real menu Backup, clean Restore, clients and cold boot
+        if: steps.scope.outputs.docs_only != 'true'
+        run: bash tests/fresh/run.sh restore ubuntu:${{ matrix.version }}
+      - name: Report actual CI mode and result
+        if: always()
+        env:
+          CI_DOCS_ONLY: ${{ steps.scope.outputs.docs_only }}
+          CI_JOB_STATUS: ${{ job.status }}
+        run: python3 tests/ci_scope.py --summary

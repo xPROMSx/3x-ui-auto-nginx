@@ -12,6 +12,21 @@ class CleanRestore(unittest.TestCase):
         self.f=PersonalBackup('runTest');self.f.setUp();self.addCleanup(self.f.doCleanups)
         self.f.write('/etc/systemd/system/x-ui.service','[Service]\nExecStart='+str(self.f.path('/usr/local/x-ui/x-ui'))+'\n')
 
+    def test_active_panel_requires_its_own_configured_listener(self):
+        with sqlite3.connect(self.f.path('/etc/x-ui/x-ui.db')) as db:
+            db.execute("UPDATE settings SET value='39017' WHERE key='webPort'")
+        archive=self.distinguishable_archive()
+        healthy=self.f.run_tool('restore',archive)
+        self.assertEqual(healthy.returncode,0,healthy.stdout+healthy.stderr)
+        for listener in ('foreign','missing'):
+            with self.subTest(listener=listener):
+                self.f.write('/etc/x-ui/target-marker','previous target')
+                result=self.f.run_tool('restore',archive,PANEL_LISTENER=listener)
+                self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+                self.assertIn('panel backend listener',result.stderr)
+                self.assertEqual(self.f.path('/etc/x-ui/target-marker').read_text(),'previous target')
+                self.assertIn('Previous managed state/service states restored and checked',result.stderr)
+
     def test_expired_certificate_refuses_before_replacement(self):
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes,serialization

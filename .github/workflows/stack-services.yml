@@ -87,6 +87,16 @@ jobs:
             test_real_integration.RealIntegration.test_vision_deploy_hook_waits_for_delayed_xray \
             test_real_integration.RealIntegration.test_amneziawg_tcp_udp_and_panel_restart
 
+      - name: Staged Restore preflight with native Debian tools (partial recovery coverage)
+        if: steps.scope.outputs.docs_only != 'true'
+        run: |
+          docker run --rm \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/repo,readonly" \
+            -e PYTHONPATH=tests -e NGINX_BIN=/usr/sbin/nginx -w /repo xui-debian python3 -m unittest -v \
+            test_clean_restore.CleanRestore.test_expired_certificate_refuses_before_replacement \
+            test_clean_restore.CleanRestore.test_native_awg_empty_stream_survives_restore \
+            test_clean_restore.CleanRestore.test_preserve_default_and_one_archive_pass
+
       - name: Report actual CI mode and result
         if: always()
         env:

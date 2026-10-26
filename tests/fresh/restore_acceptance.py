@@ -32,6 +32,14 @@ def invoke(expression, name, timeout=180):
     (ROOT/(name+'.private.log')).write_bytes(result.stdout+result.stderr)
     if result.returncode:
         report[name+'_guest_exit']=result.returncode
+        if expression.startswith('restore_checks.restore('):
+            saved=host.ssh('cat /root/pilot/last-restore-outcome.json',15)
+            if saved.returncode==0:
+                outcome=json.loads(saved.stdout)
+                assert set(outcome)=={'exit','core','overall'} and type(outcome['exit']) is int
+                assert outcome['core'] in ('success','not_started','failed_rolled_back','failed_unverified','unknown')
+                assert outcome['overall'] in ('SUCCESS','PARTIAL','FAILED','UNKNOWN')
+                report[name+'_outcome']=outcome
         import re
         text=re.sub(r'\x1b\[[0-9;]*m','',(result.stdout+result.stderr).decode(errors='replace'))
         frames=re.findall(r'File "/root/pilot/(checks|restore_checks)\.py", line ([0-9]+)',text)
@@ -42,6 +50,20 @@ def invoke(expression, name, timeout=180):
     assert values and isinstance(values,dict) and all(v is True for v in values.values())
     report[name]='PASS';report[name+'_seconds']=round(time.monotonic()-started,2)
     print(name+': PASS',flush=True)
+
+
+def observe_reality(name, source=None):
+    invoke('restore_checks.reality_observation()',name+'-outcome-captured',90)
+    value=host.ssh('cat /root/pilot/mihomo-reality-observation.json',15)
+    assert value.returncode==0
+    outcome=json.loads(value.stdout)
+    assert outcome in ({'status':'PASS','reason':''},
+        {'status':'FAIL','reason':'REALITY authentication failed','curl_exit':52})
+    report[name]=outcome
+    print(name+': '+outcome['status']+(' ('+outcome['reason']+')' if outcome['reason'] else ''),flush=True)
+    if source is not None and outcome['status']=='FAIL':
+        assert source==outcome,'New Mihomo REALITY failure after Restore'
+    return outcome
 
 
 def copy_to_guest(local, remote):
@@ -62,7 +84,22 @@ def start_disk(name, backing='/pilot/clean.raw', backing_format='raw'):
     return disk
 
 
+def poweroff():
+    # Only the new COW Restore disks advertise discard. Reclaim deleted private
+    # staging/cache blocks before retaining a disk or using it as a snapshot base.
+    assert host.ssh('fstrim /',60).returncode==0
+    host.poweroff()
+
+
 def prepare_target():
+    started=time.monotonic()
+    # The shared clean OS carries an ACME endpoint fixture for source issuance.
+    # A Restore target gets cli.ini from its archive, after native Certbot APT;
+    # precreating that conffile would cause an unrelated dpkg question in the TTY.
+    code=("from pathlib import Path;p=Path('/etc/letsencrypt/cli.ini');"
+          "assert not Path('/etc/x-ui/x-ui.db').exists();"
+          "assert not p.is_symlink() and p.read_bytes()==b'server = https://10.0.2.2:14000/dir\\n';p.unlink()")
+    assert host.ssh('python3 -c '+shlex.quote(code),15).returncode==0
     copy_to_guest(host.REPO/'tests/fresh/restore_checks.py','/root/pilot/restore_checks.py')
     copy_to_guest(host.REPO/'x-ui-latest.sh','/root/pilot/x-ui-latest.sh')
     copy_to_guest(ROOT/'mihomo','/root/pilot/mihomo')
@@ -72,6 +109,7 @@ def prepare_target():
     copy_to_guest(ROOT/'pebble-root.crt','/usr/local/share/ca-certificates/pilot-pebble.crt')
     # Updating the normal OS trust store is test CA preparation, not Restore logic.
     assert host.ssh('update-ca-certificates >/dev/null',90).returncode==0
+    report[phase+'_target_prepare_seconds']=round(time.monotonic()-started,2)
 
 
 if __name__=='__main__':
@@ -112,6 +150,11 @@ if __name__=='__main__':
         host.install('positive',REF)
         invoke('checks.installed()','source-installed')
         invoke('checks.transports()','source-transport-consumers',300)
+        invoke('checks.amneziawg()','source-AWG',120)
+        copy_to_guest(ROOT/'mihomo','/root/pilot/mihomo')
+        assert host.ssh('chmod 0700 /root/pilot/mihomo',15).returncode==0
+        invoke('restore_checks.mihomo("Vision")','source-Mihomo-Vision',90)
+        source_reality=observe_reality('source-Mihomo-REALITY')
         invoke('restore_checks.source_backup()','source-backup',180)
         for name,remote in [('source-backup.tar.gz',None),('source-state.private.json','/root/pilot/source-state.private.json'),
                             ('source-sha256','/root/pilot/source-sha256'),('installer.raw.log','/root/pilot/installer.raw.log'),
@@ -126,30 +169,29 @@ if __name__=='__main__':
             (ROOT/name).write_bytes(result.stdout)
         digest=(ROOT/'source-sha256').read_text()
         assert hashlib.sha256((ROOT/'source-backup.tar.gz').read_bytes()).hexdigest()==digest
-        host.poweroff()
+        poweroff()
         # Source data is now the verified private archive; no scenario reuses its disk.
         source_disk.unlink()
-        # Independent clean targets: never the installed source with selected files removed.
-        start_disk('core-failure');prepare_target()
-        invoke('restore_checks.restore("core-failure",'+repr(REF)+')','real-core-rollback',660)
-        host.poweroff()
-        (ROOT/'core-failure.qcow2').unlink()
+        # Prove a positive clean recovery before the native fault matrix.
         target=start_disk('preserve');prepare_target()
         invoke('restore_checks.restore("preserve",'+repr(REF)+')','clean-preserve-restore',660)
         invoke('checks.installed(security=False)','restored-services-and-subscriptions')
         invoke('checks.transports()','restored-transport-consumers',300)
         invoke('checks.amneziawg()','restored-AWG',120)
-        invoke('restore_checks.mihomo()','restored-Mihomo',90)
+        invoke('restore_checks.mihomo("Vision")','restored-Mihomo-Vision',90)
+        observe_reality('restored-Mihomo-REALITY',source_reality)
         invoke('restore_checks.preserved()','restored-identity-and-archive')
         assert host.ssh("tr -d '-' < /proc/sys/kernel/random/boot_id > /root/pilot/first-boot-id",15).returncode==0
-        host.poweroff()
+        poweroff()
         host.phase='restored-cold-boot';host.boot(str(target),'qcow2')
         invoke('checks.installed(cold=True,security=False)','restored-cold-services')
         invoke('checks.transports()','restored-cold-consumers',300)
-        invoke('restore_checks.mihomo()','restored-cold-Mihomo',90)
+        invoke('checks.amneziawg()','restored-cold-AWG',120)
+        invoke('restore_checks.mihomo("Vision")','restored-cold-Mihomo-Vision',90)
+        observe_reality('restored-cold-Mihomo-REALITY',source_reality)
         invoke('restore_checks.preserved()','restored-cold-identity')
         invoke('restore_checks.restore("ufw-unknown",'+repr(REF)+')','native-unknown-SSH-no-UFW-enable',660)
-        host.poweroff()
+        poweroff()
         # Keep this powered-off restored No-Security disk as the negative-case base.
         preserved_target=target
         # Ubuntu 24.04 has one full clean recovery/cold boot. The main 26.04
@@ -170,10 +212,13 @@ if __name__=='__main__':
             if scenario=='security':
                 invoke('checks.installed()','full-security-services')
                 assert host.ssh("tr -d '-' < /proc/sys/kernel/random/boot_id > /root/pilot/first-boot-id",15).returncode==0
-                host.poweroff();host.phase='security-cold-boot';host.boot(str(target),'qcow2')
+                poweroff();host.phase='security-cold-boot';host.boot(str(target),'qcow2')
                 invoke('checks.installed(cold=True)','security-cold-services')
                 invoke('checks.transports()','security-cold-consumers',300)
+                invoke('checks.amneziawg()','security-cold-AWG',120)
                 invoke('restore_checks.preserved()','security-cold-identity')
+                invoke('restore_checks.mihomo("Vision")','security-cold-Mihomo-Vision',90)
+                observe_reality('security-cold-Mihomo-REALITY',source_reality)
                 assert host.ssh('/usr/sbin/sshd -t',15,port=22221).returncode==0
                 report['native_nonstandard_socket_SSH_after_UFW']='PASS'
                 invoke('restore_checks.restore("preserve",'+repr(REF)+')','existing-preserve-security',660)
@@ -181,11 +226,14 @@ if __name__=='__main__':
                 invoke('checks.renewal()','restored-real-renewal-and-hooks',300)
             else:
                 invoke('checks.transports()','partial-'+scenario+'-healthy-core',300)
-            host.poweroff();target.unlink()
+            poweroff();target.unlink()
             (ROOT/'dot-outage').unlink(missing_ok=True)
+        start_disk('core-failure');prepare_target()
+        invoke('restore_checks.restore("core-failure",'+repr(REF)+')','real-core-rollback',660)
+        poweroff();(ROOT/'core-failure.qcow2').unlink()
         assert hashlib.sha256((ROOT/'source-backup.tar.gz').read_bytes()).hexdigest()==digest
         preserved_target.unlink()
-        report['result']='PASS'
+        report['result']='PASS' if source_reality['status']=='PASS' else 'PASS for Restore acceptance; existing Mihomo REALITY failure recorded'
     except Exception as error:
         (ROOT/'failure.private.log').write_text(traceback.format_exc())
         report['result']='FAIL';report['error_class']=type(error).__name__;report['phase']=phase

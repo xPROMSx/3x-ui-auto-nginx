@@ -1144,6 +1144,70 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
             self.assertEqual(all_components['fail2ban'],'failed_unverified')
         with self.assertRaises(ValueError):security.configure(components=('dot',))
 
+    def test_mihomo_reality_gate_rejects_new_or_different_restore_errors(self):
+        import ast, contextlib, io, types
+        tree=ast.parse((ROOT/'tests/fresh/restore_acceptance.py').read_text())
+        tree.body=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='observe_reality']
+        good={'status':'PASS','reason':''}
+        known={'status':'FAIL','reason':'REALITY authentication failed','curl_exit':52}
+        for baseline,outcome,accepted in ((good,good,True),(known,known,True),(known,good,True),
+                                          (good,known,False),(known,{'status':'FAIL','reason':'new error'},False)):
+            with self.subTest(source=baseline['status'],target=outcome['status'],accepted=accepted):
+                ns={'invoke':lambda *args:None,'report':{},'json':json,
+                    'host':types.SimpleNamespace(ssh=lambda *args:types.SimpleNamespace(returncode=0,stdout=json.dumps(outcome).encode()))}
+                exec(compile(tree,'restore_acceptance.py','exec'),ns)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    if accepted:
+                        self.assertEqual(ns['observe_reality']('target',baseline),outcome)
+                        self.assertEqual(ns['report']['target']['status'],outcome['status'])
+                    else:
+                        with self.assertRaises(AssertionError):ns['observe_reality']('target',baseline)
+
+    def test_restore_fidelity_keeps_quotas_exact_and_subscription_time_monotonic(self):
+        import ast, hashlib, types
+        tree=ast.parse((ROOT/'tests/fresh/restore_checks.py').read_text())
+        tree.body=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='preserved']
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);archive=root/'backup';archive.write_bytes(b'private archive fixture')
+            (root/'source-sha256').write_text(hashlib.sha256(archive.read_bytes()).hexdigest())
+            (root/'backup-adguard.private.json').write_text('{}')
+            expected={k:[] for k in ('settings','users','inbounds','hosts','files')}
+            expected['client_traffics']=[{'id':1,'email':'fixture','total':1000,'up':2,'down':3,
+                'all_time':5,'last_online':100,'last_sub_fetch':100}]
+            (root/'source-state.private.json').write_text(json.dumps(expected))
+            actual=json.loads(json.dumps(expected));actual['client_traffics'][0]['last_sub_fetch']=200
+            ns={'ROOT':root,'ARCHIVE':archive,'json':json,'hashlib':hashlib,'snapshot':lambda:actual,
+                'checks':types.SimpleNamespace(adguard_state=lambda:{})}
+            exec(compile(tree,'restore_checks.py','exec'),ns)
+            self.assertTrue(all(ns['preserved']().values()))
+            for key,value in (('total',2000),('email','changed'),('last_sub_fetch',0)):
+                with self.subTest(field=key):
+                    prior=actual['client_traffics'][0][key];actual['client_traffics'][0][key]=value
+                    try:
+                        with self.assertRaises(AssertionError):ns['preserved']()
+                    finally:actual['client_traffics'][0][key]=prior
+
+    def test_restore_archive_oracle_reads_committed_sqlite_wal(self):
+        import ast, sqlite3, tarfile
+        tree=ast.parse((ROOT/'tests/fresh/restore_checks.py').read_text())
+        tree.body=[node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name in ('database_state','archived_database_state')]
+        namespace={'sqlite3':sqlite3,'Path':Path}
+        exec(compile(tree,'restore_checks.py','exec'),namespace)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);path=root/'x-ui.db';db=sqlite3.connect(path)
+            try:
+                db.execute('PRAGMA journal_mode=WAL')
+                db.execute('CREATE TABLE settings(id INTEGER PRIMARY KEY,key,value)');db.commit()
+                db.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+                db.execute("INSERT INTO settings VALUES(1,'subTitle','archived custom title')");db.commit()
+                archive=root/'backup.tar.gz'
+                with tarfile.open(archive,'w:gz') as tar:
+                    for suffix in ('','-wal','-shm'):
+                        tar.add(path.with_name(path.name+suffix),arcname='files/etc/x-ui/x-ui.db'+suffix)
+                actual=namespace['archived_database_state'](archive)
+                self.assertEqual(actual['settings'],[{'id':1,'key':'subTitle','value':'archived custom title'}])
+            finally:db.close()
+
     def test_external_dns_pipeline_does_not_block_controlled_answer(self):
         import ast, socket, socketserver, struct, threading, types
         servers=[]; entered=threading.Event(); release=threading.Event()

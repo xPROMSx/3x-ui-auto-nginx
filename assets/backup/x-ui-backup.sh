@@ -1242,6 +1242,32 @@ HOOK
     }
 }
 
+check_panel_listener() {
+    # An active systemd process can survive a failed web bind. Check the saved
+    # panel port and its actual owner, without assuming any inbound topology.
+    python3 - "$DB" <<'PY'
+import sqlite3, subprocess, sys, time
+with sqlite3.connect('file:' + sys.argv[1] + '?mode=ro', uri=True) as db:
+    port = str(int(db.execute("SELECT value FROM settings WHERE key='webPort'").fetchone()[0]))
+deadline = time.monotonic() + 15
+while True:
+    try:
+        pid = subprocess.check_output(['systemctl', 'show', '-p', 'MainPID', '--value', 'x-ui'],
+                                      text=True, timeout=2).strip()
+        listeners = subprocess.check_output(['ss', '-H', '-lntp'], text=True, timeout=2)
+    except (OSError, subprocess.SubprocessError):
+        sys.exit(1)
+    if pid.isdigit() and int(pid) > 0:
+        for line in listeners.splitlines():
+            fields = line.split()
+            if len(fields) > 4 and fields[3] == '127.0.0.1:' + port and 'pid=' + pid + ',' in line:
+                sys.exit(0)
+    if time.monotonic() >= deadline:
+        sys.exit(1)
+    time.sleep(.1)
+PY
+}
+
 check_health() {
     local service state failed=0
     stage 'Final checks'
@@ -1265,6 +1291,10 @@ check_health() {
                 *) printf '[FAIL] Unexpected %s state: %s\n' "$service" "$state" >&2; failed=1 ;; esac
         fi
     done
+    if (( ! failed )) && [[ "${RESTORED_ACTIVE[x-ui]}" == active ]] && ! check_panel_listener; then
+        warn 'Restored panel backend listener is unavailable or is not owned by x-ui.'
+        failed=1
+    fi
     if [[ "$ADGUARD_HOME" == true ]]; then
         ok 'AdGuard Home existing credentials preserved'
     fi

@@ -32,11 +32,27 @@ def database_state(db):
 
 
 def snapshot():
-    with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:result=database_state(db)
+    from contextlib import closing
+    with closing(sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True)) as db:result=database_state(db)
     result['files']={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in
         [*Path('/etc/letsencrypt/live').glob('*/*.pem'),Path('/etc/x-ui/initial-client.json'),
          Path('/etc/x-ui/auto-nginx-managed.json'),Path('/var/www/html/restore-custom.txt')]}
     return result
+
+
+def archived_database_state(archive):
+    import tarfile,tempfile
+    from contextlib import closing
+    with tarfile.open(archive) as tar,tempfile.TemporaryDirectory() as temporary:
+        path=Path(temporary)/'x-ui.db'
+        for suffix in ('','-wal','-shm','-journal'):
+            try:member=tar.getmember('files/etc/x-ui/x-ui.db'+suffix)
+            except KeyError:
+                assert suffix,'Archived SQLite is missing'
+                continue
+            assert member.isfile()
+            path.with_name(path.name+suffix).write_bytes(tar.extractfile(member).read())
+        with closing(sqlite3.connect(path)) as db:return database_state(db)
 
 
 def source_backup():
@@ -50,17 +66,11 @@ def source_backup():
     with sqlite3.connect('/etc/x-ui/x-ui.db') as db:
         if not db.execute("UPDATE settings SET value='Clean Restore private fixture' WHERE key='subTitle'").rowcount:
             db.execute("INSERT INTO settings(key,value) VALUES('subTitle','Clean Restore private fixture')")
+    db.close()
     checks.manager_backup()
     archive=max(Path('/var/backups/x-ui').glob('*.tar.gz'),key=lambda p:p.stat().st_mtime_ns)
     (ROOT/'source-path').write_text(str(archive))
-    # Read the actual archived SQLite, not a later state modified by consumers.
-    import tarfile,tempfile
-    with tarfile.open(archive) as tar, tempfile.TemporaryDirectory() as temporary:
-        data=tar.extractfile('files/etc/x-ui/x-ui.db').read()
-        path=Path(temporary)/'db';path.write_bytes(data)
-        with sqlite3.connect(path) as db:
-            expected=snapshot()
-            expected.update(database_state(db))
+    expected=snapshot();expected.update(archived_database_state(archive))
     (ROOT/'source-state.private.json').write_text(json.dumps(expected))
     (ROOT/'source-sha256').write_text(hashlib.sha256(archive.read_bytes()).hexdigest())
     return {'real_menu_backup':True,'source_state_recorded':True}
@@ -78,9 +88,9 @@ def preserved():
             assert row['id'] in rows
             if table=='client_traffics':
                 for key,value in row.items():
-                    if key not in ('up','down','all_time','last_online'):
+                    if key not in ('up','down','all_time','last_online','last_sub_fetch'):
                         assert rows[row['id']][key]==value,'Client quota/identity changed'
-            for key in ('up','down','all_time','last_online'):
+            for key in ('up','down','all_time','last_online','last_sub_fetch'):
                 if key in row:assert rows[row['id']][key]>=row[key]
     assert hashlib.sha256(ARCHIVE.read_bytes()).hexdigest()==(ROOT/'source-sha256').read_text()
     assert checks.adguard_state()==json.loads((ROOT/'backup-adguard.private.json').read_text())
@@ -108,7 +118,6 @@ def restore(scenario, ref):
     if clean:
         assert not Path('/usr/local/x-ui').exists() and not Path('/opt/AdGuardHome').exists()
         assert not Path('/etc/nginx/nginx.conf').exists()
-    subprocess.run(['update-ca-certificates'],check=True,capture_output=True,timeout=90)
     env={**os.environ,**json.loads((ROOT/'environment.json').read_text()),'XUI_AUTO_REF':ref,
          'CURL_CA_BUNDLE':'/etc/ssl/certs/ca-certificates.crt','TERM':'dumb','NO_COLOR':'1'}
     os.environ.update(env)
@@ -124,23 +133,34 @@ def restore(scenario, ref):
     if scenario=='ufw-unknown':env['SSH_CONNECTION']='unconfirmed'
 
     selected=scenario in ('security','fail2ban','dot-outage')
+    previous_marker=Path('/etc/x-ui/native-previous-target-marker') if scenario in ('fail2ban','dot-outage') else None
+    if previous_marker is not None:
+        assert not clean
+        previous_marker.write_bytes(b'previous target '+os.urandom(16))
+        assert previous_marker.is_file()
     fault=None
     if scenario=='fail2ban':
         fault=Path('/etc/apt/preferences.d/restore-fail2ban-negative')
         fault.write_text('Package: fail2ban\nPin: version *\nPin-Priority: -1\n')
     blocker=None
+    core_marker=None
     if scenario=='core-failure':
-        import tarfile,tempfile
-        with tarfile.open(ARCHIVE) as tar,tempfile.TemporaryDirectory() as temporary:
-            path=Path(temporary)/'db';path.write_bytes(tar.extractfile('files/etc/x-ui/x-ui.db').read())
-            with sqlite3.connect(path) as db:port=int(db.execute("SELECT value FROM settings WHERE key='webPort'").fetchone()[0])
+        # Existing target, deliberately stopped before Restore: recovery must
+        # return that exact service state and marker. No repeated APT bootstrap.
+        if not clean:
+            checks.run('systemctl','stop','x-ui')
+            core_marker=Path('/etc/x-ui/native-core-target-marker')
+            core_marker.write_bytes(b'previous target '+os.urandom(16))
+        settings={row['key']:row['value'] for row in archived_database_state(ARCHIVE)['settings']}
+        port=int(settings['webPort'])
         blocker=socket.socket();blocker.bind(('127.0.0.1',port));blocker.listen()
     choices=b'y\ny\ny\ny\n' if selected else b'n\nn\nn\nn\n'
     if scenario=='ufw-unknown':choices=b'n\nn\nn\ny\n'
-    answers=b'3\n3\n'+str(ARCHIVE).encode()+b'\nYES\n'+choices+b'0\n'
+    answers=b'3\n3\n'+str(ARCHIVE).encode()+b'\n'
     master,slave=pty.openpty()
     process=subprocess.Popen(['bash',str(ROOT/'x-ui-latest.sh')],stdin=slave,stdout=slave,stderr=slave,env=env)
     os.close(slave);output=bytearray();deadline=time.monotonic()+600
+    confirmed=False;exiting=False
     os.write(master,answers)
     try:
         while time.monotonic()<deadline:
@@ -149,6 +169,12 @@ def restore(scenario, ref):
                 except OSError:break
                 if not part:break
                 output.extend(part)
+                # Native APT may consume terminal input during package setup.
+                # Answer the actual Restore prompt, then the returning menu.
+                if not confirmed and b'Type YES to restore: ' in output:
+                    os.write(master,b'YES\n'+choices);confirmed=True
+                if not exiting and b'Overall: SUCCESS' in output and output.count(b'Select an option: ')>=3:
+                    os.write(master,b'0\n');exiting=True
             if process.poll() is not None:break
         process.wait(timeout=2)
     finally:
@@ -157,12 +183,25 @@ def restore(scenario, ref):
         if blocker is not None:blocker.close()
         if fault is not None:fault.unlink()
         (ROOT/('restore-'+scenario+'.private.log')).write_bytes(output)
+        summary=output.decode(errors='replace')
+        core=re.findall(r'core: ([a-z_]+)',summary)
+        overall=re.findall(r'Overall: ([A-Z]+)',summary)
+        (ROOT/'last-restore-outcome.json').write_text(json.dumps({'exit':process.returncode,
+            'core':core[-1] if core else 'unknown','overall':overall[-1] if overall else 'UNKNOWN'}))
+        os.sync()  # Preserve failure evidence before the host stops its disposable VM.
     text=output.decode(errors='replace')
+    assert confirmed,'Restore confirmation was not reached; private log retained'
     if scenario=='core-failure':
+        if Path('/etc/x-ui/x-ui.db').exists():
+            with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
+                assert int(db.execute("SELECT value FROM settings WHERE key='webPort'").fetchone()[0])==port,'Fault targeted another port'
         assert process.returncode!=0 and 'core: failed_rolled_back' in text
-        assert 'Overall: FAILED' in text and not Path('/etc/x-ui/x-ui.db').exists()
+        assert 'Overall: FAILED' in text
+        if clean:assert not Path('/etc/x-ui/x-ui.db').exists()
+        else:assert core_marker.is_file() and Path('/etc/x-ui/x-ui.db').is_file()
+        assert subprocess.run(['systemctl','is-active','--quiet','x-ui']).returncode!=0
         assert '--configure' not in text
-        return {'actual_runtime_failure_and_clean_target_recovery':True}
+        return {'actual_runtime_failure_and_previous_target_recovery':True}
     expected=0 if scenario in ('preserve','security') else 1
     assert (process.returncode==0)==(expected==0),'Unexpected Restore result; private log retained'
     assert 'core: success' in text and ('Overall: SUCCESS' if expected==0 else 'Overall: PARTIAL') in text
@@ -176,15 +215,23 @@ def restore(scenario, ref):
     else:
         assert 'Status: active' in checks.run('ufw','status')
         assert 'Automatic-Reboot-Time "04:38";' in checks.run('apt-config','dump')
+        for unit in ('apt-daily.timer','apt-daily-upgrade.timer'):checks.run('systemctl','is-active','--quiet',unit)
+        if scenario!='dot-outage':
+            assert checks.run('busctl','get-property','org.freedesktop.resolve1','/org/freedesktop/resolve1','org.freedesktop.resolve1.Manager','DNSOverTLS').strip()=='s \"yes\"'
+            checks.run('resolvectl','query','--cache=no','cloudflare.com')
+        checks.run('getent','ahosts','debian.org')
         if scenario!='fail2ban':checks.run('fail2ban-client','status','sshd')
     if scenario=='dot-outage':assert (os.readlink('/etc/resolv.conf'),Path('/etc/resolv.conf').read_bytes())==before_dns
     preserved()
+    if previous_marker is not None:assert not previous_marker.exists(),'Old target returned after core commit'
     return {'actual_TTY_manager_restore':True,'core_committed':True,'independent_security_results':True,
             'clean_target' if clean else 'existing_managed_target':True, 'state_and_archive_preserved':True}
 
 
-def mihomo():
-    """Real restored HTTPS template/provider -> official Mihomo -> origin payload."""
+def mihomo(transport='REALITY'):
+    """Official HTTPS provider and unchanged credentials -> actual origin bytes."""
+    assert transport in ('REALITY','Vision')
+    tag=transport.lower()
     import tempfile
     import urllib.request
     from urllib.parse import quote
@@ -212,6 +259,8 @@ def mihomo():
             runtime+='hosts:\n  panel.example.test: 127.0.0.1\n  reality.example.test: 127.0.0.1\n  vision.example.test: 127.0.0.1\n'
             runtime+='tls:\n  custom-certifactes:\n    - '+json.dumps(Path('/usr/local/share/ca-certificates/pilot-pebble.crt').read_text())+'\n'
             config=root/'mihomo.yaml';config.write_text(runtime)
+            subprocess.run([str(ROOT/'mihomo'),'-t','-d',str(root/'state'),'-f',str(config)],
+                           check=True,capture_output=True,timeout=30)
             with (root/'mihomo.private.log').open('wb') as output:
                 process=subprocess.Popen([str(ROOT/'mihomo'),'-d',str(root/'state'),'-f',str(config)],stdout=output,stderr=subprocess.STDOUT)
                 try:
@@ -228,17 +277,40 @@ def mihomo():
                         if proxies:break
                         assert time.monotonic()<deadline,'Mihomo provider readiness deadline'
                         time.sleep(.05)
-                    name=next(p['name'] for p in proxies if 'REALITY' in p['name'])
+                    marker='reality' if transport=='REALITY' else 'xtls'
+                    names=[p['name'] for p in proxies if marker in p['name'].casefold()]
+                    assert len(names)==1,'Expected one installed '+transport+' provider node'
+                    name=names[0]
                     api('/proxies/'+quote('🌍 VPN',safe=''),{'name':name})
                     path='/restored-mihomo/'+os.urandom(8).hex();expected=('FRESH-INSTALL-'+path).encode()
                     response=subprocess.run(['curl','-q','-fsS','--proxy',f'socks5h://127.0.0.1:{socks}','--noproxy','',
                         '--connect-timeout','5','--max-time','30','http://8.8.8.9:18081'+path],capture_output=True,timeout=40)
+                    (ROOT/('mihomo-'+tag+'-response.private.bin')).write_bytes(response.stdout)
+                    (ROOT/('mihomo-'+tag+'-curl.private.log')).write_bytes(response.stderr)
+                    (ROOT/('mihomo-'+tag+'-status.json')).write_text(json.dumps({'exit':response.returncode,'expected_length':len(expected),'received_length':len(response.stdout)}))
                     assert response.returncode==0 and response.stdout==expected,'Mihomo restored provider byte-exact response failed'
                 finally:
                     if process.poll() is None:
                         process.terminate()
                         try:process.wait(timeout=5)
                         except subprocess.TimeoutExpired:process.kill();process.wait(timeout=5)
+                    (ROOT/('mihomo-'+tag+'.private.log')).write_bytes((root/'mihomo.private.log').read_bytes())
     finally:
         rule[3]='-D';subprocess.run(rule,check=True,timeout=10)
-    return {'real_Mihomo_restored_HTTPS_template_provider_and_payload':True}
+    return {'Mihomo_'+transport+'_client_config_validated':True,
+            'Mihomo_'+transport+'_HTTPS_provider_and_byte_exact_payload':True}
+
+
+def reality_observation():
+    """Record the real failure, never turn it into a transport PASS."""
+    status=ROOT/'mihomo-reality-status.json';log=ROOT/'mihomo-reality.private.log'
+    status.unlink(missing_ok=True);log.unlink(missing_ok=True)
+    result={'status':'PASS','reason':''}
+    try:mihomo('REALITY')
+    except AssertionError:
+        metrics=json.loads(status.read_text())
+        if (metrics['exit']!=52 or metrics['received_length']!=0 or
+                'REALITY authentication failed' not in log.read_text()):raise
+        result={'status':'FAIL','reason':'REALITY authentication failed','curl_exit':52}
+    (ROOT/'mihomo-reality-observation.json').write_text(json.dumps(result))
+    return {'actual_Mihomo_REALITY_outcome_recorded':True}

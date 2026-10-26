@@ -95,6 +95,37 @@ has a 45-minute limit for this measured sequential workload. Both ordinary nativ
 services jobs have the standard 25-minute limit; their existing names, Debian 13
 coverage and all systemd jobs remain unchanged.
 
+### Clean Restore acceptance
+
+The same final-stage workflow also runs `Clean Restore (ubuntu-24.04)` and
+`Clean Restore (ubuntu-26.04)`. Each uses a real source installation and menu
+Backup, a separate clean target disk, actual restored consumers and a cold boot
+of that target. Ubuntu 26.04 additionally exercises native optional failures;
+private COW disks reuse the restored baseline for those existing-target cases.
+Mihomo Vision must pass client validation, HTTPS provider loading and byte-exact
+traffic on the source, restored target and after cold boot. Actual Mihomo REALITY
+outcomes are recorded separately before Backup and on the restored target; only
+the same known authentication failure already observed on the source is an
+accepted baseline limitation. A new or different restored failure fails the gate.
+Xray REALITY and all data/credential assertions remain mandatory and unchanged.
+The source archive and all assets follow one exact event head SHA. Only external
+DNS/DoT/ACME boundaries are fixtures; SQLite comparisons include archived WAL.
+
+These separate jobs have a 90-minute bound; the existing protected Fresh job
+keeps its name, 45-minute bound and coverage. Source installation, multiple target
+bootstraps, transfers and independent Security cases are additional work, rather
+than an extension squeezed into Fresh. Both recovery results must pass on the
+final SHA for this feature's acceptance. Rulesets and protected context names are
+unchanged; adding protection for these additional results remains an owner action.
+Local Ubuntu 26.04 TCG measurements include 895 seconds for source installation,
+130 seconds for menu Backup, at most 310 seconds for clean Restore, 609 seconds
+for all-Security recovery, 366 seconds for the Fail2ban failure and 445 seconds
+for DoT failure/recovery. Preparation, boots, repeated real consumers, existing
+target recovery and the core-failure case put the combined work above an hour.
+The 90-minute bound allows that measured work; hosted duration still needs its
+own final-SHA result. No disks, private logs, databases, keys or Backup archives
+are uploaded.
+
 ### Owner setup and hosted acceptance
 
 In repository Settings → Rules → Rulesets → `main-protection`, keep enforcement
