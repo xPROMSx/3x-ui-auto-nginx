@@ -14,12 +14,30 @@ VISION_STAGES = {
     'configuring Vision inbound/nginx/HTTPS':'configuring_inbound',
 }
 
+VISION_HELPER_STAGES = {
+    'validating Vision certificate':'certificate_validation',
+    'checking Vision artifacts and stream':'artifacts',
+    'listing existing 3X-UI inbounds':'list_inbounds',
+    'creating Vision inbound via 3X-UI API':'create_inbound',
+    'creating Vision host via 3X-UI API':'create_host',
+    'writing Vision nginx fallback and SNI route':'write_nginx',
+    'validating nginx configuration':'nginx_validation',
+    'reloading nginx':'nginx_reload',
+    'restarting Xray via 3X-UI API':'xray_restart',
+    'checking 3X-UI service':'panel_service',
+    'waiting for Vision inbound readiness':'listener_readiness',
+    'checking trusted HTTPS fallback':'https_fallback',
+    'local API initialization':'api_initialization',
+}
+
 
 def vision_failure(log):
     matches = re.findall(r'Vision failed during ([^\n]+?) \(exit ([0-9]{1,3})\): rollback=([^\s]+)', log)
     if not matches: return None
     stage, code, rollback = matches[-1]
+    inner = re.findall(r'^Vision failed during ([^:\r\n]+): [^\r\n]*; rollback=(?:failed_rolled_back|failed_unverified)(?:;[^\r\n]*)?\r?$', log, re.M)
     return {'stage':VISION_STAGES.get(stage, 'unknown'), 'exit_code':int(code),
+            'helper_stage':VISION_HELPER_STAGES.get(inner[-1], 'unknown') if inner else 'unknown',
             'rollback':rollback if rollback in ('failed_rolled_back','failed_unverified') else 'unknown'}
 
 

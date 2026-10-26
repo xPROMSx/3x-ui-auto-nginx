@@ -1,4 +1,5 @@
 """Real Git histories exercise the docs exception and private Fresh diagnostics."""
+import ast
 import importlib.util
 import json
 import os
@@ -175,11 +176,36 @@ class CIScope(unittest.TestCase):
         diagnostics = self.diagnostics()
         secret = 'PRIVATE-CREDENTIAL-https://secret.invalid/token'
         result = diagnostics.vision_failure('Vision failed during configuring Vision inbound/nginx/HTTPS (exit 1): rollback=failed_rolled_back\n'+secret)
-        self.assertEqual(result, {'stage':'configuring_inbound', 'exit_code':1, 'rollback':'failed_rolled_back'})
+        self.assertEqual(result, {'stage':'configuring_inbound', 'helper_stage':'unknown', 'exit_code':1, 'rollback':'failed_rolled_back'})
         unknown = diagnostics.vision_failure('Vision failed during '+secret+' (exit 2): rollback='+secret)
-        self.assertEqual(unknown, {'stage':'unknown', 'exit_code':2, 'rollback':'unknown'})
+        self.assertEqual(unknown, {'stage':'unknown', 'helper_stage':'unknown', 'exit_code':2, 'rollback':'unknown'})
         self.assertNotIn(secret, json.dumps([result, unknown]))
         self.assertIsNone(diagnostics.vision_failure('Vision Ready\n'+secret))
+
+    def test_vision_helper_failure_stage_is_allowlisted(self):
+        diagnostics = self.diagnostics()
+        secret = 'PRIVATE-UUID-cookie-https://secret.invalid/token'
+        outer = 'Vision failed during configuring Vision inbound/nginx/HTTPS (exit 1): rollback=failed_rolled_back\r\n'
+        tree = ast.parse((ROOT/'assets/vision/managed.py').read_text())
+        stages = {node.value.value for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == 'stage' for t in node.targets)
+                  and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)}
+        stages.add('local API initialization')
+        for stage in stages:
+            with self.subTest(stage=stage):
+                result = diagnostics.vision_failure('Vision failed during '+stage+': '+secret+'; rollback=failed_rolled_back\r\n'+outer)
+                self.assertNotEqual(result['helper_stage'], 'unknown')
+                self.assertNotIn(secret, json.dumps(result))
+                self.assertEqual(set(result), {'stage','helper_stage','exit_code','rollback'})
+        for stage, expected in (('validating Vision certificate','certificate_validation'),
+                                ('creating Vision inbound via 3X-UI API','create_inbound'),
+                                ('checking trusted HTTPS fallback','https_fallback')):
+            result = diagnostics.vision_failure('Vision failed during '+stage+': '+secret+'; rollback=failed_rolled_back\n'+outer)
+            self.assertEqual(result['helper_stage'], expected)
+        for inner in ('', 'Vision failed during '+secret+': '+secret+'; rollback=failed_rolled_back\n'):
+            result = diagnostics.vision_failure(inner+outer)
+            self.assertEqual(result['helper_stage'], 'unknown')
+            self.assertNotIn(secret, json.dumps(result))
 
     def test_dns_wire_contract_and_safe_probe_failures(self):
         d = self.diagnostics()

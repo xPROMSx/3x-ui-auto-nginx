@@ -11,7 +11,7 @@ import threading
 import time
 import traceback
 
-from diagnostics import VISION_STAGES
+from diagnostics import VISION_STAGES, VISION_HELPER_STAGES
 
 ROOT = Path('/pilot')
 REPO = Path('/repo')
@@ -130,8 +130,9 @@ def install(scenario, ref):
     (ROOT/(phase+'-result.json')).write_bytes(data.stdout)
     vision = values.get('vision_failure')
     if vision is not None:
-        assert set(vision) == {'stage','exit_code','rollback'}
+        assert set(vision) == {'stage','helper_stage','exit_code','rollback'}
         assert vision['stage'] in set(VISION_STAGES.values()) | {'unknown'}
+        assert vision['helper_stage'] in set(VISION_HELPER_STAGES.values()) | {'unknown'}
         assert type(vision['exit_code']) is int and 0 <= vision['exit_code'] <= 999
         assert vision['rollback'] in ('failed_rolled_back','failed_unverified','unknown')
         report[phase+'_vision_failure'] = vision
