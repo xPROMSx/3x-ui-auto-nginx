@@ -44,14 +44,14 @@ def failure_location(output):
         report['failure_location'] = name.decode()+'.py:'+line.decode()
 
 
-def boot():
+def boot(disk='/pilot/disk.raw', disk_format='raw'):
     global vm
     started = time.monotonic()
     kernel = (ROOT/'kernel.path').read_text().strip()
     report['kernel'] = Path(kernel).name
     vm = launch(['qemu-system-x86_64', '-machine', 'accel=tcg', '-cpu', 'max', '-m', '4096',
         '-smp', '2', '-nodefaults', '-no-reboot', '-display', 'none', '-serial', 'stdio',
-        '-monitor', 'none', '-drive', 'file=/pilot/disk.raw,format=raw,if=virtio',
+        '-monitor', 'none', '-drive', 'file='+disk+',format='+disk_format+',if=virtio',
         '-netdev', 'user,id=n0,hostfwd=tcp:127.0.0.1:22220-:22,hostfwd=tcp:127.0.0.1:18080-:80',
         '-device', 'virtio-net-pci,netdev=n0', '-kernel', kernel, '-initrd', '/pilot/initrd.img',
         '-append', 'root=/dev/vda rw rootfstype=ext4 console=ttyS0 panic=1 quiet net.ifnames=0 '

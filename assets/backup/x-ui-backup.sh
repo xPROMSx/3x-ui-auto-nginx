@@ -11,7 +11,7 @@ SYSCTL_FILE=/etc/sysctl.d/99-3x-ui-pro.conf
 XHTTP_SOCKET=/dev/shm/uds2023.sock
 LEGACY_CERTBOT_CRON='@monthly certbot renew --non-interactive --pre-hook "systemctl stop nginx" --post-hook "systemctl start nginx" > /dev/null 2>&1'
 PACKAGES=(nginx-full certbot sqlite3 curl wget jq ufw
-          netcat-openbsd mtr python3 python3-configobj python3-cryptography libcap2-bin ca-certificates openssl procps iproute2 tar gzip tzdata)
+          netcat-openbsd mtr-tiny python3 python3-configobj python3-cryptography libcap2-bin ca-certificates openssl procps iproute2 tar gzip tzdata)
 RUNTIME_PATHS=(/etc/x-ui /usr/local/x-ui /usr/bin/x-ui)
 TREE_PATHS=(/opt/AdGuardHome /etc/nginx /etc/letsencrypt /root/cert /usr/local/lib/3x-ui-pro
             /var/www/html /var/www/subpage)
@@ -26,6 +26,9 @@ BACKUP_FINISHED=0 RESUME_XUI=0 APT_UPDATED=0
 RESUME_CERTBOT_TIMER=0
 RESUME_AGH=0 ADGUARD_HOME=false AGH_ARCH=
 RESTORE_RECOVERY=0 RESTORE_MUTATED=0 ROLLBACK_DIR=
+RESTORE_MANAGED=0 RESTORE_PARTIAL=0 RESTORE_KEEP=0 RESTORE_DNS_PENDING=0
+RESTORE_SECURITY_HELPER= RESTORE_SOURCE= RESTORE_INFO= RESTORE_TARGET=
+declare -A RESTORE_RESULTS=([core]=not_started [dot]=not_requested [apt]=not_requested [fail2ban]=not_requested [ufw]=not_requested)
 declare -A OLD_ACTIVE=() OLD_ENABLED=()
 declare -A RESTORED_ACTIVE=() RESTORED_ENABLED=()
 BACKUP_SERVICE_STATES=
@@ -37,19 +40,28 @@ die()   { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
 require_root() { [[ $EUID -eq 0 ]] || die 'Run x-ui-backup as root.'; }
 
 cleanup() {
-    local result=$?
+    local result=$? component overall
     trap - EXIT ERR
+    set +e
     if (( RESTORE_RECOVERY )); then
         # Retain the original restore failure even when recovery succeeds.
         result=1
         set +e
         if recover_restore_target; then
+            RESTORE_RESULTS[core]=failed_rolled_back
             warn 'Previous managed state/service states restored and checked; restore failed.'
             [[ -z "$ROLLBACK_DIR" ]] || rm -rf -- "$ROLLBACK_DIR"
         else
+            RESTORE_RESULTS[core]=failed_unverified
+            RESTORE_KEEP=1
             warn "Automatic rollback could not be verified. Private recovery material: ${ROLLBACK_DIR:-not created}. Inspect nginx -t and systemctl status x-ui/nginx/AdGuardHome before retrying."
         fi
         RESUME_CERTBOT_TIMER=0
+    fi
+    if (( RESTORE_DNS_PENDING )); then
+        restore_security_result dot rollback
+        [[ ${RESTORE_RESULTS[dot]} == failed_rolled_back ]] || RESTORE_KEEP=1
+        RESTORE_DNS_PENDING=0
     fi
     if (( RESUME_XUI )); then
         if systemctl start x-ui && systemctl is-active --quiet x-ui; then
@@ -67,7 +79,18 @@ cleanup() {
         rm -f -- "$OUTPUT" || { warn 'Cannot remove incomplete archive'; result=1; }
     fi
     if [[ -n "$STAGING" ]]; then
-        rm -rf -- "$STAGING" || { warn 'Cannot remove private staging directory'; result=1; }
+        if (( RESTORE_KEEP )); then warn "Private recovery material retained: $STAGING";
+        else rm -rf -- "$STAGING" || { warn 'Cannot remove private staging directory'; result=1; }; fi
+    fi
+    if (( RESTORE_MANAGED )); then
+        (( ! RESTORE_PARTIAL )) || result=1
+        overall=FAILED
+        if [[ ${RESTORE_RESULTS[core]} == success ]]; then
+            if (( result )); then overall=PARTIAL; else overall=SUCCESS; fi
+        fi
+        printf '\nRESTORE RESULT\n'
+        for component in core dot apt fail2ban ufw; do printf '%s: %s\n' "$component" "${RESTORE_RESULTS[$component]}"; done
+        printf 'Overall: %s\n' "$overall"
     fi
     exit "$result"
 }
@@ -167,6 +190,34 @@ install_missing_packages() {
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}" ||
             die 'Dependency installation failed; managed files have not been replaced.'
     fi
+}
+
+restore_ipv6_available() {
+    python3 - <<'PY'
+import socket, sys
+try:
+    with socket.socket(socket.AF_INET6, socket.SOCK_STREAM): pass
+except OSError: sys.exit(1)
+PY
+}
+
+install_restore_packages() {
+    if ! restore_ipv6_available &&
+       [[ $(dpkg-query -W -f='${Status}' nginx-full 2>/dev/null) != 'install ok installed' ]]; then
+        # nginx-common has no daemon binary. Remove only its newly created default
+        # site before nginx's package scripts can try the first native start.
+        if [[ $(dpkg-query -W -f='${Status}' nginx-common 2>/dev/null) != 'install ok installed' ]]; then
+            install_missing_packages nginx-common
+            if [[ -e /etc/nginx/sites-enabled/default || -L /etc/nginx/sites-enabled/default ]]; then
+                [[ -L /etc/nginx/sites-enabled/default && $(readlink /etc/nginx/sites-enabled/default) == /etc/nginx/sites-available/default ]] ||
+                    die 'Unexpected new nginx default site; no target configuration was removed.'
+                rm /etc/nginx/sites-enabled/default
+            fi
+        elif [[ -e /etc/nginx/sites-enabled/default || -L /etc/nginx/sites-enabled/default ]]; then
+            die 'Existing nginx default site on an IPv6-disabled target; inspect it before Restore.'
+        fi
+    fi
+    install_missing_packages "${PACKAGES[@]}"
 }
 
 quick_check() {
@@ -1381,12 +1432,20 @@ preflight_staged_core() {
     vision=$(restored_vision_domain "$STAGING/files/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision") || die 'Invalid staged Vision hook.'
     python3 - "$STAGING/files" "$DB" /etc/nginx /etc/letsencrypt /root/cert /var/www \
         "$panel" "$reality" "$STAGING/nginx-validation" "$vision" <<'PY'
-import json, os, pathlib, re, shutil, sqlite3, sys
+import datetime, json, os, pathlib, re, shutil, sqlite3, sys
 from configobj import ConfigObj
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 root, dbpath, nginx, letsencrypt, certroot, webroot, panel, reality, validation, vision = sys.argv[1:]
 root, validation = pathlib.Path(root), pathlib.Path(validation)
+def valid_certificate(cert):
+    now=datetime.datetime.now(datetime.timezone.utc)
+    before=getattr(cert,'not_valid_before_utc',None)
+    after=getattr(cert,'not_valid_after_utc',None)
+    if before is None: before=cert.not_valid_before.replace(tzinfo=datetime.timezone.utc)
+    if after is None: after=cert.not_valid_after.replace(tzinfo=datetime.timezone.utc)
+    if not before<=now<after:
+        raise ValueError('Expired or not-yet-valid certificate; renew on the source and create a new Backup before Restore')
 def staged(path, tls_reference=False):
     # Resolve every archived symlink component without consulting live certificates.
     if '..' in pathlib.PurePosixPath(str(path)).parts: raise ValueError('Staged path escaped private state')
@@ -1425,6 +1484,7 @@ for domain in (panel, reality, *([vision] if vision else [])):
     for key, filename in (('fullchain','fullchain.pem'), ('privkey','privkey.pem')):
         if cfg.get(key) != live + '/' + filename: raise ValueError('Unexpected lineage reference')
     cert = x509.load_pem_x509_certificate(staged(live + '/fullchain.pem').read_bytes())
+    valid_certificate(cert)
     key = serialization.load_pem_private_key(staged(live + '/privkey.pem').read_bytes(), password=None)
     public = lambda k: k.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
     if public(cert.public_key()) != public(key.public_key()): raise ValueError('Certificate/private key mismatch')
@@ -1482,12 +1542,14 @@ with sqlite3.connect(staged(dbpath)) as db:
     # User TLS settings need not match the seed, but referenced files must survive Restore.
     # Never let a restored active inbound silently borrow a target-only certificate/key.
     for stream_json, in db.execute('SELECT stream_settings FROM inbounds WHERE enable=1'):
-        stream = json.loads(stream_json)
+        stream = json.loads('{}' if stream_json == '' else stream_json)
         if stream.get('security') == 'tls':
             for pair in stream.get('tlsSettings',{}).get('certificates',[]):
                 for name in ('certificateFile','keyFile'):
                     if not pair.get(name): continue
                     staged(pair[name], tls_reference=True)
+                    if name == 'certificateFile':
+                        valid_certificate(x509.load_pem_x509_certificate(staged(pair[name],tls_reference=True).read_bytes()))
     rows = db.execute('SELECT key,value FROM settings').fetchall()
     settings = dict(rows)
     for name in ('webListen','webPort','webBasePath','webCertFile','webKeyFile',
@@ -1720,6 +1782,16 @@ for marker, message in blocked.items():
 PY
         die 'Staged nginx -t failed; current managed state was not changed.'
     }
+    if ! restore_ipv6_available; then
+        nginx -T -p "$STAGING/nginx-validation/" -c "$STAGING/nginx-validation/etc/nginx/nginx.conf" \
+            > "$STAGING/nginx-effective.private" 2> "$STAGING/nginx-preflight.log" || die 'Cannot inspect effective staged nginx listeners.'
+        python3 - "$STAGING/nginx-effective.private" <<'PY'
+import pathlib, re, sys
+text=re.sub(r'#[^\n]*','',pathlib.Path(sys.argv[1]).read_text())
+if re.search(r'''\blisten\s+["']?\[''',text):
+    sys.exit('Archive requires IPv6 nginx listeners, but AF_INET6 is unavailable. Restore refused before replacement; use an IPv6-capable target or a source configured for IPv4 only.')
+PY
+    fi
     install -o root -g root -m 0755 "$STAGING/current-hook" "$hook" || die 'Cannot normalize staged project hook.'
 }
 
@@ -1923,6 +1995,119 @@ recover_restore_target() {
     (( ! failed ))
 }
 
+# This explicit TTY mode shares cmd_restore's single validator/staging/recovery.
+restore_target_kind() {
+    local path present=0
+    for path in "${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" \
+        /var/www/diagnostics /etc/systemd/system/AdGuardHome.service; do
+        [[ "$path" != /etc/letsencrypt ]] || continue # selective ownership checked below
+        [[ ! -e "$path" && ! -L "$path" ]] || present=1
+    done
+    if (( ! present )); then
+        # An active/custom nginx is not a clean target.
+        [[ ! -e /etc/nginx/nginx.conf ]] && ! systemctl is-active --quiet nginx &&
+            ! systemctl is-active --quiet x-ui && ! systemctl is-active --quiet AdGuardHome ||
+            die 'Ambiguous target: existing services/nginx without a managed installation.'
+        RESTORE_TARGET=clean
+    else
+        [[ -f "$DB" && ! -L "$DB" && -x /usr/local/x-ui/x-ui && -f /etc/nginx/nginx.conf &&
+           -f /etc/systemd/system/x-ui.service && ! -L /etc/systemd/system/x-ui.service ]] &&
+            grep -qx 'ExecStart=/usr/local/x-ui/x-ui' /etc/systemd/system/x-ui.service &&
+            restored_certificate_domains >/dev/null || die 'Partial or foreign target; managed ownership cannot be confirmed.'
+        RESTORE_TARGET='existing managed'
+    fi
+}
+
+managed_restore_confirm() {
+    local answer component
+    printf '\n%s\nTarget: %s\n' "$RESTORE_INFO" "$RESTORE_TARGET"
+    printf 'Restore replaces project-managed data. Trust this archive before continuing.\nType YES to restore: '
+    IFS= read -r answer || return 1
+    [[ "$answer" == YES ]] || { printf 'Cancelled.\n'; return 1; }
+    printf '\nOptional VPS Security (default: preserve existing settings)\n'
+    for component in dot apt fail2ban ufw; do
+        case "$component" in
+            dot) printf 'Configure strict system DoT? [y/N]: ' ;;
+            apt) printf 'Automatic security updates may reboot at 04:38 local server time, including with connected users.\nConfigure automatic APT security updates? [y/N]: ' ;;
+            fail2ban) printf 'Configure SSH Fail2ban? [y/N]: ' ;;
+            ufw) printf 'Enable UFW if currently inactive? [y/N]: ' ;;
+        esac
+        answer=''
+        IFS= read -r answer || :
+        case "$answer" in y|Y|yes|YES) RESTORE_RESULTS[$component]=requested ;; esac
+    done
+    printf 'Selected: DoT=%s APT=%s Fail2ban=%s UFW=%s\n' \
+        "${RESTORE_RESULTS[dot]}" "${RESTORE_RESULTS[apt]}" "${RESTORE_RESULTS[fail2ban]}" "${RESTORE_RESULTS[ufw]}"
+}
+
+prepare_restore_security() {
+    local component selected=0
+    for component in dot apt fail2ban ufw; do
+        [[ ${RESTORE_RESULTS[$component]} != requested ]] || selected=1
+    done
+    (( selected )) || return 0
+    RESTORE_SECURITY_HELPER=$STAGING/managed-security.py
+    curl -q -fSL --connect-timeout 10 --max-time 30 \
+        "https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/$RESTORE_SOURCE/assets/security/managed.py" \
+        -o "$RESTORE_SECURITY_HELPER" > "$STAGING/security-download.log" 2>&1 &&
+        python3 - "$RESTORE_SECURITY_HELPER" <<'PY'
+import ast, pathlib, sys
+ast.parse(pathlib.Path(sys.argv[1]).read_bytes())
+PY
+    [[ $? == 0 ]] || die 'Cannot prepare selected Security from the verified project revision; core was not replaced.'
+    [[ $(python3 "$RESTORE_SECURITY_HELPER" --capabilities) == '{"status": "compatible", "interface": "managed-restore-security:1"}' ]] ||
+        die 'Security interface is incompatible; core was not replaced.'
+    mkdir -m 0700 "$STAGING/security-state"
+}
+
+# Only allowlisted machine results control recovery. Never infer it from prose.
+restore_security_result() {
+    local component=$1 action=$2 status code=0
+    case "$action" in
+        prepare) python3 "$RESTORE_SECURITY_HELPER" --prepare-dns "$STAGING/dns-checkpoint" ;;
+        rollback) python3 "$RESTORE_SECURITY_HELPER" --rollback-dns "$STAGING/dns-checkpoint" ;;
+        configure) python3 "$RESTORE_SECURITY_HELPER" --configure "$component" --state "$STAGING/security-state" ;;
+        *) return 1 ;;
+    esac > "$STAGING/security-result.json" 2> "$STAGING/security-error.log" || code=$?
+    status=$(python3 - "$STAGING/security-result.json" "$component" "$code" <<'PY'
+import json, sys
+r=json.load(open(sys.argv[1])); name=sys.argv[2]
+status=r[name] if name in r else r['status']
+if status not in ('configured','preserved','failed_rolled_back','failed_unverified','not_enabled'):
+    raise ValueError('Invalid Security result')
+if status in ('configured','preserved') and int(sys.argv[3]): raise ValueError('Inconsistent Security result')
+for warning in r.get('warnings',[]):
+    if not isinstance(warning,str): raise ValueError('Invalid warning')
+    print(json.dumps(warning,ensure_ascii=True),file=sys.stderr)
+print(status)
+PY
+    ) || status=failed_unverified
+    RESTORE_RESULTS[$component]=$status
+    case "$status" in configured|preserved) ;; *) RESTORE_PARTIAL=1 ;; esac
+    if [[ "$status" == failed_unverified ]]; then RESTORE_KEEP=1; fi
+}
+
+managed_restore_dns() {
+    [[ ${RESTORE_RESULTS[dot]} == requested ]] || return 0
+    # Even a malformed/interrupted helper result must retain its pre-mutation checkpoint.
+    RESTORE_DNS_PENDING=1
+    restore_security_result dot prepare
+    case ${RESTORE_RESULTS[dot]} in
+        configured) ;;
+        failed_rolled_back) RESTORE_DNS_PENDING=0 ;;
+        *) RESTORE_DNS_PENDING=0; die 'DoT recovery unverified; core was not replaced. Private DNS checkpoint retained.' ;;
+    esac
+}
+
+managed_restore_post_core() {
+    local component
+    for component in apt fail2ban ufw; do
+        [[ ${RESTORE_RESULTS[$component]} == requested ]] || continue
+        stage "Optional Security: $component (core committed)"
+        restore_security_result "$component" configure
+    done
+}
+
 cmd_restore() {
     stage 'Restore preflight'
     local archive=${1:-} service path
@@ -1932,15 +2117,17 @@ cmd_restore() {
         [[ "$archive" != "$path" && "$archive" != "$path/"* ]] ||
             die 'Move the archive outside managed paths (for example /var/backups/x-ui) before restore.'
     done
+    if (( RESTORE_MANAGED )); then restore_target_kind; fi
     host_identity
     # Bootstrap archive tools before validation/extraction; managed state is untouched.
     install_missing_packages python3 gzip tar
     gzip -t -- "$archive" || die 'Archive gzip integrity check failed.'
-    validate_archive "$archive"
+    if (( RESTORE_MANAGED )); then RESTORE_INFO=$(validate_archive "$archive" inspect);
+    else validate_archive "$archive"; fi
     prepare_store restore
     tar -xzf "$archive" -C "$STAGING" --same-owner
     check_compatibility
-    install_missing_packages "${PACKAGES[@]}"
+    install_restore_packages
     check_python_dependencies
     quick_check "$STAGING/files$DB"
     ADGUARD_HOME=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["adguard_home"]).lower())' "$STAGING/meta.json")
@@ -1957,6 +2144,11 @@ cmd_restore() {
     mapfile -t account_domains <<< "$certificate_domains"
     [[ -z "$vision_account_domain" ]] || account_domains+=("$vision_account_domain")
     project_certbot_accounts "$STAGING/files/etc/letsencrypt" "${account_domains[@]}" > /dev/null || die 'Invalid/conflicting managed Certbot account metadata.'
+    if (( RESTORE_MANAGED )); then
+        managed_restore_confirm || { RESTORE_MANAGED=0; return 0; }
+        prepare_restore_security
+        managed_restore_dns
+    fi
     save_restore_services
     pause_certbot_timer
     # Quiesce only after incoming staged state passes all static/native checks.
@@ -1997,10 +2189,16 @@ cmd_restore() {
     rm -f -- "$XHTTP_SOCKET"
     restore_service_states
     check_health
-    RESTORE_RECOVERY=0 RESTORE_MUTATED=0
-    rm -rf -- "$ROLLBACK_DIR"
+    # Owner-context commit: no later failure may recover the old target.
+    RESTORE_RECOVERY=0 RESTORE_MUTATED=0 RESTORE_DNS_PENDING=0
+    RESTORE_RESULTS[core]=success
+    if ! rm -rf -- "$ROLLBACK_DIR"; then
+        RESTORE_PARTIAL=1 RESTORE_KEEP=1
+        warn "Core committed; cannot remove previous private recovery material: $ROLLBACK_DIR"
+    fi
     ROLLBACK_DIR=''
-    printf '\nRestore completed successfully.\n'
+    if (( RESTORE_MANAGED )); then managed_restore_post_core;
+    else printf '\nRestore completed successfully.\n'; fi
     warn 'Recovery uses the saved domains. On a new VPS, point their DNS to this VPS separately.'
 }
 
@@ -2116,6 +2314,10 @@ main() {
     local BACKUP_JSON=0
     case ${1:-} in
         capabilities) printf '%s\n' 'xui-backup:1 inspect backup-json lock-fd9'; return ;;
+        restore-plan)
+            [[ $# == 2 && "$2" =~ ^[0-9a-f]{40}$ ]] || die 'Managed Restore requires an exact project commit SHA.'
+            printf '{"mode":"managed-restore","version":1,"source_ref":"%s"}\n' "$2"
+            return ;;
         inspect)
             [[ $# == 2 ]] || die 'Usage: x-ui-backup inspect <archive>'
             command -v python3 >/dev/null && command -v gzip >/dev/null || die 'Inspect requires Python 3 and gzip; no packages were installed.'
@@ -2128,7 +2330,7 @@ main() {
         return
     fi
     require_root
-    case ${1:-} in backup|restore|update-hooks|lock-check) acquire_stack_lock || return $? ;; esac
+    case ${1:-} in backup|restore|managed-restore|update-hooks|lock-check) acquire_stack_lock || return $? ;; esac
     [[ ${1:-} != lock-check ]] || return 0
     if [[ ${1:-} == backup && ${2:-} == --json && $# == 2 ]]; then
         BACKUP_JSON=1
@@ -2142,6 +2344,10 @@ main() {
     case ${1:-} in
         backup) cmd_backup ;;
         restore) cmd_restore "${2:-}" ;;
+        managed-restore)
+            [[ $# == 3 && "$3" =~ ^[0-9a-f]{40}$ && -t 0 && -t 1 ]] || die 'Managed Restore requires a TTY, archive and exact project SHA.'
+            RESTORE_MANAGED=1 RESTORE_SOURCE=$3
+            cmd_restore "$2" ;;
         list) cmd_list ;;
         update-hooks) cmd_update_hooks ;;
         *) die 'Usage: x-ui-backup {backup [--json]|inspect <archive>|restore <archive>|extract <archive> <new-directory>|list|update-hooks}' ;;

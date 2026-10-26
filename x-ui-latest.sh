@@ -1828,6 +1828,7 @@ install_backup_tool() {
     fi
     if ! chown root:root "$temporary" || ! chmod 0755 "$temporary" ||
        ! backup_helper_compatible "$temporary" ||
+       { [[ ${1:-} == managed-restore ]] && ! restore_helper_compatible "$temporary"; } ||
        ! mv -fT "$temporary" /usr/local/bin/x-ui-backup; then
         rm -f "$temporary"
         msg_err "Failed to install the backup tool."
@@ -3090,6 +3091,22 @@ prepare_backup_helper() {
     backup_helper_compatible || { msg_err 'Backup helper protocol verification failed.'; return 1; }
 }
 
+prepare_restore_helper() {
+    bootstrap_panel_dependencies || return 1
+    [[ -n ${PROJECT_SOURCE_SHA:-} && $PROJECT_SOURCE_SHA == "${PROJECT_REF:-}" ]] || pin_project_source || return 1
+    prepare_backup_helper || return 1
+    if ! restore_helper_compatible >/dev/null 2>&1; then
+        install_backup_tool managed-restore || return 1
+        backup_helper_compatible || return 1
+    fi
+    restore_helper_compatible
+}
+
+restore_helper_compatible() {
+    bash "${1:-/usr/local/bin/x-ui-backup}" restore-plan "$PROJECT_SOURCE_SHA" |
+        python3 -c 'import json,sys; r=json.load(sys.stdin); sys.exit(r!={"mode":"managed-restore","version":1,"source_ref":sys.argv[1]})' "$PROJECT_SOURCE_SHA"
+}
+
 backup_list() {
     local archive size timestamp number=0
     BACKUP_CHOICES=()
@@ -3106,10 +3123,10 @@ backup_list() {
 
 backup_action() (
     acquire_stack_lock || exit $?
-    local action=$1 choice archive answer
+    local action=$1 choice archive
     if [[ "$action" == list ]]; then backup_list; exit $?; fi
-    prepare_backup_helper || exit 1
     if [[ "$action" == backup ]]; then
+        prepare_backup_helper || exit 1
         local result
         result=$(bash /usr/local/bin/x-ui-backup backup --json) || exit $?
         printf '%s\n' "$result" | python3 -c 'import json,sys; r=json.load(sys.stdin); r.get("status")=="success" or sys.exit(1); print("Created archive: "+ascii(r["archive"]))' || exit 1
@@ -3124,11 +3141,8 @@ backup_action() (
         archive=${BACKUP_CHOICES[10#$choice-1]}
     elif [[ "$choice" == /* ]]; then archive=$choice
     else msg_err 'Enter an archive number or absolute path.'; exit 1; fi
-    bash /usr/local/bin/x-ui-backup inspect "$archive" || exit $?
-    printf 'Restore replaces project-managed data. Trust this archive before continuing.\nType YES to restore: '
-    IFS= read -r answer || exit 0
-    [[ "$answer" == YES ]] || { printf 'Cancelled.\n'; exit 0; }
-    bash /usr/local/bin/x-ui-backup restore "$archive"
+    prepare_restore_helper || exit 1
+    bash /usr/local/bin/x-ui-backup managed-restore "$archive" "$PROJECT_SOURCE_SHA"
 )
 
 run_installation() (

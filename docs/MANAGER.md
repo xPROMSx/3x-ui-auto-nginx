@@ -16,8 +16,30 @@ that operation. Listing shows UTC file dates and byte sizes, without opening eac
 archive. A listed filename is not evidence of integrity or trusted provenance.
 Restore accepts a list number or absolute path, shows archive metadata and asks
 for `YES` before replacing managed data. Restore keeps the existing Backup v3
-OS/version/architecture and recovery contracts; additional security configuration
-and domain changes are not part of this menu.
+OS/version/architecture and recovery contracts. A clean compatible target is
+supported; a partial or foreign installation is refused before replacement.
+Packages may be installed during preparation; this is not a full OS upgrade.
+
+The v2.2.0 Restore menu asks separately, with default **No**, for strict system
+DoT, automatic APT security updates, SSH Fail2ban and enabling inactive UFW.
+Existing Security is preserved unless explicitly selected. APT opt-in includes
+automatic reboots at **04:38 local server time**, including with users connected.
+UFW activation requires confirmed native SSH listeners/current session; active
+firewall rules and policy are preserved. Domain changes are not part of Restore.
+
+Archive validation, extraction and staged checks run once in the Backup utility.
+Only then can selected DoT prepare its private checkpoint. Verified DNS rollback
+permits core Restore with a partial result; unverified DNS recovery stops before
+replacement. Core failure uses existing Restore recovery and its own pending DNS
+checkpoint. After mandatory core health succeeds, the utility clears its rollback
+guards in the owning shell. Selected APT, Fail2ban and UFW run independently after
+that commit; their failure cannot roll the restored database/certificates back.
+A requested failure yields **PARTIAL/nonzero** and the menu session ends. Private
+recovery materials are retained if recovery cannot be verified.
+
+Active expired/not-yet-valid certificates are refused: renew on the source and
+make a new Backup. An IPv6-disabled target requires an archive whose effective
+nginx listeners support IPv4-only operation; arbitrary nginx files are not rewritten.
 
 The standalone CLI remains available:
 
@@ -40,7 +62,9 @@ stdout: `{"status":"success","archive":"/exact/archive/path"}`. A result-output
 failure returns nonzero and retains the already verified archive. Default Backup
 output remains human readable. Backups contain secrets; keep an off-host copy.
 
-The menu reuses a trusted root-owned compatible installed utility offline. For an
+Create/compatible standalone operations reuse a trusted root-owned installed utility offline.
+Managed Restore additionally verifies its new interface and pins the running source;
+selected Security code comes only from that exact project revision, never the archive. For an
 older utility it prepares and validates a replacement before atomic installation;
 failed download/replacement preserves the previous utility. The selected project
 source is pinned before downloading code, with no fallback to a different tree.

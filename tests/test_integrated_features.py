@@ -1123,3 +1123,54 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
         self.assertEqual(result.returncode,1,result.stderr)
         self.assertNotIn('install_initial_client',result.stdout)
         self.assertIn('failed_unverified',result.stdout)
+
+    def test_selected_security_components_and_unexpected_failure_are_independent(self):
+        security=helper('security');calls=[]
+        def outcome(name, fail=False):
+            def operation(root,state):
+                calls.append(name)
+                if fail:raise OSError('controlled failure')
+                return {'status':'configured','warnings':[]}
+            return operation
+        with patch.object(security,'configure_apt',side_effect=outcome('apt')), \
+             patch.object(security,'configure_fail2ban',side_effect=outcome('fail2ban',True)), \
+             patch.object(security,'configure_ufw',side_effect=outcome('ufw')):
+            one=security.configure(components=('apt',))
+            self.assertEqual(calls,['apt']);self.assertEqual(one['fail2ban'],'not_requested')
+            calls.clear();all_components=security.configure(components=('apt','fail2ban','ufw'))
+            self.assertEqual(calls,['apt','fail2ban','ufw'])
+            self.assertEqual(all_components['status'],'partial')
+            self.assertEqual(all_components['apt'],'configured');self.assertEqual(all_components['ufw'],'configured')
+            self.assertEqual(all_components['fail2ban'],'failed_unverified')
+        with self.assertRaises(ValueError):security.configure(components=('dot',))
+
+    def test_requested_ufw_requires_confirmed_ssh_and_preserves_active_policy(self):
+        security=helper('security')
+        calls=[]
+        def command(*args,**kwargs):
+            calls.append(args)
+            if args[:2]==('ufw','status'):return 'Status: active'
+            raise AssertionError('Active firewall must be preserved')
+        with patch.object(security,'command',side_effect=command):
+            self.assertEqual(security.configure_ufw()['status'],'preserved')
+        self.assertEqual(calls,[('ufw','status')])
+        for kind in ('service','socket','unknown','missing-listener','wrong-session'):
+            calls=[]
+            def command(*args,**kwargs):
+                calls.append(args)
+                if args==('/usr/sbin/sshd','-t'):return ''
+                if args==('/usr/sbin/sshd','-T'):return 'port 2222\n'
+                if args[:2]==('systemctl','is-active'):
+                    return ('active' if args[2]=='ssh.socket' else 'inactive') if kind=='socket' else ('unknown' if kind=='unknown' else ('active' if args[2]=='ssh.service' else 'inactive'))
+                if args[:3]==('systemctl','show','ssh.socket'):return '[::]:2222 (Stream)'
+                if args[:3]==('systemctl','show','ssh.service'):return '1234'
+                if args[0]=='ss':return '' if kind=='missing-listener' else 'LISTEN 0 128 0.0.0.0:2222 0.0.0.0:* users:(("sshd",pid=1234,fd=3))'
+                if args[:2]==('ufw','status'):return 'Status: inactive'
+                if args[:2]==('systemctl','is-enabled'):return 'disabled'
+                raise AssertionError('No mutation permitted for unknown SSH')
+            with self.subTest(kind=kind),patch.object(security,'command',side_effect=command), \
+                 patch.dict(os.environ,{'SSH_CONNECTION':'192.0.2.1 50000 192.0.2.2 '+('22' if kind=='wrong-session' else '2222')}):
+                if kind in ('service','socket'):self.assertEqual(security.confirmed_ssh_ports(),[2222])
+                else:
+                    self.assertEqual(security.configure_ufw()['status'],'not_enabled')
+                    self.assertFalse(any(a[0]=='ufw' and a[1]!='status' for a in calls))

@@ -20,7 +20,7 @@ import unittest
 from urllib.parse import parse_qs, urlsplit
 
 
-def nginx_first_install_ipv4():
+def nginx_first_install_ipv4(restore=False):
     """Actual APT postinst + first systemd start, only in the disposable VM."""
     from test_installer_compatibility import complete_function
     assert 'ipv6.disable=1' in Path('/proc/cmdline').read_text().split()
@@ -39,8 +39,11 @@ def nginx_first_install_ipv4():
         assert not list(Path('/etc/nginx/sites-enabled').glob('*')),'Old nginx sites remain'
         script='\n'.join(complete_function(name) for name in
             ('apt_system','install_packages','ipv6_available','prepare_acme_webroot','setup_acme_http'))
+        bootstrap='install_packages'
+        if restore:
+            bootstrap='source /repo/assets/backup/x-ui-backup.sh; install_restore_packages; systemctl enable --now nginx'
         subprocess.run(['bash','-eu','-c','msg_err() { echo "$*" >&2; };\n'+script+
-            '\ninstall_packages && setup_acme_http'],env=env,check=True,timeout=150)
+            '\n'+bootstrap+'; setup_acme_http'],env=env,check=True,timeout=150)
         subprocess.run(['dpkg-query','-W','nginx','nginx-common','nginx-full'],check=True,timeout=10)
         subprocess.run(['nginx','-t'],check=True,timeout=10)
         subprocess.run(['systemctl','is-active','--quiet','nginx'],check=True,timeout=10)
@@ -53,7 +56,12 @@ def nginx_first_install_ipv4():
             response=connection.getresponse()
             assert response.status==200 and response.read()==token.read_bytes()
         finally:connection.close();token.unlink()
-    print('REAL first APT nginx install / AF_INET6 disabled / IPv4 HTTP-01: PASS',flush=True)
+    print('REAL '+('Restore' if restore else 'Installer')+' first APT nginx install / AF_INET6 disabled / IPv4 HTTP-01: PASS',flush=True)
+    if not restore:
+        # Only the ACME site made above, in this disposable native guest.
+        for path in ('/etc/nginx/sites-available/80.conf','/etc/nginx/sites-enabled/80.conf'):
+            Path(path).unlink(missing_ok=True)
+        nginx_first_install_ipv4(restore=True)
 
 
 def nightly_after_cold_boot():

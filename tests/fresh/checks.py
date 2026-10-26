@@ -49,13 +49,14 @@ def adguard_state(rewrite=None):
     return {'upstreams':{k:dns[k] for k in ('upstream_dns','bootstrap_dns','fallback_dns','upstream_mode') if k in dns},
             'rewrites':request('rewrite/list')}
 
-def installed(cold=False):
+def installed(cold=False, security=True):
     root=ROOT; checks={}
     boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip().replace('-','')
     if cold:
         assert boot!=(root/'first-boot-id').read_text().strip()
         checks['new_boot_id']=True
     units=('ssh','nginx','x-ui','mtr-backend','AdGuardHome','fail2ban','apt-daily.timer','apt-daily-upgrade.timer','certbot.timer','systemd-resolved')
+    if not security:units=tuple(u for u in units if u not in ('fail2ban','apt-daily.timer','apt-daily-upgrade.timer'))
     deadline=time.monotonic()+90
     while True:
         missing=[u for u in units if subprocess.run(['systemctl','is-active','--quiet',u],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode]
@@ -76,9 +77,10 @@ def installed(cold=False):
     assert xui_version==baseline['version'][1:] and xray_version==baseline['xray']
     checks['installed_verified_baseline']=True
     run('nginx','-t');checks['nginx_syntax']=True
-    assert run('busctl','get-property','org.freedesktop.resolve1','/org/freedesktop/resolve1','org.freedesktop.resolve1.Manager','DNSOverTLS').strip()=='s "yes"'
+    if security:
+        assert run('busctl','get-property','org.freedesktop.resolve1','/org/freedesktop/resolve1','org.freedesktop.resolve1.Manager','DNSOverTLS').strip()=='s "yes"'
     assert 'tech0.ru' in run('resolvectl','domain')
-    run('resolvectl','query','--cache=no','cloudflare.com');run('getent','ahosts','debian.org');checks['native_DNS_DoT_search_domain']=True
+    run('resolvectl','query','--cache=no','cloudflare.com');run('getent','ahosts','debian.org');checks['native_DNS_DoT_search_domain' if security else 'native_DNS_search_domain']=True
     deadline=time.monotonic()+45
     while True:
         try:
@@ -152,9 +154,10 @@ def installed(cold=False):
         packet=ident+struct.pack('!5H',0x100,1,0,0,0)+question
         validate_dns(native_query(),ident,'native_udp',0)
         checks['AGH_Backup_upstreams_and_rewrite_persisted']=True
-    run('fail2ban-client','status','sshd')
-    for unit in ('apt-daily.timer','apt-daily-upgrade.timer'):run('systemctl','is-active','--quiet',unit)
-    checks['fail2ban_APT_timers']=True
+    if security:
+        run('fail2ban-client','status','sshd')
+        for unit in ('apt-daily.timer','apt-daily-upgrade.timer'):run('systemctl','is-active','--quiet',unit)
+        checks['fail2ban_APT_timers']=True
     from install import mtr_api
     mtr_api();checks['restricted_mtr_http']=True
     assert Path('/usr/local/bin/x-ui-backup').is_file();checks['backup_tool_present']=True

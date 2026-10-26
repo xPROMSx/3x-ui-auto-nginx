@@ -112,6 +112,8 @@ class ManagerBackup(unittest.TestCase):
         import json
         from test_personal_backup import relocated
         archive=self.f.backup()
+        self.f.write('/etc/systemd/system/x-ui.service','[Service]\nExecStart='+str(self.f.path('/usr/local/x-ui/x-ui'))+'\n')
+        self.f.write('/etc/ssl/certs/ca-certificates.crt','fixture CA; no downloads')
         self.f.write('/etc/x-ui/target-marker','previous target')
         before=json.loads((self.f.root/'services.json').read_text())
         helper=self.f.path('/usr/local/bin/x-ui-backup');helper.parent.mkdir(parents=True,exist_ok=True)
@@ -119,13 +121,16 @@ class ManagerBackup(unittest.TestCase):
         library=relocated((ROOT/'x-ui-latest.sh').read_text(),self.f.root)
         library=library.replace(str(self.f.root)+'/proc/','/proc/').replace('/run/3x-ui-auto-nginx',str(self.f.root)+'/run/3x-ui-auto-nginx')
         library=library.replace(' /usr ', ' '+str(self.f.root/'usr')+' ')
+        # Source verification is tested separately; this fixture starts after pinning.
+        library=library.replace('if [[ ${BASH_SOURCE[0]} == "$0" ]]',
+            'PROJECT_SOURCE_SHA='+('a'*40)+'; PROJECT_REF=$PROJECT_SOURCE_SHA\nif [[ ${BASH_SOURCE[0]} == "$0" ]]')
         script=self.f.root/'menu.sh';script.write_text(library)
         for scenario,flags in (('pre-mutation',{'FAIL_NGINX':'1'}),
                                ('verified',{'FAIL_HEALTH_SERVICE':'mtr-backend','FAIL_ONCE':'1'}),
                                ('unverified',{'FAIL_HEALTH_SERVICE':'mtr-backend'})):
             with self.subTest(scenario=scenario):
                 (self.f.root/'commands').write_text('');(self.f.root/'fault-used').unlink(missing_ok=True)
-                code,text=tty_run(script,b'3\n3\n'+str(archive).encode()+b'\nYES\n1\n',timeout=90,env={**self.f.env,**flags})
+                code,text=tty_run(script,b'3\n3\n'+str(archive).encode()+b'\nYES\nn\nn\nn\nn\n1\n',timeout=90,env={**self.f.env,**flags})
                 self.assertNotEqual(code,0,text)
                 self.assertIn('FAILED (exit ',text);self.assertNotIn('SUCCESS',text)
                 self.assertEqual(text.count('1. Installation'),1)
@@ -324,3 +329,24 @@ class ManagerBackup(unittest.TestCase):
         path.symlink_to(foreign)
         result=self.f.run_tool('lock-check');self.assertNotEqual(result.returncode,0)
         self.assertEqual(foreign.read_text(),'untouched');self.assertTrue(path.is_symlink())
+
+    def test_clean_restore_upgrade_checks_candidate_before_replacing_compatible_old_helper(self):
+        from test_personal_backup import function,relocated
+        helpers='\n'.join(relocated(function(n),self.f.root) for n in
+            ('backup_helper_path_safe','backup_helper_compatible','install_backup_tool','prepare_backup_helper',
+             'restore_helper_compatible','prepare_restore_helper'))
+        target=self.f.path('/usr/local/bin/x-ui-backup');target.parent.mkdir(parents=True,exist_ok=True)
+        # Protocol 1 is still useful for ordinary Backup, even without managed Restore.
+        old=self.f.script.read_text().replace('        restore-plan)', '        obsolete-plan)')
+        target.write_text(old);target.chmod(0o755)
+        setup='msg_err() { echo "$*" >&2; }; bootstrap_panel_dependencies() { :; }; PROJECT_SOURCE_SHA='+('a'*40)+'; PROJECT_REF=$PROJECT_SOURCE_SHA; GITHUB_RAW=https://source.invalid/exact;\n'
+        def invoke(candidate,operation):
+            download='curl() { command cp '+str(candidate)+' "${@: -1}"; };\n'
+            return subprocess.run(['bash','-c',self.lock_script('acquire_stack_lock || exit $?')+'\n'+helpers+'\n'+setup+download+operation],capture_output=True,text=True)
+        candidate=self.f.root/'old-candidate';candidate.write_text(old)
+        result=invoke(candidate,'prepare_backup_helper')
+        self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(target.read_text(),old)
+        result=invoke(candidate,'prepare_restore_helper')
+        self.assertNotEqual(result.returncode,0);self.assertEqual(target.read_text(),old)
+        result=invoke(self.f.script,'prepare_restore_helper')
+        self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(target.read_bytes(),self.f.script.read_bytes())

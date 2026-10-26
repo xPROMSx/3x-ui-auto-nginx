@@ -25,6 +25,12 @@ mkdir -p /run/sshd
 sshd_pid=$!
 apt_system -s -y dist-upgrade
 apt_system -y dist-upgrade
+# Exercise the actual Restore bootstrap on the same minimal supported OS.
+(
+    # shellcheck disable=SC1091
+    source "$repo/assets/backup/x-ui-backup.sh"
+    install_restore_packages
+)
 INSTALL=y install_packages
 # Exercise removal through the same wrapper, independently of the MTR choice.
 apt_system -y remove mtr-tiny

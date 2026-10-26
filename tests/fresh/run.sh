@@ -2,6 +2,13 @@
 # All installer operations happen inside the disposable VM, never on this host.
 set -Eeuo pipefail
 umask 077
+mode=${1:-fresh}
+distro=${2:-ubuntu:26.04}
+case "$mode:$distro" in
+    fresh:ubuntu:26.04) program=acceptance.py ;;
+    restore:ubuntu:24.04|restore:ubuntu:26.04) program=restore_acceptance.py ;;
+    *) echo 'Usage: tests/fresh/run.sh [restore ubuntu:24.04|ubuntu:26.04]' >&2; exit 2 ;;
+esac
 repository=$(git rev-parse --show-toplevel)
 ref=$(git rev-parse HEAD)
 [[ "$ref" =~ ^[0-9a-f]{40}$ ]]
@@ -23,7 +30,7 @@ secret=()
 if [[ -f /etc/ssl/certs/ca-certificates.crt ]]; then
     secret=(--secret id=proxy_ca,src=/etc/ssl/certs/ca-certificates.crt)
 fi
-timeout 8m docker build "${secret[@]}" -t xui-fresh-root -f "$repository/tests/fresh/Dockerfile" "$repository"
+timeout 8m docker build "${secret[@]}" --build-arg "DISTRO=$distro" -t xui-fresh-root -f "$repository/tests/fresh/Dockerfile" "$repository"
 timeout 8m docker build "${secret[@]}" -t xui-fresh-tools -f "$repository/tests/systemd/tools.Dockerfile" "$repository"
 date +%s > "$work/images.ready"
 root_container=$(docker create xui-fresh-root)
@@ -44,9 +51,10 @@ for mapping in "${proxy_hosts[@]}"; do network+=(--add-host "$mapping"); done
 docker run --name "$container" --rm --memory=6g --cpus=2 "${network[@]}" \
     -e HTTP_PROXY -e HTTPS_PROXY -e ALL_PROXY -e http_proxy -e https_proxy -e all_proxy \
     -e "XUI_AUTO_REF=$ref" \
+    -e "ACCEPTANCE_PROGRAM=$program" \
     -e CURL_CA_BUNDLE=/run/proxy-ca.pem \
     --mount "type=bind,src=$work,dst=/pilot" \
     --mount "type=bind,src=$repository,dst=/repo,readonly" \
     --mount type=bind,src=/etc/ssl/certs/ca-certificates.crt,dst=/run/proxy-ca.pem,readonly \
     xui-fresh-tools bash -ec \
-    'bash /repo/tests/fresh/prepare.sh; date +%s > /pilot/disk.ready; python3 /repo/tests/fresh/acceptance.py'
+    'bash /repo/tests/fresh/prepare.sh; date +%s > /pilot/disk.ready; python3 "/repo/tests/fresh/$ACCEPTANCE_PROGRAM"'

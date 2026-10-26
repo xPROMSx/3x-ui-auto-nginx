@@ -302,7 +302,7 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 ## ⚙️ 技术细节与兼容性
 
 - **系统：** Ubuntu 24.04、Ubuntu 26.04 和 Debian 13。
-- **UFW：** 允许 80/tcp、443/tcp 和 443/udp（选择安装 AmneziaWG 时可额外开放 8443/udp）。仅在检测到并放行 SSH 端口后，才会启用原本未启用的 UFW；否则保持未启用并给出警告。**⚠️ 恢复操作绝不会启用 UFW。**
+- **UFW：** 允许 80/tcp、443/tcp 和 443/udp（选择安装 AmneziaWG 时可额外开放 8443/udp）。仅在检测到并放行 SSH 端口后，才会启用原本未启用的 UFW；否则保持未启用并给出警告。**⚠️ 独立 CLI 恢复不会启用 UFW。v2.2.0 菜单中的安全设置和 UFW 启用需要单独确认，并验证 SSH 访问。**
 - **证书：** 通过 Let's Encrypt webroot 和系统 `certbot.timer` 自动续期，无需停止 nginx。
 - **3x-ui 版本：** 默认安装已针对 3X-UI AUTO NGINX 进行充分兼容性测试的最新版本，并不一定是 3x-ui 上游刚发布的最新版。安装完成后，你可以通过 3x-ui 自带的更新功能自行升级，但新版本与现有配置的兼容性可能尚未得到验证。也可以通过 `-version <tag>` 明确指定其他稳定版（最低支持 v3.8.0）；安装程序会提醒该版本尚未通过兼容性验证。
 

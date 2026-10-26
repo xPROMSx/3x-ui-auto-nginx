@@ -52,7 +52,7 @@ def ssh_ports(effective, socket_listen=''):
     if socket_listen:
         # systemctl show Listen: "[::]:2222 (Stream) 0.0.0.0:2200 (Stream)".
         matches = re.findall(r'(\S+) \(Stream\)', socket_listen)
-        if not matches:
+        if not matches or re.sub(r'\S+ \(Stream\)', '', socket_listen).strip():
             raise ValueError('Unrecognized ssh.socket Listen property')
         ports = {int(value.rsplit(':', 1)[-1]) for value in matches}
     if not ports or any(not 1 <= port <= 65535 for port in ports):
@@ -150,7 +150,7 @@ class Transaction:
         path.chmod(0o644)
 
     def save_dns(self, directory):
-        # Only the original DNS snapshot crosses installer subprocesses.
+        # Private file/service snapshot; load_dns still accepts only its DNS scope.
         directory=Path(directory)
         shutil.copytree(self.temp.name,directory,symlinks=True)
         directory.chmod(0o700)
@@ -342,15 +342,15 @@ def rollback_dns_checkpoint(state, root=Path('/')):
         if txn is not None: txn.temp.cleanup()
 
 
-def configure(root=Path('/')):
-    # DNS was prepared before cleanup. Neither component may change its files/service.
-    result = {'status': 'partial', 'warnings': []}
+def configure_apt(root=Path('/'), state=None):
+    result={'warnings':[]}
     txn = None
     stage = 'APT preflight'
     try:
         os_id = preflight(root, files=FILES[1:4], services=SERVICES[1:3])
         origins = apt_origins(command('apt-config', 'dump'))
         txn = Transaction(root, files=FILES[1:4], services=SERVICES[1:3])
+        if state is not None: txn.save_dns(Path(state)/'apt')
         stage = 'installing unattended-upgrades'
         command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
                 '-o', 'Dpkg::Options::=--force-confold', '--no-remove', 'install', '-y', '--no-install-recommends', 'unattended-upgrades')
@@ -375,6 +375,12 @@ def configure(root=Path('/')):
     finally:
         if txn is not None: txn.temp.cleanup()
 
+    result['status']=result.pop('apt')
+    return result
+
+
+def configure_fail2ban(root=Path('/'), state=None):
+    result={'warnings':[]}
     txn = None
     stage = 'Fail2ban preflight'
     try:
@@ -385,6 +391,7 @@ def configure(root=Path('/')):
         if password_warning(effective):
             result['warnings'].append('SSH PASSWORD AUTHENTICATION IS ENABLED. SSH policy was preserved; review it separately.')
         txn = Transaction(root, files=FILES[:1], services=SERVICES[:1])
+        if state is not None: txn.save_dns(Path(state)/'fail2ban')
         stage = 'installing Fail2ban dependencies'
         command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
                 '-o', 'Dpkg::Options::=--force-confold', '--no-remove', 'install', '-y', '--no-install-recommends', 'fail2ban', 'python3-systemd', 'nftables')
@@ -417,7 +424,82 @@ bantime = 3600
         result['warnings'].append('Fail2ban failed during '+stage+': '+str(error)+'; rollback='+status+rollback_error+'; other components retained. Package changes remain.')
     finally:
         if txn is not None: txn.temp.cleanup()
-    if result['apt'] == result['fail2ban'] == 'configured': result['status'] = 'configured'
+    result['status']=result.pop('fail2ban')
+    return result
+
+
+def confirmed_ssh_ports():
+    command('/usr/sbin/sshd','-t')
+    effective=command('/usr/sbin/sshd','-T')
+    socket_state=command('systemctl','is-active','ssh.socket',check=False)
+    if socket_state=='active':
+        listen=command('systemctl','show','ssh.socket','-p','Listen','--value')
+    elif socket_state in ('inactive','failed') and command('systemctl','is-active','ssh.service',check=False)=='active':
+        listen=''
+    else: raise ValueError('Cannot confirm active SSH service/socket; UFW not enabled')
+    ports=ssh_ports(effective,listen)
+    pid=command('systemctl','show','ssh.service','-p','MainPID','--value')
+    owners=([int(pid)] if pid.isdigit() and int(pid)>1 else [])+([1] if socket_state=='active' else [])
+    listeners=command('ss','-H','-ltnp').splitlines()
+    for port in ports:
+        if not any(len(line.split())>=5 and line.split()[3].rsplit(':',1)[-1]==str(port)
+                   and any(f'pid={owner},' in line for owner in owners) for line in listeners):
+            raise ValueError('Effective SSH port has no confirmed native listener; UFW not enabled')
+    connection=os.environ.get('SSH_CONNECTION','')
+    if connection:
+        import ipaddress
+        fields=connection.split()
+        if len(fields)!=4: raise ValueError('Cannot validate current SSH session; UFW not enabled')
+        ipaddress.ip_address(fields[0]);ipaddress.ip_address(fields[2])
+        if not fields[1].isdigit() or not 1<=int(fields[1])<=65535 or not fields[3].isdigit() or int(fields[3]) not in ports:
+            raise ValueError('Current SSH session does not match confirmed listeners; UFW not enabled')
+    return ports
+
+
+def configure_ufw(root=Path('/'), state=None):
+    txn=None
+    try:
+        status=command('ufw','status')
+        if status.startswith('Status: active'):return {'status':'preserved','warnings':[]}
+        if not status.startswith('Status: inactive'):raise ValueError('Unknown UFW status')
+        enabled=command('systemctl','is-enabled','ufw.service',check=False)
+        if enabled not in ('enabled','disabled'):raise ValueError('Custom/unavailable UFW service preserved')
+        ports=confirmed_ssh_ports()
+        files=('/etc/ufw/ufw.conf','/etc/ufw/user.rules','/etc/ufw/user6.rules')
+        for filename in files:
+            path=root/filename.lstrip('/')
+            if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_uid!=0 or path.stat().st_mode&0o022)):
+                raise ValueError('Unsafe UFW configuration; not enabled')
+        txn=Transaction(root,files=files,services=('ufw.service',))
+        if state is not None:txn.save_dns(Path(state)/'ufw')
+        for port in ports:command('ufw','allow',str(port)+'/tcp')
+        command('ufw','--force','enable')
+        if enabled=='disabled':command('systemctl','enable','ufw.service')
+        if (not command('ufw','status').startswith('Status: active') or
+                command('systemctl','is-enabled','ufw.service',check=False)!='enabled' or confirmed_ssh_ports()!=ports):
+            raise ValueError('UFW/SSH verification failed')
+        return {'status':'configured','warnings':[]}
+    except Exception as error:
+        status=command('ufw','status',check=False)
+        # Never delete administrator rules or blindly disable a concurrently changed firewall.
+        result='not_enabled' if status.startswith('Status: inactive') else 'failed_unverified'
+        return {'status':result,'warnings':['UFW enable failed: '+str(error)+'; '+result+
+            '. Existing/application/SSH rules are retained; inspect ufw status and SSH.']}
+    finally:
+        if txn is not None:txn.temp.cleanup()
+
+
+def configure(root=Path('/'), components=('apt','fail2ban'), state=None):
+    if len(set(components)) != len(components) or set(components)-{'apt','fail2ban','ufw'}:
+        raise ValueError('Unknown/duplicate Security component')
+    result={'status':'configured','warnings':[],'apt':'not_requested','fail2ban':'not_requested'}
+    for name in components:
+        operation={'apt':configure_apt,'fail2ban':configure_fail2ban,'ufw':configure_ufw}[name]
+        try:outcome=operation(root,state)
+        except Exception as error:
+            outcome={'status':'failed_unverified','warnings':[name+' outcome unverified: '+str(error)]}
+        result[name]=outcome['status'];result['warnings'].extend(outcome['warnings'])
+        if outcome['status'] not in ('configured','preserved'):result['status']='partial'
     return result
 
 
@@ -430,6 +512,14 @@ if __name__ == '__main__':
             result = prepare_dns(state=Path(sys.argv[2]) if len(sys.argv)==3 else None)
         elif len(sys.argv)==3 and sys.argv[1] == '--rollback-dns':
             result = rollback_dns_checkpoint(Path(sys.argv[2]))
+        elif sys.argv[1:]==['--capabilities']:
+            result={'status':'compatible','interface':'managed-restore-security:1'}
+        elif len(sys.argv)==5 and sys.argv[1]=='--configure' and sys.argv[3]=='--state':
+            state=Path(sys.argv[4])
+            if (os.geteuid()!=0 or not state.is_absolute() or state.is_symlink() or not state.is_dir()
+                    or state.stat().st_uid!=0 or state.stat().st_mode&0o077):
+                raise ValueError('Security requires a private root-owned recovery directory')
+            result=configure(components=tuple(sys.argv[2].split(',')),state=state)
         elif sys.argv[1:]:
             raise ValueError('Usage: managed-security.py [--preflight|--prepare-dns [checkpoint]|--rollback-dns checkpoint]')
         else:
