@@ -19,6 +19,9 @@ for `YES` before replacing managed data. Restore keeps the existing Backup v3
 OS/version/architecture and recovery contracts. A clean compatible target is
 supported; a partial or foreign installation is refused before replacement.
 Packages may be installed during preparation; this is not a full OS upgrade.
+Before any package installation or helper replacement, a separate explicit `YES`
+approves that preparation. Declining it leaves packages and the helper unchanged;
+the later confirmation still controls managed data replacement after staged checks.
 
 The v2.2.0 Restore menu asks separately, with default **No**, for strict system
 DoT, automatic APT security updates, SSH Fail2ban and enabling inactive UFW.

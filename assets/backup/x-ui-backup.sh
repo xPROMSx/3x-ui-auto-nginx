@@ -2040,6 +2040,13 @@ restore_target_kind() {
     fi
 }
 
+confirm_restore_preparation() {
+    local answer=''
+    printf 'Restore preparation may install system packages and replace x-ui-backup.\nManaged data replacement requires a separate confirmation after staged checks.\nType YES to prepare Restore: '
+    IFS= read -r answer || return 1
+    [[ "$answer" == YES ]] || { printf 'Cancelled.\n'; return 1; }
+}
+
 managed_restore_confirm() {
     local answer component
     printf '\n%s\nTarget: %s\n' "$RESTORE_INFO" "$RESTORE_TARGET"
@@ -2343,7 +2350,7 @@ main() {
         capabilities) printf '%s\n' 'xui-backup:1 inspect backup-json lock-fd9'; return ;;
         restore-plan)
             [[ $# == 2 && "$2" =~ ^[0-9a-f]{40}$ ]] || die 'Managed Restore requires an exact project commit SHA.'
-            printf '{"mode":"managed-restore","version":1,"source_ref":"%s"}\n' "$2"
+            printf '{"mode":"managed-restore","version":2,"source_ref":"%s"}\n' "$2"
             return ;;
         inspect)
             [[ $# == 2 ]] || die 'Usage: x-ui-backup inspect <archive>'
@@ -2372,7 +2379,10 @@ main() {
         backup) cmd_backup ;;
         restore) cmd_restore "${2:-}" ;;
         managed-restore)
-            [[ $# == 3 && "$3" =~ ^[0-9a-f]{40}$ && -t 0 && -t 1 ]] || die 'Managed Restore requires a TTY, archive and exact project SHA.'
+            [[ ( $# == 3 || ( $# == 4 && ${4:-} == --preparation-approved ) ) && "$3" =~ ^[0-9a-f]{40}$ && -t 0 && -t 1 ]] || die 'Managed Restore requires a TTY, archive and exact project SHA.'
+            # The manager obtained this explicit approval before helper replacement.
+            # Direct internal-mode callers must also approve before package bootstrap.
+            if [[ $# == 3 ]]; then confirm_restore_preparation || return 0; fi
             RESTORE_MANAGED=1 RESTORE_SOURCE=$3
             cmd_restore "$2" ;;
         list) cmd_list ;;

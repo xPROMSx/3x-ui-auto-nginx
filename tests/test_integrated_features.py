@@ -1144,6 +1144,19 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
             self.assertEqual(all_components['fail2ban'],'failed_unverified')
         with self.assertRaises(ValueError):security.configure(components=('dot',))
 
+    def test_restore_diagnostics_report_components_without_private_output(self):
+        import ast,re
+        tree=ast.parse((ROOT/'tests/fresh/restore_checks.py').read_text())
+        tree.body=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='restore_outcome']
+        namespace={'re':re};exec(compile(tree,'restore_checks.py','exec'),namespace)
+        output='private-url-and-token\ncore: failed_unverified\nRESTORE RESULT\r\ncore: success\r\ndot: configured\r\napt: failed_rolled_back\r\nfail2ban: configured\r\nufw: preserved\r\nOverall: PARTIAL\r\n'
+        actual=namespace['restore_outcome'](output,1)
+        self.assertEqual(actual,{'exit':1,'core':'success','overall':'PARTIAL',
+            'components':{'dot':'configured','apt':'failed_rolled_back','fail2ban':'configured','ufw':'preserved'}})
+        self.assertNotIn('private-url-and-token',json.dumps(actual))
+        malformed=namespace['restore_outcome'](output.replace('apt: failed_rolled_back','apt: arbitrary_private_value'),1)
+        self.assertEqual(malformed['components']['apt'],'unknown')
+
     def test_mihomo_reality_gate_rejects_new_or_different_restore_errors(self):
         import ast, contextlib, io, types
         tree=ast.parse((ROOT/'tests/fresh/restore_acceptance.py').read_text())

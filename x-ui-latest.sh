@@ -3108,9 +3108,16 @@ prepare_restore_helper() {
     restore_helper_compatible
 }
 
+confirm_restore_preparation() {
+    local answer=''
+    printf 'Restore preparation may install system packages and replace x-ui-backup.\nManaged data replacement requires a separate confirmation after staged checks.\nType YES to prepare Restore: '
+    IFS= read -r answer || return 1
+    [[ "$answer" == YES ]] || { printf 'Cancelled.\n'; return 1; }
+}
+
 restore_helper_compatible() {
     bash "${1:-/usr/local/bin/x-ui-backup}" restore-plan "$PROJECT_SOURCE_SHA" |
-        python3 -c 'import json,sys; r=json.load(sys.stdin); sys.exit(r!={"mode":"managed-restore","version":1,"source_ref":sys.argv[1]})' "$PROJECT_SOURCE_SHA"
+        python3 -c 'import json,sys; r=json.load(sys.stdin); sys.exit(r!={"mode":"managed-restore","version":2,"source_ref":sys.argv[1]})' "$PROJECT_SOURCE_SHA"
 }
 
 backup_list() {
@@ -3147,8 +3154,9 @@ backup_action() (
         archive=${BACKUP_CHOICES[10#$choice-1]}
     elif [[ "$choice" == /* ]]; then archive=$choice
     else msg_err 'Enter an archive number or absolute path.'; exit 1; fi
+    confirm_restore_preparation || exit 0
     prepare_restore_helper || exit 1
-    bash /usr/local/bin/x-ui-backup managed-restore "$archive" "$PROJECT_SOURCE_SHA"
+    bash /usr/local/bin/x-ui-backup managed-restore "$archive" "$PROJECT_SOURCE_SHA" --preparation-approved
 )
 
 run_installation() (

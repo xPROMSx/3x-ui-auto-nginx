@@ -36,9 +36,12 @@ def invoke(expression, name, timeout=180):
             saved=host.ssh('cat /root/pilot/last-restore-outcome.json',15)
             if saved.returncode==0:
                 outcome=json.loads(saved.stdout)
-                assert set(outcome)=={'exit','core','overall'} and type(outcome['exit']) is int
+                assert set(outcome)=={'exit','core','overall','components'} and type(outcome['exit']) is int
                 assert outcome['core'] in ('success','not_started','failed_rolled_back','failed_unverified','unknown')
                 assert outcome['overall'] in ('SUCCESS','PARTIAL','FAILED','UNKNOWN')
+                assert set(outcome['components'])=={'dot','apt','fail2ban','ufw'}
+                assert all(value in ('configured','preserved','not_requested','requested','not_enabled',
+                                     'failed_rolled_back','failed_unverified','unknown') for value in outcome['components'].values())
                 report[name+'_outcome']=outcome
         import re
         text=re.sub(r'\x1b\[[0-9;]*m','',(result.stdout+result.stderr).decode(errors='replace'))

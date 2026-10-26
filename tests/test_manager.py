@@ -78,6 +78,41 @@ class ManagerBackup(unittest.TestCase):
         from test_personal_backup import PersonalBackup
         self.f=PersonalBackup('runTest');self.f.setUp();self.addCleanup(self.f.doCleanups)
 
+    def test_restore_preparation_can_be_declined_without_package_or_helper_changes(self):
+        from test_personal_backup import relocated
+        archive=self.f.backup()
+        helper=self.f.path('/usr/local/bin/x-ui-backup');helper.parent.mkdir(parents=True,exist_ok=True)
+        helper.write_bytes(self.f.script.read_bytes()+b'\n# older installed helper\n');helper.chmod(0o755)
+        before=helper.read_bytes();inode=helper.stat().st_ino
+        library=relocated((ROOT/'x-ui-latest.sh').read_text(),self.f.root)
+        library=library.replace(str(self.f.root)+'/proc/','/proc/').replace('/run/3x-ui-auto-nginx',str(self.f.root)+'/run/3x-ui-auto-nginx')
+        library=library.replace(' /usr ', ' '+str(self.f.root/'usr')+' ')
+        library=library.replace('if [[ ${BASH_SOURCE[0]} == "$0" ]]',
+            'PROJECT_SOURCE_SHA='+('a'*40)+'; PROJECT_REF=$PROJECT_SOURCE_SHA; GITHUB_RAW=https://source.invalid/exact\n'
+            'curl() { command cp '+str(self.f.script)+' "${@: -1}"; };\nif [[ ${BASH_SOURCE[0]} == "$0" ]]')
+        script=self.f.root/'cancel-restore.sh';script.write_text(library)
+        for answer in (b'\n',b'n\n',b'yes\n'):
+            with self.subTest(answer=answer):
+                helper.write_bytes(before);helper.chmod(0o755);inode=helper.stat().st_ino
+                if answer!=b'\n':self.f.write('/etc/ssl/certs/ca-certificates.crt','fixture CA')
+                (self.f.root/'commands').write_text('')
+                code,text=tty_run(script,b'3\n3\n'+str(archive).encode()+b'\n'+answer+b'0\n0\n',timeout=30,env=self.f.env)
+                self.assertFalse(any(c[0]=='apt-get' for c in self.f.commands()),'Cancelled preparation installed packages')
+                self.assertEqual(helper.read_bytes(),before,'Cancelled preparation replaced the installed helper')
+                self.assertEqual(helper.stat().st_ino,inode)
+                self.assertEqual(code,0,text)
+
+    def test_direct_managed_restore_declines_before_package_bootstrap(self):
+        self.f.write('/etc/systemd/system/x-ui.service','[Service]\nExecStart='+str(self.f.path('/usr/local/x-ui/x-ui'))+'\n')
+        archive=self.f.backup()
+        entry=self.f.root/'direct-cancel.sh'
+        entry.write_text('bash "'+str(self.f.script)+'" managed-restore "'+str(archive)+'" '+('a'*40)+'\n')
+        (self.f.root/'commands').write_text('')
+        code,text=tty_run(entry,b'no\n',timeout=30,env={**self.f.env,'MISSING_PACKAGES':'nginx-full ca-certificates'})
+        self.assertFalse(any(c[0]=='apt-get' for c in self.f.commands()),'Cancelled preparation installed packages')
+        self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.f.commands()))
+        self.assertEqual(code,0,text)
+
     def test_inherited_backup_json_keeps_default_cli(self):
         result=self.f.run_tool('backup',BACKUP_JSON='1')
         self.assertEqual(result.returncode,0,result.stderr)
@@ -132,7 +167,7 @@ class ManagerBackup(unittest.TestCase):
                                ('unverified',{'FAIL_HEALTH_SERVICE':'mtr-backend'})):
             with self.subTest(scenario=scenario):
                 (self.f.root/'commands').write_text('');(self.f.root/'fault-used').unlink(missing_ok=True)
-                code,text=tty_run(script,b'3\n3\n'+str(archive).encode()+b'\nYES\nn\nn\nn\nn\n1\n',timeout=90,env={**self.f.env,**flags})
+                code,text=tty_run(script,b'3\n3\n'+str(archive).encode()+b'\nYES\nYES\nn\nn\nn\nn\n1\n',timeout=90,env={**self.f.env,**flags})
                 self.assertNotEqual(code,0,text)
                 self.assertIn('FAILED (exit ',text);self.assertNotIn('SUCCESS',text)
                 self.assertNotIn('Failed to download',text)

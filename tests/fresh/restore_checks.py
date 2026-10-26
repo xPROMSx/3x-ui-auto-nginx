@@ -109,6 +109,24 @@ def test_ssh_socket_ports():
     checks.run('systemctl','stop','ssh.service','ssh.socket')
     checks.run('systemctl','daemon-reload');checks.run('systemctl','enable','--now','ssh.socket')
     assert checks.run('systemctl','is-active','ssh.socket').strip()=='active'
+    # Activate ssh.service through its real socket before Security checks sshd.
+    with socket.create_connection(('127.0.0.1',2222),timeout=5) as client:
+        assert client.recv(200).startswith(b'SSH-2.0-')
+    checks.run('/usr/sbin/sshd','-t')
+
+
+def restore_outcome(output, exit_code):
+    # Only the final owned summary is public diagnostics, never raw TTY output.
+    summary=output.rsplit('RESTORE RESULT',1)[1] if 'RESTORE RESULT' in output else ''
+    states=dict(re.findall(r'^(core|dot|apt|fail2ban|ufw): ([a-z_]+)\r?$',summary,re.M))
+    allowed=('configured','preserved','not_requested','requested','not_enabled',
+             'failed_rolled_back','failed_unverified','unknown')
+    components={name:states.get(name,'unknown') if states.get(name,'unknown') in allowed else 'unknown'
+                for name in ('dot','apt','fail2ban','ufw')}
+    core=states.get('core','unknown')
+    if core not in ('success','not_started','failed_rolled_back','failed_unverified'):core='unknown'
+    overall=re.findall(r'^Overall: (SUCCESS|PARTIAL|FAILED)\r?$',summary,re.M)
+    return {'exit':exit_code,'core':core,'overall':overall[-1] if overall else 'UNKNOWN','components':components}
 
 
 def restore(scenario, ref):
@@ -160,7 +178,7 @@ def restore(scenario, ref):
     master,slave=pty.openpty()
     process=subprocess.Popen(['bash',str(ROOT/'x-ui-latest.sh')],stdin=slave,stdout=slave,stderr=slave,env=env)
     os.close(slave);output=bytearray();deadline=time.monotonic()+600
-    confirmed=False;exiting=False
+    prepared=False;confirmed=False;exiting=False
     os.write(master,answers)
     try:
         while time.monotonic()<deadline:
@@ -171,6 +189,8 @@ def restore(scenario, ref):
                 output.extend(part)
                 # Native APT may consume terminal input during package setup.
                 # Answer the actual Restore prompt, then the returning menu.
+                if not prepared and b'Type YES to prepare Restore: ' in output:
+                    os.write(master,b'YES\n');prepared=True
                 if not confirmed and b'Type YES to restore: ' in output:
                     os.write(master,b'YES\n'+choices);confirmed=True
                 if not exiting and b'Overall: SUCCESS' in output and output.count(b'Select an option: ')>=3:
@@ -183,14 +203,10 @@ def restore(scenario, ref):
         if blocker is not None:blocker.close()
         if fault is not None:fault.unlink()
         (ROOT/('restore-'+scenario+'.private.log')).write_bytes(output)
-        summary=output.decode(errors='replace')
-        core=re.findall(r'core: ([a-z_]+)',summary)
-        overall=re.findall(r'Overall: ([A-Z]+)',summary)
-        (ROOT/'last-restore-outcome.json').write_text(json.dumps({'exit':process.returncode,
-            'core':core[-1] if core else 'unknown','overall':overall[-1] if overall else 'UNKNOWN'}))
+        (ROOT/'last-restore-outcome.json').write_text(json.dumps(restore_outcome(output.decode(errors='replace'),process.returncode)))
         os.sync()  # Preserve failure evidence before the host stops its disposable VM.
     text=output.decode(errors='replace')
-    assert confirmed,'Restore confirmation was not reached; private log retained'
+    assert prepared and confirmed,'Restore confirmations were not reached; private log retained'
     if scenario=='core-failure':
         if Path('/etc/x-ui/x-ui.db').exists():
             with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:

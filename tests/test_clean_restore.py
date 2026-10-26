@@ -66,7 +66,7 @@ class CleanRestore(unittest.TestCase):
         before=self.f.path('/etc/x-ui/x-ui.db').read_bytes()
         result=self.f.run_tool('restore-plan','a'*40)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(json.loads(result.stdout),{'mode':'managed-restore','version':1,'source_ref':'a'*40})
+        self.assertEqual(json.loads(result.stdout),{'mode':'managed-restore','version':2,'source_ref':'a'*40})
         self.assertEqual(self.f.path('/etc/x-ui/x-ui.db').read_bytes(),before)
         self.assertFalse(any(c[0] in ('apt-get','systemctl','ufw') for c in self.f.commands()))
 
@@ -76,7 +76,7 @@ class CleanRestore(unittest.TestCase):
         entry=self.f.root/'managed-entry.sh'
         entry.write_text('source '+shlex.quote(str(self.f.script))+'\n'+
             ('rm() { if [[ ${1:-} == -rf && ${*: -1} == */.rollback-* ]]; then return 1; fi; command rm "$@"; };\n' if flags.pop('LATE_CLEANUP',False) else '')+
-            'main managed-restore '+shlex.quote(str(archive))+' '+('a'*40)+'\n')
+            'main managed-restore '+shlex.quote(str(archive))+' '+('a'*40)+' --preparation-approved\n')
         return tty_run(entry,answers.encode(),timeout=90,env={**self.f.env,**flags})
 
     def security_fixture(self):
