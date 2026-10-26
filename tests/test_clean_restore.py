@@ -164,15 +164,62 @@ elif name == 'curl':"""))
         self.assertNotEqual(code,0,text);self.assertIn('Partial or foreign target',text)
         self.assertTrue(self.f.path('/etc/x-ui/target-marker').exists())
 
-    def test_ipv6_archive_is_refused_before_replacement_on_ipv4_target(self):
+    def test_ipv6_text_is_not_mistaken_for_an_active_nginx_listener(self):
         import subprocess
         config=self.f.path('/etc/nginx/nginx.conf')
-        config.write_text(config.read_text().replace('http {','http { server { listen [::]:10081; }',1))
+        config.write_text(config.read_text().replace('http {',
+            'http { server { listen 127.0.0.1:10081; location /literal { return 200 "listen [::]:10082;"; } }',1))
         archive=self.distinguishable_archive()
         code='source "$1"; restore_ipv6_available() { return 1; }; main restore "$2"'
         result=subprocess.run(['bash','-c',code,'fixture',str(self.f.script),str(archive)],
                               capture_output=True,text=True,env=self.f.env,timeout=60)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertTrue(self.f.path('/etc/x-ui/source-marker').exists())
+
+    def test_ipv4_bootstrap_preserves_preexisting_unowned_default_site(self):
+        import subprocess
+        target=self.f.path('/etc/nginx/sites-available/default')
+        target.parent.mkdir(parents=True,exist_ok=True);target.write_text('administrator site\n')
+        link=self.f.path('/etc/nginx/sites-enabled/default')
+        link.parent.mkdir(parents=True,exist_ok=True);link.symlink_to(target)
+        result=subprocess.run(['bash','-c','source "$1"; restore_ipv6_available() { return 1; }; install_restore_packages',
+            'fixture',str(self.f.script)],env={**self.f.env,'MISSING_PACKAGES':'nginx-full nginx-common'},capture_output=True,text=True,timeout=30)
         self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
-        self.assertIn('Archive requires IPv6 nginx listeners',result.stderr)
-        self.assertTrue(self.f.path('/etc/x-ui/target-marker').exists())
-        self.assertNotIn('Stopping services and restoring managed state',result.stdout)
+        self.assertTrue(link.is_symlink());self.assertEqual(target.read_text(),'administrator site\n')
+        self.assertFalse(any(c[:2]==['apt-get','install'] for c in self.f.commands()))
+
+    def test_security_service_directories_readable_but_checkpoint_and_logs_private(self):
+        self.security_fixture();archive=self.distinguishable_archive()
+        helper=self.f.root/'security-fixture.py'
+        helper.write_text(helper.read_text().replace("# This independent open description", "(root/'service-readable').mkdir(exist_ok=True)\n# This independent open description"))
+        code,text=self.managed(archive,answers='YES\ny\ny\nn\nn\n',APT_RESULT='failed_unverified')
+        self.assertNotEqual(code,0,text);self.assertIn('core: success',text)
+        self.assertEqual((self.f.root/'service-readable').stat().st_mode&0o777,0o755)
+        staging=next(self.f.path('/var/backups/x-ui').glob('.restore-*'))
+        for path in (staging,staging/'dns-checkpoint',staging/'security-state'):
+            self.assertEqual(path.stat().st_mode&0o777,0o700)
+        for path in (staging/'managed-security.py',staging/'security-result.json',staging/'security-error.log'):
+            self.assertEqual(path.stat().st_mode&0o777,0o600)
+
+
+def nginx_ipv6_staged_preflight():
+    """Native disabled-family proof, called by the existing Ubuntu 26.04 guest."""
+    import shutil
+    import socket
+    from test_personal_backup import PersonalBackup
+    try:
+        with socket.socket(socket.AF_INET6,socket.SOCK_STREAM):pass
+    except OSError:pass
+    else:raise AssertionError('Requires the real ipv6.disable=1 guest')
+    fixture=PersonalBackup('runTest');fixture.setUp()
+    try:
+        config=fixture.path('/etc/nginx/nginx.conf')
+        config.write_text(config.read_text().replace('http {','http { server { listen [::]:10081; }',1))
+        archive=fixture.backup();fixture.write('/etc/x-ui/target-marker','original target')
+        (fixture.root/'commands').write_text('')
+        result=fixture.run_tool('restore',archive,NGINX_BIN=shutil.which('nginx'))
+        assert result.returncode!=0 and 'Address family not supported' in result.stderr
+        assert fixture.path('/etc/x-ui/target-marker').read_text()=='original target'
+        assert not any(c[:2]==['systemctl','stop'] for c in fixture.commands())
+    finally:fixture.doCleanups()
+    print('NATIVE staged nginx -t rejects real unavailable AF_INET6 before replacement: PASS',flush=True)

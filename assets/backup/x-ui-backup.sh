@@ -207,6 +207,8 @@ install_restore_packages() {
         # nginx-common has no daemon binary. Remove only its newly created default
         # site before nginx's package scripts can try the first native start.
         if [[ $(dpkg-query -W -f='${Status}' nginx-common 2>/dev/null) != 'install ok installed' ]]; then
+            [[ ! -e /etc/nginx/sites-enabled/default && ! -L /etc/nginx/sites-enabled/default ]] ||
+                die 'Pre-existing nginx default site; it was not removed or adopted as package-owned.'
             install_missing_packages nginx-common
             if [[ -e /etc/nginx/sites-enabled/default || -L /etc/nginx/sites-enabled/default ]]; then
                 [[ -L /etc/nginx/sites-enabled/default && $(readlink /etc/nginx/sites-enabled/default) == /etc/nginx/sites-available/default ]] ||
@@ -1782,16 +1784,6 @@ for marker, message in blocked.items():
 PY
         die 'Staged nginx -t failed; current managed state was not changed.'
     }
-    if ! restore_ipv6_available; then
-        nginx -T -p "$STAGING/nginx-validation/" -c "$STAGING/nginx-validation/etc/nginx/nginx.conf" \
-            > "$STAGING/nginx-effective.private" 2> "$STAGING/nginx-preflight.log" || die 'Cannot inspect effective staged nginx listeners.'
-        python3 - "$STAGING/nginx-effective.private" <<'PY'
-import pathlib, re, sys
-text=re.sub(r'#[^\n]*','',pathlib.Path(sys.argv[1]).read_text())
-if re.search(r'''\blisten\s+["']?\[''',text):
-    sys.exit('Archive requires IPv6 nginx listeners, but AF_INET6 is unavailable. Restore refused before replacement; use an IPv6-capable target or a source configured for IPv4 only.')
-PY
-    fi
     install -o root -g root -m 0755 "$STAGING/current-hook" "$hook" || die 'Cannot normalize staged project hook.'
 }
 
@@ -2063,12 +2055,17 @@ PY
 # Only allowlisted machine results control recovery. Never infer it from prose.
 restore_security_result() {
     local component=$1 action=$2 status code=0
-    case "$action" in
-        prepare) python3 "$RESTORE_SECURITY_HELPER" --prepare-dns "$STAGING/dns-checkpoint" ;;
-        rollback) python3 "$RESTORE_SECURITY_HELPER" --rollback-dns "$STAGING/dns-checkpoint" ;;
-        configure) python3 "$RESTORE_SECURITY_HELPER" --configure "$component" --state "$STAGING/security-state" ;;
-        *) return 1 ;;
-    esac > "$STAGING/security-result.json" 2> "$STAGING/security-error.log" || code=$?
+    # Security creates service-readable configuration directories. Its recovery
+    # directories are explicitly 0700; these redirected result/log files use 077.
+    (
+        umask 022
+        case "$action" in
+            prepare) python3 "$RESTORE_SECURITY_HELPER" --prepare-dns "$STAGING/dns-checkpoint" ;;
+            rollback) python3 "$RESTORE_SECURITY_HELPER" --rollback-dns "$STAGING/dns-checkpoint" ;;
+            configure) python3 "$RESTORE_SECURITY_HELPER" --configure "$component" --state "$STAGING/security-state" ;;
+            *) return 1 ;;
+        esac
+    ) > "$STAGING/security-result.json" 2> "$STAGING/security-error.log" || code=$?
     status=$(python3 - "$STAGING/security-result.json" "$component" "$code" <<'PY'
 import json, sys
 r=json.load(open(sys.argv[1])); name=sys.argv[2]

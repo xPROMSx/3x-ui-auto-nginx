@@ -350,3 +350,7 @@ class ManagerBackup(unittest.TestCase):
         self.assertNotEqual(result.returncode,0);self.assertEqual(target.read_text(),old)
         result=invoke(self.f.script,'prepare_restore_helper')
         self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(target.read_bytes(),self.f.script.read_bytes())
+        target.write_text(target.read_text()+'\n# Compatible helper from a different project revision\n')
+        result=invoke(self.f.script,'prepare_restore_helper')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(target.read_bytes(),self.f.script.read_bytes(),'Managed Restore reused code outside the selected tree')

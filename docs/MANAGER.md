@@ -63,7 +63,8 @@ failure returns nonzero and retains the already verified archive. Default Backup
 output remains human readable. Backups contain secrets; keep an off-host copy.
 
 Create/compatible standalone operations reuse a trusted root-owned installed utility offline.
-Managed Restore additionally verifies its new interface and pins the running source;
+Managed Restore pins the running source and validates a matching helper candidate
+before atomic replacement (identical bytes keep the existing file);
 selected Security code comes only from that exact project revision, never the archive. For an
 older utility it prepares and validates a replacement before atomic installation;
 failed download/replacement preserves the previous utility. The selected project

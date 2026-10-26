@@ -17,16 +17,22 @@ ROOT=checks.ROOT
 ARCHIVE=ROOT/'source-backup.tar.gz'
 
 
+def database_state(db):
+    tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    result={}
+    for name in ('settings','users','inbounds','hosts','client_traffics'):
+        if name not in tables:continue
+        columns=[row[1] for row in db.execute('PRAGMA table_info('+name+')')]
+        rows=[dict(zip(columns,row)) for row in db.execute('SELECT * FROM '+name+' ORDER BY rowid')]
+        if name=='inbounds':
+            result['inbound_traffic']=[{key:row[key] for key in ('id','up','down','all_time') if key in row} for row in rows]
+            rows=[{key:value for key,value in row.items() if key not in ('up','down','all_time')} for row in rows]
+        result[name]=rows
+    return result
+
+
 def snapshot():
-    with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
-        tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        result={name:db.execute('SELECT * FROM '+name+' ORDER BY rowid').fetchall()
-                for name in ('settings','users','inbounds','hosts') if name in tables}
-        # Runtime traffic can grow under real consumers, but must never reset.
-        for name in ('client_traffics','inbound_client_ips'):
-            if name in tables and name=='client_traffics':
-                columns=[row[1] for row in db.execute('PRAGMA table_info('+name+')')]
-                result[name]=[dict(zip(columns,row)) for row in db.execute('SELECT * FROM '+name)]
+    with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:result=database_state(db)
     result['files']={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in
         [*Path('/etc/letsencrypt/live').glob('*/*.pem'),Path('/etc/x-ui/initial-client.json'),
          Path('/etc/x-ui/auto-nginx-managed.json'),Path('/var/www/html/restore-custom.txt')]}
@@ -35,8 +41,15 @@ def snapshot():
 
 def source_backup():
     Path('/var/www/html/restore-custom.txt').write_bytes(os.urandom(64))
+    deadline=time.monotonic()+30
+    while True:
+        state=snapshot()
+        if sum(row['up']+row['down'] for row in state['client_traffics'])>0:break
+        assert time.monotonic()<deadline,'Real source traffic was not persisted before Backup'
+        time.sleep(.1)
     with sqlite3.connect('/etc/x-ui/x-ui.db') as db:
-        db.execute("UPDATE settings SET value='Clean Restore private fixture' WHERE key='webRemark'")
+        if not db.execute("UPDATE settings SET value='Clean Restore private fixture' WHERE key='subTitle'").rowcount:
+            db.execute("INSERT INTO settings(key,value) VALUES('subTitle','Clean Restore private fixture')")
     checks.manager_backup()
     archive=max(Path('/var/backups/x-ui').glob('*.tar.gz'),key=lambda p:p.stat().st_mtime_ns)
     (ROOT/'source-path').write_text(str(archive))
@@ -47,8 +60,7 @@ def source_backup():
         path=Path(temporary)/'db';path.write_bytes(data)
         with sqlite3.connect(path) as db:
             expected=snapshot()
-            for name in ('settings','users','inbounds','hosts'):
-                expected[name]=db.execute('SELECT * FROM '+name+' ORDER BY rowid').fetchall()
+            expected.update(database_state(db))
     (ROOT/'source-state.private.json').write_text(json.dumps(expected))
     (ROOT/'source-sha256').write_text(hashlib.sha256(archive.read_bytes()).hexdigest())
     return {'real_menu_backup':True,'source_state_recorded':True}
@@ -59,15 +71,34 @@ def preserved():
     actual=json.loads(json.dumps(snapshot()))
     for name in ('settings','users','inbounds','hosts','files'):
         assert actual[name]==expected[name],name+' changed during Restore'
-    if 'client_traffics' in expected:
-        rows={row['id']:row for row in actual['client_traffics']}
-        for row in expected['client_traffics']:
+    for table in ('client_traffics','inbound_traffic'):
+        if table not in expected:continue
+        rows={row['id']:row for row in actual[table]}
+        for row in expected[table]:
             assert row['id'] in rows
-            for key in ('up','down'):assert rows[row['id']][key]>=row[key]
+            if table=='client_traffics':
+                for key,value in row.items():
+                    if key not in ('up','down','all_time','last_online'):
+                        assert rows[row['id']][key]==value,'Client quota/identity changed'
+            for key in ('up','down','all_time','last_online'):
+                if key in row:assert rows[row['id']][key]>=row[key]
     assert hashlib.sha256(ARCHIVE.read_bytes()).hexdigest()==(ROOT/'source-sha256').read_text()
     assert checks.adguard_state()==json.loads((ROOT/'backup-adguard.private.json').read_text())
     return {'credentials_users_settings_inbounds_hosts_and_files_preserved':True,
             'traffic_not_reset':True,'archive_bytes_unchanged':True,'AGH_rewrites_upstreams_preserved':True}
+
+
+def test_ssh_socket_ports():
+    # Disposable target only: retain the control port and exercise a nonstandard
+    # socket-activated port. Never called by the installer/Restore production code.
+    assert checks.run('systemctl','show','ssh.service','-p','KillMode','--value').strip()=='process'
+    Path('/etc/ssh/sshd_config.d/50-restore-ports.conf').write_text('Port 22\nPort 2222\n')
+    directory=Path('/etc/systemd/system/ssh.socket.d');directory.mkdir(parents=True,exist_ok=True)
+    (directory/'90-restore-ports.conf').write_text('[Socket]\nListenStream=\nListenStream=0.0.0.0:22\nListenStream=0.0.0.0:2222\n')
+    checks.run('/usr/sbin/sshd','-t')
+    checks.run('systemctl','stop','ssh.service','ssh.socket')
+    checks.run('systemctl','daemon-reload');checks.run('systemctl','enable','--now','ssh.socket')
+    assert checks.run('systemctl','is-active','ssh.socket').strip()=='active'
 
 
 def restore(scenario, ref):
@@ -82,6 +113,16 @@ def restore(scenario, ref):
          'CURL_CA_BUNDLE':'/etc/ssl/certs/ca-certificates.crt','TERM':'dumb','NO_COLOR':'1'}
     os.environ.update(env)
     before_dns=(os.readlink('/etc/resolv.conf'),Path('/etc/resolv.conf').read_bytes())
+    security_files=('/etc/systemd/resolved.conf.d/90-3x-ui-auto-nginx.conf','/etc/apt/apt.conf.d/99zz-3x-ui-auto-nginx',
+                    '/etc/fail2ban/jail.d/90-3x-ui-auto-nginx.local',
+                    '/etc/systemd/system/apt-daily.timer.d/90-3x-ui-auto-nginx.conf',
+                    '/etc/systemd/system/apt-daily-upgrade.timer.d/90-3x-ui-auto-nginx.conf')
+    def security_state():return {name:(Path(name).read_bytes(),Path(name).stat().st_mode) if Path(name).exists() else None for name in security_files}
+    original_security=security_state()
+    before_ufw=checks.run('ufw','status').startswith('Status: active') if Path('/usr/sbin/ufw').exists() else False
+    if scenario=='security':test_ssh_socket_ports()
+    if scenario=='ufw-unknown':env['SSH_CONNECTION']='unconfirmed'
+
     selected=scenario in ('security','fail2ban','dot-outage')
     fault=None
     if scenario=='fail2ban':
@@ -94,7 +135,9 @@ def restore(scenario, ref):
             path=Path(temporary)/'db';path.write_bytes(tar.extractfile('files/etc/x-ui/x-ui.db').read())
             with sqlite3.connect(path) as db:port=int(db.execute("SELECT value FROM settings WHERE key='webPort'").fetchone()[0])
         blocker=socket.socket();blocker.bind(('127.0.0.1',port));blocker.listen()
-    answers=b'3\n3\n'+str(ARCHIVE).encode()+b'\nYES\n'+(b'y\ny\ny\ny\n' if selected else b'n\nn\nn\nn\n')+b'0\n'
+    choices=b'y\ny\ny\ny\n' if selected else b'n\nn\nn\nn\n'
+    if scenario=='ufw-unknown':choices=b'n\nn\nn\ny\n'
+    answers=b'3\n3\n'+str(ARCHIVE).encode()+b'\nYES\n'+choices+b'0\n'
     master,slave=pty.openpty()
     process=subprocess.Popen(['bash',str(ROOT/'x-ui-latest.sh')],stdin=slave,stdout=slave,stderr=slave,env=env)
     os.close(slave);output=bytearray();deadline=time.monotonic()+600
@@ -124,18 +167,17 @@ def restore(scenario, ref):
     assert (process.returncode==0)==(expected==0),'Unexpected Restore result; private log retained'
     assert 'core: success' in text and ('Overall: SUCCESS' if expected==0 else 'Overall: PARTIAL') in text
     for name in ('dot','apt','fail2ban','ufw'):
-        status='not_requested' if not selected else 'failed_rolled_back' if (name=='fail2ban' and scenario=='fail2ban') or (name=='dot' and scenario=='dot-outage') else 'configured'
+        status='not_enabled' if scenario=='ufw-unknown' and name=='ufw' else 'not_requested' if not selected else 'failed_rolled_back' if (name=='fail2ban' and scenario=='fail2ban') or (name=='dot' and scenario=='dot-outage') else 'configured'
         assert name+': '+status in text,name+' outcome differs'
     if not selected:
         assert (os.readlink('/etc/resolv.conf'),Path('/etc/resolv.conf').read_bytes())==before_dns
-        assert 'Status: inactive' in checks.run('ufw','status')
-        for p in ('/etc/systemd/resolved.conf.d/90-3x-ui-auto-nginx.conf','/etc/apt/apt.conf.d/99zz-3x-ui-auto-nginx',
-                  '/etc/fail2ban/jail.d/90-3x-ui-auto-nginx.local'):
-            assert not Path(p).exists(),'Unrequested Security was changed'
+        assert checks.run('ufw','status').startswith('Status: active')==before_ufw
+        assert security_state()==original_security,'Unrequested Security was changed'
     else:
         assert 'Status: active' in checks.run('ufw','status')
         assert 'Automatic-Reboot-Time "04:38";' in checks.run('apt-config','dump')
         if scenario!='fail2ban':checks.run('fail2ban-client','status','sshd')
+    if scenario=='dot-outage':assert (os.readlink('/etc/resolv.conf'),Path('/etc/resolv.conf').read_bytes())==before_dns
     preserved()
     return {'actual_TTY_manager_restore':True,'core_committed':True,'independent_security_results':True,
             'clean_target' if clean else 'existing_managed_target':True, 'state_and_archive_preserved':True}

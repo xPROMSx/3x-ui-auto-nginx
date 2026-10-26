@@ -29,10 +29,10 @@ def launch(args, name, env=None):
     return process
 
 
-def ssh(command, timeout=30, tty=False):
+def ssh(command, timeout=30, tty=False, port=22220):
     return subprocess.run(['ssh', *(['-tt'] if tty else []), '-i', '/pilot/ssh-key', '-o', 'StrictHostKeyChecking=accept-new',
         '-o', 'UserKnownHostsFile=/pilot/known_hosts', '-o', 'ConnectTimeout=3',
-        '-p', '22220', 'root@127.0.0.1', command], capture_output=True, timeout=timeout)
+        '-p', str(port), 'root@127.0.0.1', command], capture_output=True, timeout=timeout)
 
 
 def failure_location(output):
@@ -51,8 +51,10 @@ def boot(disk='/pilot/disk.raw', disk_format='raw'):
     report['kernel'] = Path(kernel).name
     vm = launch(['qemu-system-x86_64', '-machine', 'accel=tcg', '-cpu', 'max', '-m', '4096',
         '-smp', '2', '-nodefaults', '-no-reboot', '-display', 'none', '-serial', 'stdio',
-        '-monitor', 'none', '-drive', 'file='+disk+',format='+disk_format+',if=virtio',
-        '-netdev', 'user,id=n0,hostfwd=tcp:127.0.0.1:22220-:22,hostfwd=tcp:127.0.0.1:18080-:80',
+        '-monitor', 'none', '-drive', 'file='+disk+',format='+disk_format+',if=virtio'+
+            (',discard=unmap,detect-zeroes=unmap' if disk_format=='qcow2' else ''),
+        '-netdev', 'user,id=n0,hostfwd=tcp:127.0.0.1:22220-:22,hostfwd=tcp:127.0.0.1:18080-:80'+
+            (',hostfwd=tcp:127.0.0.1:22221-:2222' if disk_format=='qcow2' else ''),
         '-device', 'virtio-net-pci,netdev=n0', '-kernel', kernel, '-initrd', '/pilot/initrd.img',
         '-append', 'root=/dev/vda rw rootfstype=ext4 console=ttyS0 panic=1 quiet net.ifnames=0 '
                    'systemd.show_status=true systemd.log_target=console'], phase+'-serial')

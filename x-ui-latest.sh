@@ -1820,7 +1820,7 @@ install_backup_tool() {
            $(stat -c '%u:%g:%a' /usr/local/bin/x-ui-backup) == 0:0:755 ]] || return 1
     fi
     temporary=$(mktemp /usr/local/bin/.x-ui-backup.XXXXXX) || return 1
-    if ! curl -fsSL "${GITHUB_RAW}/assets/backup/x-ui-backup.sh" -o "$temporary" ||
+    if ! curl -q -fsSL --connect-timeout 10 --max-time 30 "${GITHUB_RAW}/assets/backup/x-ui-backup.sh" -o "$temporary" ||
        ! bash -n "$temporary" || [[ $(bash "$temporary" capabilities) != 'xui-backup:1 inspect backup-json lock-fd9' ]]; then
         rm -f "$temporary"
         msg_err "Failed to download a valid backup tool."
@@ -1828,8 +1828,16 @@ install_backup_tool() {
     fi
     if ! chown root:root "$temporary" || ! chmod 0755 "$temporary" ||
        ! backup_helper_compatible "$temporary" ||
-       { [[ ${1:-} == managed-restore ]] && ! restore_helper_compatible "$temporary"; } ||
-       ! mv -fT "$temporary" /usr/local/bin/x-ui-backup; then
+       { [[ ${1:-} == managed-restore ]] && ! restore_helper_compatible "$temporary"; }; then
+        rm -f "$temporary"
+        msg_err "Failed to install the backup tool."
+        return 1
+    fi
+    if [[ -f /usr/local/bin/x-ui-backup ]] && cmp -s "$temporary" /usr/local/bin/x-ui-backup; then
+        rm -f "$temporary"
+        return 0
+    fi
+    if ! mv -fT "$temporary" /usr/local/bin/x-ui-backup; then
         rm -f "$temporary"
         msg_err "Failed to install the backup tool."
         return 1
@@ -3094,11 +3102,9 @@ prepare_backup_helper() {
 prepare_restore_helper() {
     bootstrap_panel_dependencies || return 1
     [[ -n ${PROJECT_SOURCE_SHA:-} && $PROJECT_SOURCE_SHA == "${PROJECT_REF:-}" ]] || pin_project_source || return 1
-    prepare_backup_helper || return 1
-    if ! restore_helper_compatible >/dev/null 2>&1; then
-        install_backup_tool managed-restore || return 1
-        backup_helper_compatible || return 1
-    fi
+    # A compatible installed helper may belong to another tree. New managed
+    # operations use the verified selected revision; ordinary Backup stays offline.
+    install_backup_tool managed-restore || return 1
     restore_helper_compatible
 }
 

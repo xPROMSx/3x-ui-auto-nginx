@@ -57,7 +57,10 @@ def nginx_first_install_ipv4(restore=False):
             assert response.status==200 and response.read()==token.read_bytes()
         finally:connection.close();token.unlink()
     print('REAL '+('Restore' if restore else 'Installer')+' first APT nginx install / AF_INET6 disabled / IPv4 HTTP-01: PASS',flush=True)
-    if not restore:
+    if restore:
+        from test_clean_restore import nginx_ipv6_staged_preflight
+        nginx_ipv6_staged_preflight()
+    else:
         # Only the ACME site made above, in this disposable native guest.
         for path in ('/etc/nginx/sites-available/80.conf','/etc/nginx/sites-enabled/80.conf'):
             Path(path).unlink(missing_ok=True)
