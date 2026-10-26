@@ -123,7 +123,9 @@ class ManagerBackup(unittest.TestCase):
         library=library.replace(' /usr ', ' '+str(self.f.root/'usr')+' ')
         # Source verification is tested separately; this fixture starts after pinning.
         library=library.replace('if [[ ${BASH_SOURCE[0]} == "$0" ]]',
-            'PROJECT_SOURCE_SHA='+('a'*40)+'; PROJECT_REF=$PROJECT_SOURCE_SHA\nif [[ ${BASH_SOURCE[0]} == "$0" ]]')
+            'PROJECT_SOURCE_SHA='+('a'*40)+'; PROJECT_REF=$PROJECT_SOURCE_SHA; GITHUB_RAW=https://source.invalid/exact\n'
+            'curl() { [[ "${@: -3:1}" == "$GITHUB_RAW/assets/backup/x-ui-backup.sh" && "${@: -2:1}" == -o ]] || return 9; '
+            'command cp '+str(self.f.script)+' "${@: -1}"; };\nif [[ ${BASH_SOURCE[0]} == "$0" ]]')
         script=self.f.root/'menu.sh';script.write_text(library)
         for scenario,flags in (('pre-mutation',{'FAIL_NGINX':'1'}),
                                ('verified',{'FAIL_HEALTH_SERVICE':'mtr-backend','FAIL_ONCE':'1'}),
@@ -133,6 +135,7 @@ class ManagerBackup(unittest.TestCase):
                 code,text=tty_run(script,b'3\n3\n'+str(archive).encode()+b'\nYES\nn\nn\nn\nn\n1\n',timeout=90,env={**self.f.env,**flags})
                 self.assertNotEqual(code,0,text)
                 self.assertIn('FAILED (exit ',text);self.assertNotIn('SUCCESS',text)
+                self.assertNotIn('Failed to download',text)
                 self.assertEqual(text.count('1. Installation'),1)
                 self.assertEqual(text.count('BACKUPS'),1)
                 self.assertEqual(self.f.path('/etc/x-ui/target-marker').read_text(),'previous target')

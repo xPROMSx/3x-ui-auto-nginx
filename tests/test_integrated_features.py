@@ -1144,6 +1144,39 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
             self.assertEqual(all_components['fail2ban'],'failed_unverified')
         with self.assertRaises(ValueError):security.configure(components=('dot',))
 
+    def test_external_dns_pipeline_does_not_block_controlled_answer(self):
+        import ast, socket, socketserver, struct, threading, types
+        servers=[]; entered=threading.Event(); release=threading.Event()
+        class TCP(socketserver.ThreadingTCPServer):
+            def __init__(self,*args,**kwargs):
+                super().__init__(*args,**kwargs);servers.append(self)
+        class UDP(socketserver.ThreadingUDPServer):
+            def __init__(self,*args,**kwargs):
+                super().__init__(*args,**kwargs);servers.append(self)
+        def answer(packet,pebble=False):
+            if packet==b'blocked':entered.set();release.wait(4)
+            return packet
+        server_types=types.SimpleNamespace(BaseRequestHandler=socketserver.BaseRequestHandler,
+            ThreadingTCPServer=TCP,ThreadingUDPServer=UDP)
+        tree=ast.parse((ROOT/'tests/fresh/fixtures.py').read_text())
+        tree.body=[node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='serve_dns']
+        with tempfile.TemporaryDirectory() as directory:
+            namespace={'socketserver':server_types,'threading':threading,'struct':struct,
+                       'ROOT':Path(directory),'answer':answer,'ssl':__import__('ssl')}
+            exec(compile(tree,'fixtures.py','exec'),namespace)
+            namespace['serve_dns']('127.0.0.1',0)
+            try:
+                with socket.create_connection(servers[0].server_address,timeout=1.5) as client:
+                    client.sendall(struct.pack('!H',7)+b'blocked')
+                    self.assertTrue(entered.wait(1))
+                    client.sendall(struct.pack('!H',5)+b'ready')
+                    with client.makefile('rb') as stream:
+                        self.assertEqual(stream.read(2),struct.pack('!H',5))
+                        self.assertEqual(stream.read(5),b'ready')
+            finally:
+                release.set()
+                for server in servers:server.shutdown();server.server_close()
+
     def test_requested_ufw_requires_confirmed_ssh_and_preserves_active_policy(self):
         security=helper('security')
         calls=[]

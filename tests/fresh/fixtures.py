@@ -52,10 +52,18 @@ def serve_dns(address,port,tls=False,pebble=False):
                         if not x:raise EOFError()
                         b+=x
                     return b
+                write_lock=threading.Lock()
+                def respond(packet):
+                    try:
+                        data=answer(packet,pebble)
+                        with write_lock:c.sendall(struct.pack('!H',len(data))+data)
+                        with (ROOT/'dns-observations.log').open('a') as f:f.write(('TLS' if tls else 'TCP')+' query\n')
+                    except OSError:pass
                 while True:
                     size=struct.unpack('!H',exact(2))[0];packet=exact(size)
-                    data=answer(packet,pebble);c.sendall(struct.pack('!H',len(data))+data)
-                    with (ROOT/'dns-observations.log').open('a') as f:f.write(('TLS' if tls else 'TCP')+' query\n')
+                    # DNS/TCP permits out-of-order replies. A slow real lookup
+                    # must not hold controlled health answers behind it.
+                    threading.Thread(target=respond,args=(packet,),daemon=True).start()
             except (OSError,EOFError,ssl.SSLError): pass
             finally:c.close()
     class TS(socketserver.ThreadingTCPServer):allow_reuse_address=True;daemon_threads=True
