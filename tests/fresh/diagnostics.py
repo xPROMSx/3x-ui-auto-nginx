@@ -35,9 +35,13 @@ def vision_failure(log):
     matches = re.findall(r'Vision failed during ([^\n]+?) \(exit ([0-9]{1,3})\): rollback=([^\s]+)', log)
     if not matches: return None
     stage, code, rollback = matches[-1]
-    inner = re.findall(r'^Vision failed during ([^:\r\n]+): [^\r\n]*; rollback=(?:failed_rolled_back|failed_unverified)(?:;[^\r\n]*)?\r?$', log, re.M)
+    inner = re.findall(r'^Vision failed during ([^:\r\n]+): ([^\r\n]*?); rollback=(?:failed_rolled_back|failed_unverified)(?:;[^\r\n]*)?\r?$', log, re.M)
+    reason = inner[-1][1] if inner else ''
+    curl = re.fullmatch(r'curl exited with (-?[0-9]{1,3})(?: \([^\r\n]*\))?', reason)
+    curl_code = int(curl[1]) if curl and -128 <= int(curl[1]) <= 255 else None
     return {'stage':VISION_STAGES.get(stage, 'unknown'), 'exit_code':int(code),
-            'helper_stage':VISION_HELPER_STAGES.get(inner[-1], 'unknown') if inner else 'unknown',
+            'helper_stage':VISION_HELPER_STAGES.get(inner[-1][0], 'unknown') if inner else 'unknown',
+            'curl_exit':curl_code, 'timeout':reason == 'command timed out',
             'rollback':rollback if rollback in ('failed_rolled_back','failed_unverified') else 'unknown'}
 
 

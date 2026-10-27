@@ -65,10 +65,13 @@ class Panel:
         if data is not None:
             argv += ['--header','Content-Type: application/json','--data-binary','@-']
         argv.append(self.base+path)
-        result = subprocess.run(argv,input=json.dumps(data).encode() if data is not None else None,
-                                capture_output=True,timeout=25)
+        try:
+            result = subprocess.run(argv,input=json.dumps(data).encode() if data is not None else None,
+                                    capture_output=True,timeout=25)
+        except subprocess.TimeoutExpired:
+            raise subprocess.TimeoutExpired(['curl'],25) from None
         if result.returncode:
-            raise ValueError('AmneziaWG panel request failed: '+path)
+            raise subprocess.CalledProcessError(result.returncode,['curl']) from None
         value = json.loads(result.stdout)
         if value.get('success') is not True:
             raise ValueError('AmneziaWG panel rejected request: '+path)

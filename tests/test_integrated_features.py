@@ -840,6 +840,53 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
                 value.not_valid_before_utc=now+datetime.timedelta(minutes=1)
                 with self.assertRaisesRegex(ValueError,'validity'): vision.certificate('vision.example',cert,key)
 
+    def test_panel_api_curl_failure_is_typed_and_private(self):
+        import traceback
+        session=helper('amneziawg');vision=helper('vision')
+        private='PRIVATE-PASSWORD-UUID-cookie-token'
+        with tempfile.TemporaryDirectory() as directory:
+            panel=object.__new__(session.Panel)
+            panel.base='https://private.invalid/private-panel/'
+            panel.options=['--resolve','private.invalid:443:127.0.0.1']
+            panel.cookie=Path(directory)/'private-cookies';panel.cookie.touch(mode=0o600)
+            panel.headers=Path(directory)/'private-header';panel.headers.touch(mode=0o600)
+            panel.token=private
+            path='panel/api/server/restartXrayService'
+            body={'password':private}
+            expected=['curl','-q','--fail','--silent','--show-error','--noproxy','*',
+                      '--connect-timeout','5','--max-time','20',*panel.options,
+                      '--cookie',str(panel.cookie),'--cookie-jar',str(panel.cookie),
+                      '--header','@'+str(panel.headers),'--header','Content-Type: application/json',
+                      '--data-binary','@-',panel.base+path]
+            for code in (7,22,28,35,52,56,60,-9):
+                with self.subTest(code=code),patch.object(session.subprocess,'run',return_value=
+                        subprocess.CompletedProcess(expected,code,stdout=private.encode(),stderr=private.encode())) as run:
+                    try:panel.request(path,body)
+                    except subprocess.CalledProcessError as error:
+                        self.assertIs(type(error.returncode),int);self.assertEqual(error.returncode,code)
+                        self.assertEqual(error.cmd,['curl'])
+                        self.assertIsNone(error.output);self.assertIsNone(error.stderr)
+                        message=vision.safe_reason(error)+'\n'+''.join(traceback.format_exception(error))
+                        self.assertIn('curl exited with '+str(code),message)
+                        for secret in (private,panel.base,path,directory):self.assertNotIn(secret,message)
+                    else:self.fail('Curl failure did not retain a typed exit code')
+                    run.assert_called_once_with(expected,input=json.dumps(body).encode(),capture_output=True,timeout=25)
+            with patch.object(session.subprocess,'run',side_effect=
+                    subprocess.TimeoutExpired(expected,25,output=private.encode(),stderr=private.encode())):
+                try:panel.request(path,body)
+                except subprocess.TimeoutExpired as error:
+                    self.assertEqual(error.cmd,['curl']);self.assertEqual(error.timeout,25)
+                    self.assertIsNone(error.output);self.assertIsNone(error.stderr)
+                    self.assertEqual(vision.safe_reason(error),'command timed out')
+                    message=''.join(traceback.format_exception(error))
+                    for secret in (private,panel.base,path,directory):self.assertNotIn(secret,message)
+                else:self.fail('API subprocess timeout was ignored')
+            reply={'success':True,'obj':{'ready':True}}
+            with patch.object(session.subprocess,'run',return_value=
+                    subprocess.CompletedProcess(expected,0,stdout=json.dumps(reply).encode())) as run:
+                self.assertEqual(panel.request(path,body),reply)
+                run.assert_called_once_with(expected,input=json.dumps(body).encode(),capture_output=True,timeout=25)
+
     def test_vision_readiness_is_bounded_and_errors_are_private(self):
         vision=helper('vision')
         with patch.object(vision.socket,'create_connection',side_effect=ConnectionRefusedError), \

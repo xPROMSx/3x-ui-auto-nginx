@@ -130,10 +130,12 @@ def install(scenario, ref):
     (ROOT/(phase+'-result.json')).write_bytes(data.stdout)
     vision = values.get('vision_failure')
     if vision is not None:
-        assert set(vision) == {'stage','helper_stage','exit_code','rollback'}
+        assert set(vision) == {'stage','helper_stage','exit_code','rollback','curl_exit','timeout'}
         assert vision['stage'] in set(VISION_STAGES.values()) | {'unknown'}
         assert vision['helper_stage'] in set(VISION_HELPER_STAGES.values()) | {'unknown'}
         assert type(vision['exit_code']) is int and 0 <= vision['exit_code'] <= 999
+        assert vision['curl_exit'] is None or (type(vision['curl_exit']) is int and -128 <= vision['curl_exit'] <= 255)
+        assert type(vision['timeout']) is bool
         assert vision['rollback'] in ('failed_rolled_back','failed_unverified','unknown')
         report[phase+'_vision_failure'] = vision
     flags = values.get('components', {})

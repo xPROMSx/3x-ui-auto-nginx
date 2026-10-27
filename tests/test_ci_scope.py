@@ -176,9 +176,9 @@ class CIScope(unittest.TestCase):
         diagnostics = self.diagnostics()
         secret = 'PRIVATE-CREDENTIAL-https://secret.invalid/token'
         result = diagnostics.vision_failure('Vision failed during configuring Vision inbound/nginx/HTTPS (exit 1): rollback=failed_rolled_back\n'+secret)
-        self.assertEqual(result, {'stage':'configuring_inbound', 'helper_stage':'unknown', 'exit_code':1, 'rollback':'failed_rolled_back'})
+        self.assertEqual(result, {'stage':'configuring_inbound', 'helper_stage':'unknown', 'exit_code':1, 'rollback':'failed_rolled_back','curl_exit':None,'timeout':False})
         unknown = diagnostics.vision_failure('Vision failed during '+secret+' (exit 2): rollback='+secret)
-        self.assertEqual(unknown, {'stage':'unknown', 'helper_stage':'unknown', 'exit_code':2, 'rollback':'unknown'})
+        self.assertEqual(unknown, {'stage':'unknown', 'helper_stage':'unknown', 'exit_code':2, 'rollback':'unknown','curl_exit':None,'timeout':False})
         self.assertNotIn(secret, json.dumps([result, unknown]))
         self.assertIsNone(diagnostics.vision_failure('Vision Ready\n'+secret))
 
@@ -196,7 +196,7 @@ class CIScope(unittest.TestCase):
                 result = diagnostics.vision_failure('Vision failed during '+stage+': '+secret+'; rollback=failed_rolled_back\r\n'+outer)
                 self.assertNotEqual(result['helper_stage'], 'unknown')
                 self.assertNotIn(secret, json.dumps(result))
-                self.assertEqual(set(result), {'stage','helper_stage','exit_code','rollback'})
+                self.assertEqual(set(result), {'stage','helper_stage','exit_code','rollback','curl_exit','timeout'})
         for stage, expected in (('validating Vision certificate','certificate_validation'),
                                 ('creating Vision inbound via 3X-UI API','create_inbound'),
                                 ('checking trusted HTTPS fallback','https_fallback')):
@@ -206,6 +206,14 @@ class CIScope(unittest.TestCase):
             result = diagnostics.vision_failure(inner+outer)
             self.assertEqual(result['helper_stage'], 'unknown')
             self.assertNotIn(secret, json.dumps(result))
+        for reason,code,timeout in (('curl exited with 28 (request timed out)',28,False),
+                                    ('curl exited with -9',-9,False),('command timed out',None,True),
+                                    ('curl exited with 999',None,False),(secret,None,False)):
+            result=diagnostics.vision_failure('Vision failed during restarting Xray via 3X-UI API: '+reason+'; rollback=failed_rolled_back\n'+outer)
+            self.assertEqual(result['helper_stage'],'xray_restart')
+            self.assertEqual(result['curl_exit'],code);self.assertIs(result['timeout'],timeout)
+            if code is not None:self.assertIs(type(result['curl_exit']),int)
+            self.assertNotIn(secret,json.dumps(result))
 
     def test_dns_wire_contract_and_safe_probe_failures(self):
         d = self.diagnostics()
