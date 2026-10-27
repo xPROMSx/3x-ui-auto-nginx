@@ -1,0 +1,44 @@
+--- a/tests/fresh/acceptance.py
++++ b/tests/fresh/acceptance.py
+@@ -53,7 +53,7 @@
+         '-smp', '2', '-nodefaults', '-no-reboot', '-display', 'none', '-serial', 'stdio',
+         '-monitor', 'none', '-drive', 'file='+disk+',format='+disk_format+',if=virtio'+
+-            (',discard=unmap,detect-zeroes=unmap' if disk_format=='qcow2' else ''),
++            (',discard=unmap,detect-zeroes=unmap' if disk_format in ('raw', 'qcow2') else ''),
+         '-netdev', 'user,id=n0,hostfwd=tcp:127.0.0.1:22220-:22,hostfwd=tcp:127.0.0.1:18080-:80'+
+-            (',hostfwd=tcp:127.0.0.1:22221-:2222' if disk_format=='qcow2' else ''),
++            (',hostfwd=tcp:127.0.0.1:22221-:2222' if disk_format in ('raw', 'qcow2') else ''),
+         '-device', 'virtio-net-pci,netdev=n0', '-kernel', kernel, '-initrd', '/pilot/initrd.img',
+         '-append', 'root=/dev/vda rw rootfstype=ext4 console=ttyS0 panic=1 quiet net.ifnames=0 '
+--- a/tests/fresh/restore_acceptance.py
++++ b/tests/fresh/restore_acceptance.py
+@@ -81,7 +81,10 @@
+     global phase
+     phase=name;host.phase=name
+-    disk=ROOT/(name+'.qcow2')
+-    subprocess.run(['qemu-img','create','-q','-f','qcow2','-F',backing_format,'-b',str(backing),str(disk)],check=True)
+-    host.boot(str(disk),'qcow2')
++    # One-off control: source storage is RAW; retain the Restore QEMU options.
++    assert name=='source-install' and backing_format=='raw'
++    report['source_disk_format']='raw'
++    disk=ROOT/(name+'.raw')
++    subprocess.run(['cp','--reflink=auto','--sparse=always',str(backing),str(disk)],check=True,timeout=60)
++    host.boot(str(disk),'raw')
+     copy_to_guest(host.REPO/'tests/fresh/restore_checks.py','/root/pilot/restore_checks.py')
+     return disk
+@@ -125,5 +128,5 @@
+                     rss=int(next(l.split()[1] for l in data.splitlines() if l.startswith('VmHWM:')))*1024
+                     report['qemu_peak_rss_bytes']=max(report.get('qemu_peak_rss_bytes',0),rss)
+-                report['disk_allocated_bytes']=max(report.get('disk_allocated_bytes',0),sum(p.stat().st_blocks*512 for p in ROOT.glob('*.qcow2')))
++                report['disk_allocated_bytes']=max(report.get('disk_allocated_bytes',0),sum(p.stat().st_blocks*512 for p in ROOT.glob('source-install.raw')))
+                 size=sum(p.stat().st_blocks*512 for p in ROOT.rglob('*') if p.is_file())
+                 report['workspace_peak_allocated_bytes']=max(report.get('workspace_peak_allocated_bytes',0),size)
+@@ -159,4 +162,8 @@
+         invoke('restore_checks.mihomo("Vision")','source-Mihomo-Vision',90)
+         source_reality=observe_reality('source-Mihomo-REALITY')
++        # Source-only observation: never enter Backup/Restore/Security acceptance.
++        report['result']='PASS source-only RAW control; Restore matrix NOT RUN'
++        host.poweroff()
++        raise SystemExit(0)
+         invoke('restore_checks.source_backup()','source-backup',180)
+         for name,remote in [('source-backup.tar.gz',None),('source-state.private.json','/root/pilot/source-state.private.json'),

@@ -1,0 +1,39 @@
+name: Clean Restore26 RAW source control
+
+on:
+  push:
+    branches: [feat/clean-restore-security]
+    paths:
+      - .github/workflows/clean-source-control.yml
+      - tests/fresh/source-raw-control.patch
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr80-source-raw-control
+  cancel-in-progress: false
+
+jobs:
+  source:
+    name: Clean Restore26 source-only RAW control
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+      - uses: actions/checkout@v4
+        with:
+          ref: dde8b9f3f6224a9448f3abbf3bd5d0b48f55ca84
+          fetch-depth: 0
+          path: source
+      - name: One bounded RAW source installation of the audited revision
+        working-directory: source
+        run: |
+          test "$(git rev-parse HEAD)" = dde8b9f3f6224a9448f3abbf3bd5d0b48f55ca84
+          git apply --check ../control/tests/fresh/source-raw-control.patch
+          git apply ../control/tests/fresh/source-raw-control.patch
+          git diff --quiet HEAD -- x-ui-latest.sh assets
+          bash tests/fresh/run.sh restore ubuntu:26.04
