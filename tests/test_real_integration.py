@@ -540,7 +540,9 @@ http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {mai
             self.assertTrue('\tdiag_key\t' in api.cookie.read_text(),'Panel SSO did not issue diagnostics cookie')
             self.assertEqual(status('/diagnostics/api/st/ping',True),b'200')
             api.request('logout',{})
-            with self.assertRaises(ValueError): api.request('panel/api/inbounds/list')
+            with self.assertRaises(subprocess.CalledProcessError) as denied:
+                api.request('panel/api/inbounds/list')
+            self.assertEqual(denied.exception.returncode,22)
         # Actual Linux listeners, not merely persisted webListen text.
         table=subprocess.check_output(['ss','-H','-ltnp'],text=True,timeout=5)
         listeners=[line.split()[3] for line in table.splitlines() if f'pid={server.pid},' in line]
