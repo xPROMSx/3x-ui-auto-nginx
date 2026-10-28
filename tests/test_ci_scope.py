@@ -181,6 +181,27 @@ class CIScope(unittest.TestCase):
         self.assertNotIn(secret, json.dumps([result, unknown]))
         self.assertIsNone(diagnostics.vision_failure('Vision Ready\n'+secret))
 
+    def test_domain_failure_diagnostics_are_limited_to_public_source_constants(self):
+        d=self.diagnostics();source=(ROOT/'assets/domains/managed.py').read_text()
+        message='Unknown x-ui service layout.';secret='PRIVATE-SESSION-https://secret.invalid/token'
+        self.assertEqual(d.domain_failure('Type YES: Change Domains failed during preflight: '+message+'\r\n'+secret,source),
+                         {'stage':'preflight','reason':message})
+        result=d.domain_failure('Change Domains failed during PRIVATE-STAGE: '+secret,source)
+        self.assertEqual(result,{'stage':'unknown','reason':'unknown'})
+        self.assertNotIn(secret,json.dumps(result))
+        self.assertIsNone(d.domain_failure(secret,source))
+        import ast,re,time
+        tree=ast.parse((ROOT/'tests/fresh/acceptance.py').read_text())
+        functions=[node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name in ('invoke','failure_location')]
+        frame=b'  File "/root/pilot/checks.py", line 527, in change_domains\n'+secret.encode()
+        def ssh(command,*args,**kwargs):return subprocess.CompletedProcess([],1,frame if command.startswith('python3 -c') else b'',b'')
+        with tempfile.TemporaryDirectory() as directory:
+            env=dict(ROOT=Path(directory),REPO=ROOT,phase='change-domains',report={},ssh=ssh,re=re,time=time,json=json,domain_failure=d.domain_failure)
+            exec(compile(ast.Module(body=functions,type_ignores=[]),'acceptance.py','exec'),env)
+            with self.assertRaises(AssertionError):env['invoke']('checks.change_domains()','domains',tty=True)
+            self.assertEqual(env['report'].get('failure_location'),'checks.py:527')
+            self.assertNotIn(secret,json.dumps(env['report']))
+
     def test_dns_wire_contract_and_safe_probe_failures(self):
         d = self.diagnostics()
         ident=b'\x12\x34'

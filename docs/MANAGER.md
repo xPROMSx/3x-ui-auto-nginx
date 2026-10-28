@@ -114,6 +114,11 @@ not ownership evidence. No reinstall is needed to obtain a manifest; a successfu
 legacy switch records `installed_by=legacy-v2.1.7-layout`. Other layouts/versions
 are deliberately refused rather than guessed.
 
+The official archives retain UID/GID `1001:1001` on the panel directory/binary.
+That exact 0755 metadata is recognized only while UID 1001 has no account and no
+active process on the host. Ownership is preserved. An assigned/active identity
+or another non-root owner is refused before Backup or changes.
+
 Before the first stack change, the selected tree's existing Backup v3 creates a
 full verified archive in `/var/backups/x-ui`. An old installed Backup utility is
 not replaced: a private current copy performs this archive under the inherited

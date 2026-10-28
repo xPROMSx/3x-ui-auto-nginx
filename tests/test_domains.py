@@ -255,6 +255,23 @@ class Domains(unittest.TestCase):
         self.assertEqual(f.operation.discover()['domains']['panel'],'third.example')
         self.assertFalse(any('migrate' in args or 'install' in args for _,args in f.calls))
 
+    def test_official_archive_orphan_owner_is_preserved_and_live_owners_are_refused(self):
+        import pwd
+        for legacy in (False,True):
+            f=self.fixture(legacy=legacy)
+            for name in ('/usr/local/x-ui','/usr/local/x-ui/x-ui'):os.chown(f.p(name),1001,1001)
+            with patch.object(pwd,'getpwuid',side_effect=KeyError):f.change('new.example')
+            self.assertEqual(f.p('/usr/local/x-ui/x-ui').stat().st_uid,1001)
+        for kind in ('account','process','other-uid'):
+            f=self.fixture();uid=1002 if kind=='other-uid' else 1001
+            for name in ('/usr/local/x-ui','/usr/local/x-ui/x-ui'):os.chown(f.p(name),uid,uid)
+            if kind=='process':f.write('/proc/77/status','Uid:\t1001\t1001\t1001\t1001\n')
+            before=f.state()
+            with patch.object(pwd,'getpwuid',**({'return_value':object()} if kind=='account' else {'side_effect':KeyError})),self.assertRaises(f.module.Refusal):
+                f.change('new.example')
+            self.assertTrue(f.state()==before,'Unknown binary owner changed SQLite')
+            self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] for _,args in f.calls))
+
     def test_invalid_unchanged_swap_vision_conflict_foreign_cert_and_overrides_refuse_before_backup(self):
         cases=('unchanged','invalid','same','swap','vision','foreign','manifest','sni','r-sni-blank','unknown-stream','duplicate-host','schema','kernel','nginx-name')
         for case in cases:

@@ -11,7 +11,7 @@ import threading
 import time
 import traceback
 
-from diagnostics import VISION_STAGES
+from diagnostics import VISION_STAGES, domain_failure
 
 ROOT = Path('/pilot')
 REPO = Path('/repo')
@@ -104,7 +104,12 @@ def invoke(expression, result_name, timeout=180, tty=False):
             if 'transport_error' in probe: assert type(probe['transport_error']) is bool
         report[phase+'_dns_probes'] = probes
     if result.returncode:
-        failure_location(result.stderr)
+        failure_location(result.stdout+result.stderr)
+        if phase == 'change-domains':
+            private = ssh('cat /root/pilot/domains-[123].private.log', 15)
+            if private.returncode == 0:
+                failure = domain_failure(private.stdout.decode(errors='replace'), (REPO/'assets/domains/managed.py').read_text())
+                if failure is not None: report[phase+'_failure'] = failure
         raise AssertionError('Guest phase failed; private output is not published')
     data = ssh('cat /root/pilot/'+result_name+'.json', 15)
     if data.returncode:

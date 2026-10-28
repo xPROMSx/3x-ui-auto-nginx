@@ -13,6 +13,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import pwd
 import re
 import shutil
 import signal
@@ -493,10 +494,29 @@ class Operation:
         self.sync(self.path(STATE))
 
     def panel_version(self):
-        for file in ('/usr/local/x-ui/x-ui', '/usr/bin/x-ui'):
+        self.parents('/usr/local/x-ui'); self.parents('/usr/bin/x-ui')
+        archive_owner = False
+        for file in ('/usr/local/x-ui', '/usr/local/x-ui/x-ui', '/usr/bin/x-ui'):
             info = self.path(file).lstat()
-            require(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022,
+            require((stat.S_ISDIR(info.st_mode) if file == '/usr/local/x-ui' else stat.S_ISREG(info.st_mode)) and not info.st_mode & 0o022,
                     'Unknown panel binary/CLI ownership or layout.')
+            if info.st_uid == 0:continue
+            # The verified official archives preserve runner UID/GID 1001.
+            # Admit that exact metadata only while the identity is unassigned;
+            # a real local account/process would make the binary foreign-owned.
+            require(file != '/usr/bin/x-ui' and (info.st_uid,info.st_gid,stat.S_IMODE(info.st_mode)) == (1001,1001,0o755),
+                    'Unknown panel binary/CLI ownership or layout.')
+            archive_owner = True
+        if archive_owner:
+            try: pwd.getpwuid(1001)
+            except KeyError: pass
+            else: raise Refusal('Official archive UID 1001 belongs to a local account; owner verification refused.')
+            for path in self.path('/proc').glob('[0-9]*/status'):
+                try: status = path.read_text()
+                except FileNotFoundError: continue
+                owners = re.search(r'^Uid:\s+([^\n]+)',status,re.M)
+                require(owners is not None and '1001' not in owners[1].split(),
+                        'Official archive UID 1001 is active or cannot be verified; owner verification refused.')
         version = self.run(self.path('/usr/local/x-ui/x-ui'), '-v').decode().strip()
         require(version in ('3.10.2', '3.11.0'), 'Change Domains supports the verified 3.10.2/3.11.0 SQLite layouts only.')
         return version
