@@ -748,6 +748,13 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
                 wrong_trust[0]=False
                 iid=self.vision_module.configure(api,'vision.example',self.vision_port,fallback,
                     *self.vision_artifacts,str(vision_cert),str(vision_key),flag='🇫🇮')
+            domains=helper('domains');connect=socket.create_connection
+            def domain_endpoint(address,*args,**kwargs):
+                return connect(('127.0.0.1',self.public) if address==('127.0.0.1',443) else address,*args,**kwargs)
+            with patch.object(domains.socket,'create_connection',side_effect=domain_endpoint):
+                status,body=domains.Operation('unused','unused').request('vision.example','/',str(vision_cert))
+            self.assertEqual(status,200)
+            self.assertEqual(body,b'vision-cover')
             created = next(r for r in api.request('panel/api/inbounds/list')['obj'] if r['id']==iid)
             self.assertEqual(created['remark'],'🇫🇮 XTLS')
             with sqlite3.connect(self.root/'db/x-ui.db') as db:

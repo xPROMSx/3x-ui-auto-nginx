@@ -39,6 +39,7 @@ def ssh(command, timeout=30, tty=False, input=None, port=22220):
 def failure_location(output):
     # Source locations identify the failed assertion without exposing the
     # exception text, API response, command arguments or raw installer log.
+    output = re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', output)
     frames = re.findall(rb'File "/root/pilot/(checks|install|client|session)\.py", line ([0-9]+)', output)
     if frames:
         name, line = frames[-1]
@@ -286,7 +287,7 @@ if __name__ == '__main__':
             phase = 'cold-transport-consumers'
             invoke('checks.transports()', 'cold-transports', 300)
             phase = 'change-domains'
-            invoke('checks.change_domains()', 'change-domains', 300, tty=True)
+            invoke('checks.change_domains()', 'change-domains', 1200, tty=True)
             poweroff()
             phase = 'mandatory-dependency-negative'
             fresh_disk()

@@ -514,7 +514,8 @@ def change_domains():
         process=subprocess.Popen(['bash',str(ROOT/'x-ui-latest.sh')],stdin=slave,stdout=slave,stderr=slave,env=env)
         os.close(slave)
         answers='2\n'+choice+'\n'+(new_panel+'\n' if choice in ('1','3') else '')+(new_reality+'\n' if choice in ('2','3') else '')+'YES\n0\n'
-        os.write(master,answers.encode());deadline=time.monotonic()+120
+        # Full Backup v3 alone is slow in TCG; include ACME and verified health.
+        os.write(master,answers.encode());deadline=time.monotonic()+360
         try:
             while time.monotonic()<deadline:
                 if select.select([master],[],[],.2)[0]:

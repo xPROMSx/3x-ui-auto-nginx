@@ -28,12 +28,18 @@ def domain_failure(log, source):
     matches=re.findall(r'Change Domains failed during ([^\r\n:]+): ([^\r\n]+)',log)
     if not matches:return None
     stage,reason=matches[-1]
-    stages=('preflight','creating full Backup v3','preparing certificates','validating complete candidate nginx',
+    stages=('preflight','validating installed layout','recognizing managed configuration','checking target domains',
+            'planning scoped changes','checking original stack','checking original nginx','checking original certificates','checking stack after Backup',
+            'creating full Backup v3','preparing certificates','validating complete candidate nginx',
             'switching','verifying new stack','recovering prepared operation','recovering switching operation','recovering committed operation')
     # Only exact messages already public in the checked-out helper may leave
     # the private guest; arbitrary command/API bodies never become diagnostics.
     public={node.value for node in ast.walk(ast.parse(source)) if isinstance(node,ast.Constant) and isinstance(node.value,str)}
-    return {'stage':stage.replace(' ','_') if stage in stages else 'unknown','reason':reason if reason in public else 'unknown'}
+    formats=(r'Managed (?:hook|lineage|health|adguard|amneziawg|render-hook) check failed \(exit -?[0-9]{1,3}\)\.',
+             r'command failed \(exit -?[0-9]{1,3}\)',
+             r'Required local component is missing/inaccessible \(errno (?:[0-9]{1,3}|None)\)\.')
+    safe=reason in public or any(re.fullmatch(pattern,reason) for pattern in formats)
+    return {'stage':stage.replace(' ','_') if stage in stages else 'unknown','reason':reason if safe else 'unknown'}
 
 
 def dns_metrics(data, ident):

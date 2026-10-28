@@ -190,10 +190,13 @@ class CIScope(unittest.TestCase):
         self.assertEqual(result,{'stage':'unknown','reason':'unknown'})
         self.assertNotIn(secret,json.dumps(result))
         self.assertIsNone(d.domain_failure(secret,source))
+        for reason in ('Managed health check failed (exit 1).','command failed (exit 1)',
+                       'Required local component is missing/inaccessible (errno 1).'):
+            self.assertEqual(d.domain_failure('Change Domains failed during preflight: '+reason,source)['reason'],reason)
         import ast,re,time
         tree=ast.parse((ROOT/'tests/fresh/acceptance.py').read_text())
         functions=[node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name in ('invoke','failure_location')]
-        frame=b'  File "/root/pilot/checks.py", line 527, in change_domains\n'+secret.encode()
+        frame=b'  File "\x1b[35m/root/pilot/checks.py\x1b[0m", line \x1b[35m527\x1b[0m, in change_domains\n'+secret.encode()
         def ssh(command,*args,**kwargs):return subprocess.CompletedProcess([],1,frame if command.startswith('python3 -c') else b'',b'')
         with tempfile.TemporaryDirectory() as directory:
             env=dict(ROOT=Path(directory),REPO=ROOT,phase='change-domains',report={},ssh=ssh,re=re,time=time,json=json,domain_failure=d.domain_failure)

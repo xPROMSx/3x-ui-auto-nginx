@@ -579,6 +579,7 @@ class Operation:
         # Connect through the actual SNI stream while verifying this exact domain.
         context = ssl.create_default_context(cafile=str(self.path(cafile)))
         context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+        context.set_alpn_protocols(['http/1.1'])
         connection = http.client.HTTPConnection('127.0.0.1', 443, timeout=10)
         connection.sock = context.wrap_socket(socket.create_connection(('127.0.0.1', 443), timeout=10), server_hostname=name)
         try:
@@ -982,16 +983,23 @@ class Operation:
     def change(self, panel, reality, expected_panel, expected_reality, source):
         require(re.fullmatch(r'[0-9a-f]{40}', source) is not None, 'Missing exact trusted project source.')
         require(not os.path.lexists(self.path(STATE+'/journal.json')), 'Recover the pending domain operation before starting another.')
+        self.stage = 'validating installed layout'
         version = self.version_and_layout()
+        self.stage = 'recognizing managed configuration'
         context = self.discover()
         require((context['domains']['panel'], context['domains']['reality']) == (expected_panel, expected_reality),
                 'Domains changed after confirmation; no data changed.')
+        self.stage = 'checking target domains'
         self.target_preflight(context, panel, reality)
+        self.stage = 'planning scoped changes'
         with self.connection(True) as db:
             database_edits(db, context, panel, reality)  # Reject overrides before Backup or ACME.
         self.file_plan(context, panel, reality, source)
+        self.stage = 'checking original stack'
         self.healthy(context)
+        self.stage = 'checking original nginx'
         self.candidate_nginx({'files': []})
+        self.stage = 'checking original certificates'
         for domain in (context['domains']['panel'], context['domains']['reality']):
             self.certificate(domain)
         services = self.service_states(context)
@@ -1011,6 +1019,7 @@ class Operation:
                 'Backup returned an unexpected archive path.')
         self.run('bash', self.backup, 'inspect', archive, inherit_lock=True)
         print('Full Backup v3 verified: '+str(archive))
+        self.stage = 'checking stack after Backup'
         context = self.discover(self.summary(context))
         self.healthy(context)
         require(self.service_states(context) == services, 'Backup did not preserve the original service states.')
@@ -1107,7 +1116,9 @@ def main():
             raise Refusal('Operation interrupted; verified recovery is required.')
         signal.signal(signal.SIGTERM, interrupted); signal.signal(signal.SIGINT, interrupted)
         if args.action == 'inspect':
+            operation.stage = 'validating installed layout'
             operation.version_and_layout()
+            operation.stage = 'recognizing managed configuration'
             context = operation.discover()
             print(json.dumps(operation.summary(context)))
         elif args.action == 'recover':
@@ -1119,6 +1130,7 @@ def main():
     except BaseException as error:
         reason = str(error) if isinstance(error, Refusal) else (
             'command failed (exit '+str(error.returncode)+')' if isinstance(error, subprocess.CalledProcessError) else
+            'Managed HTTPS certificate/handshake/response validation failed.' if isinstance(error, (ssl.SSLError, http.client.HTTPException)) else
             'Required local component is missing/inaccessible (errno '+str(error.errno)+').' if isinstance(error, OSError) else
             'Malformed managed metadata or unsupported layout.' if isinstance(error, (KeyError, TypeError, ValueError)) else type(error).__name__)
         print('Change Domains failed during '+operation.stage+': '+reason, file=sys.stderr)
