@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -308,6 +309,16 @@ class Domains(unittest.TestCase):
                 self.assertTrue(all(v=='active' for v in f.services.values()))
                 self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
                 if failure=='issue-new-cover.example':self.assertTrue(f.p('/etc/letsencrypt/live/new-panel.example').is_dir())
+        f=self.fixture();before=f.state();run=f.operation.run
+        def failed_backup(*args,**kwargs):
+            if list(args[:3])==['bash','fixture-backup','backup']:
+                f.services['x-ui']='inactive'
+                raise subprocess.CalledProcessError(1,args)
+            return run(*args,**kwargs)
+        with patch.object(f.operation,'run',side_effect=failed_backup),self.assertRaisesRegex(f.module.Refusal,'ROLLBACK_UNVERIFIED'):
+            f.change('new.example')
+        self.assertTrue(f.state()==before,'Failed Backup cleanup modified SQLite')
+        self.assertFalse(any(args[0]=='certbot' for _,args in f.calls))
 
     def test_sigkill_switching_recovers_idempotently_before_another_change(self):
         for phase in ('prepared','switching'):
@@ -386,6 +397,36 @@ class Domains(unittest.TestCase):
         self.assertTrue(f.state()==before,'Busy WAL recovery wrote unrelated data')
         self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
         self.assertTrue(all(value=='active' for value in f.services.values()))
+
+    def test_interrupted_backup_child_can_finish_its_existing_cleanup(self):
+        f=self.fixture();started=f.root/'backup-started';restored=f.root/'backup-cleaned'
+        script=f.root/'backup-child.sh'
+        script.write_text('trap \'touch "$2"; exit 143\' TERM\ntouch "$1"\nwhile :; do sleep .05; done\n')
+        pid=os.fork()
+        if pid==0:
+            fd=os.open(f.root/'lock',os.O_CREAT|os.O_RDWR,0o600);os.dup2(fd,9)
+            def interrupted(signum,frame):raise f.module.Refusal('fixture interruption')
+            signal.signal(signal.SIGTERM,interrupted)
+            try:f.module.Operation('unused','unused',f.root).run('bash',script,started,restored,inherit_lock=True,timeout=20)
+            except f.module.Refusal:os._exit(0)
+            except BaseException:os._exit(4)
+            os._exit(3)
+        deadline=time.monotonic()+8
+        try:
+            while not started.exists() and time.monotonic()<deadline:time.sleep(.02)
+            self.assertTrue(started.exists(),'Private Backup child did not start')
+            os.kill(pid,signal.SIGTERM)
+            while time.monotonic()<deadline:
+                completed,status=os.waitpid(pid,os.WNOHANG)
+                if completed:break
+                time.sleep(.02)
+            else:self.fail('Backup interruption cleanup did not finish')
+            pid=0
+            self.assertEqual(os.waitstatus_to_exitcode(status),0)
+            self.assertTrue(restored.exists(),'Backup was killed before its existing service cleanup could run')
+        finally:
+            if pid:
+                os.kill(pid,signal.SIGKILL);os.waitpid(pid,0)
 
     def test_updated_state_round_trips_through_existing_backup_v3(self):
         from test_personal_backup import PersonalBackup, relocated

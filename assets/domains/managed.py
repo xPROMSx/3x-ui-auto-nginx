@@ -233,8 +233,30 @@ class Operation:
         return self.root / name.lstrip('/')
 
     def run(self, *args, timeout=60, inherit_lock=False):
-        return subprocess.run(list(map(str, args)), capture_output=True, check=True, timeout=timeout,
-                              pass_fds=(9,) if inherit_lock else ()).stdout
+        argv = list(map(str, args))
+        if not inherit_lock:
+            return subprocess.run(argv, capture_output=True, check=True, timeout=timeout).stdout
+        # Let the existing Backup traps resume its services on interruption.
+        # Private regular descriptors also survive a killed parent without
+        # sending SIGPIPE to the still-running, lock-owning Backup process.
+        with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as error:
+            with subprocess.Popen(argv, stdout=output, stderr=error, pass_fds=(9,), start_new_session=True) as process:
+                try:
+                    process.wait(timeout=timeout)
+                except BaseException:
+                    try: os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError: pass
+                    try: process.wait(timeout=120)
+                    except subprocess.TimeoutExpired:
+                        try: os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError: pass
+                        process.wait()
+                    raise
+                output.seek(0); error.seek(0)
+                result = output.read()
+                if process.returncode:
+                    raise subprocess.CalledProcessError(process.returncode, argv, output=result, stderr=error.read())
+                return result
 
     def check(self, action, *args):
         try:
@@ -954,7 +976,15 @@ class Operation:
             self.certificate(domain)
         services = self.service_states(context)
         self.stage = 'creating full Backup v3'
-        result = json.loads(self.run('bash', self.backup, 'backup', '--json', timeout=1800, inherit_lock=True))
+        try:
+            result = json.loads(self.run('bash', self.backup, 'backup', '--json', timeout=1800, inherit_lock=True))
+        except BaseException:
+            try:
+                self.healthy(context)
+                require(self.service_states(context) == services, 'Original service states changed during Backup.')
+            except BaseException:
+                raise Refusal('ROLLBACK_UNVERIFIED: full Backup failed and original service health could not be verified; retain /var/backups/x-ui recovery materials.') from None
+            raise
         require(result.get('status') == 'success' and isinstance(result.get('archive'), str), 'Full Backup v3 did not return verified success.')
         archive = Path(result['archive'])
         require(archive.parent == self.path('/var/backups/x-ui') and archive.name.endswith('.tar.gz') and not archive.is_symlink(),
