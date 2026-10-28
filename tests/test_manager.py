@@ -91,6 +91,10 @@ entrypoint
             for item in (('2. Change Domains','1. Create backup','2. List backups','3. Restore backup','0. Back','0. Exit') if language=='1' else
                          ('2. Смена доменов','1. Создать резервную копию','2. Список резервных копий','3. Восстановить резервную копию','0. Назад','0. Выход')):
                 self.assertIn(item,text)
+        code,text=tty_run(ROOT/'x-ui-latest.sh',b'2\n1\n')
+        self.assertEqual(code,1,text)
+        self.assertIn('Для этой операции нужны права root',text)
+        self.assertIn('FAILED (exit 1)',text)
 
     def test_cli_arguments_stay_english_and_bypass_language_selection(self):
         with tempfile.TemporaryDirectory() as temporary:

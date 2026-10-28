@@ -3410,6 +3410,7 @@ manager_menu() {
             *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
         esac
         if (( status )); then
+            if (( EUID != 0 )); then ui_text '' 'Для этой операции нужны права root. Запустите менеджер через sudo или от root.\n' >&2; fi
             if (( ! reported )); then
                 ui_text 'FAILED (exit %d). Check the reported recovery state before another operation.\n' 'FAILED (exit %d). Перед новой операцией проверьте указанное состояние восстановления.\n' "$status" >&2
             fi
