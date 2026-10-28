@@ -11,7 +11,7 @@ import threading
 import time
 import traceback
 
-from diagnostics import VISION_STAGES, domain_failure, vision_detail
+from diagnostics import VISION_STAGES, domain_failure, vision_detail, api_restart_metrics, api_restart_nginx_errors
 
 ROOT = Path('/pilot')
 REPO = Path('/repo')
@@ -129,13 +129,20 @@ def install(scenario, ref):
     (ROOT/(phase+'.private.log')).write_bytes(result.stdout+result.stderr)
     if result.returncode:
         failure_location(result.stderr)
-        try:
+    try:
+        if result.returncode:
             private = ssh('cat /root/pilot/installer.raw.log', 20)
             if private.returncode == 0:
                 detail = vision_detail(private.stdout.decode(errors='replace'), (REPO/'assets/vision/managed.py').read_text())
                 if detail is not None: report[phase+'_vision_detail'] = detail
-        except (OSError, ValueError, SyntaxError, subprocess.TimeoutExpired):
-            pass  # Optional diagnostics must not replace the acceptance failure.
+            nginx = ssh('tail -n 100 /var/log/nginx/error.log', 20)
+            if nginx.returncode == 0:
+                report[phase+'_api_nginx_errors'] = api_restart_nginx_errors(nginx.stdout.decode(errors='replace'))
+        metrics = ssh('cat /root/pilot/api-restarts.metrics', 20)
+        if metrics.returncode == 0:
+            report[phase+'_api_restarts'] = api_restart_metrics(metrics.stdout.decode(errors='replace'))
+    except (OSError, ValueError, SyntaxError, subprocess.TimeoutExpired):
+        pass  # Optional diagnostics must not replace the acceptance result.
     data = ssh('cat /root/pilot/install-result.json', 20)
     if data.returncode:
         raise AssertionError('Install result unavailable')
