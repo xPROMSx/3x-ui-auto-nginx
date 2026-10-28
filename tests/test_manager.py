@@ -361,17 +361,22 @@ domains_tool() {
     if [[ "$1" == inspect ]]; then printf '%s\\n' '{"domains":{"panel":"deploy.example","reality":"cover.example"}}';
     else printf 'SWITCH|%s|%s|%s|%s\\n' "$2" "$3" "$4" "$5"; fi
 }
-change_domains_action
+entrypoint
 '''
                 script=root/'menu.sh';script.write_text(library)
-                answers=choice+'\n'+(panel+'\n' if choice in ('1','3') else '')+(reality+'\n' if choice in ('2','3') else '')+answer+'\n'
+                answers=('2' if language=='ru' else '1')+'\n2\n'+choice+'\n'+(panel+'\n' if choice in ('1','3') else '')+(reality+'\n' if choice in ('2','3') else '')+answer+'\n0\n'
                 code,text=tty_run(script,answers.encode(),env={'STAGE':str(stage)})
                 self.assertEqual(code,0,text)
                 self.assertIn('Current Panel:   deploy.example' if language=='en' else 'Текущий домен панели:  deploy.example',text)
                 self.assertIn('Current REALITY: cover.example' if language=='en' else 'Текущий домен REALITY: cover.example',text)
                 self.assertIn('client configurations' if language=='en' else 'Клиентские конфигурации',text)
                 self.assertIn('YES',text)
-                if answer=='YES':self.assertIn('SWITCH|'+panel+'|'+reality+'|deploy.example|cover.example',text)
+                if answer=='YES':
+                    self.assertIn('SWITCH|'+panel+'|'+reality+'|deploy.example|cover.example',text)
+                    self.assertEqual(text.count('1. Installation' if language=='en' else '1. Установка'),1,text)
+                    result=text.split('DOMAINS CHANGED SUCCESSFULLY' if language=='en' else 'СМЕНА ДОМЕНОВ УСПЕШНО ЗАВЕРШЕНА')[1]
+                    self.assertEqual('  REALITY:' in result,choice in ('2','3'))
+                    self.assertEqual(('  Panel:' if language=='en' else '  Панель:') in result,choice in ('1','3'))
                 else:self.assertNotIn('SWITCH|',text);self.assertIn('Cancelled.' if language=='en' else 'Отменено.',text)
 
 
@@ -427,6 +432,7 @@ entrypoint
                 elif restored:
                     self.assertIn('Restore: SUCCESS',text)
                     self.assertIn('Overall: PARTIAL' if expected else 'Overall: SUCCESS',text)
+                    self.assertEqual(text.count('1. Установка'),1,text)
                     if expected:self.assertIn('данные сохранены, но настройка Security не завершена',text)
 
     def test_post_restore_security_trust_cleanup_status_lock_and_partial_result(self):
