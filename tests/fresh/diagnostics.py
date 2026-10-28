@@ -24,6 +24,18 @@ def vision_failure(log):
             'rollback':rollback if rollback in ('failed_rolled_back','failed_unverified') else 'unknown'}
 
 
+def vision_detail(log, source):
+    """Preserve the helper's public failure category, never its API/command data."""
+    public={node.value for node in ast.walk(ast.parse(source)) if isinstance(node,ast.Constant) and isinstance(node.value,str)}
+    matches=re.findall(r'^Vision failed during ([^:\r\n]+): ([^\r\n]+?); rollback=(failed_rolled_back|failed_unverified)(?:;|\r?$)',log,re.M)
+    for stage,reason,rollback in reversed(matches):
+        if stage not in public:continue
+        safe=reason in public or reason in ('ValueError','TypeError','KeyError','JSONDecodeError','TimeoutError','RuntimeError') or bool(re.fullmatch(
+            r'(?:(?:curl|nginx|systemctl|command) exited with -?[0-9]{1,3}(?: \((?:connection refused/unavailable|HTTP error response|request timed out|TLS handshake failed|empty response|connection receive failed|certificate verification failed)\))?|command timed out|OS error \(errno (?:[0-9]{1,3}|None)\))',reason))
+        return dict(stage=stage,reason=reason if safe else 'unknown',rollback=rollback)
+    return None
+
+
 def domain_failure(log, source):
     matches=re.findall(r'Change Domains failed during ([^\r\n:]+): ([^\r\n]+)',log)
     if not matches:return None

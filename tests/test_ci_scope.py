@@ -181,6 +181,18 @@ class CIScope(unittest.TestCase):
         self.assertNotIn(secret, json.dumps([result, unknown]))
         self.assertIsNone(diagnostics.vision_failure('Vision Ready\n'+secret))
 
+    def test_vision_detail_keeps_only_public_stages_and_failure_categories(self):
+        d=self.diagnostics();source=(ROOT/'assets/vision/managed.py').read_text()
+        secret='PRIVATE-CREDENTIAL-https://secret.invalid/token'
+        line='Vision failed during checking trusted HTTPS fallback: curl exited with 28 (request timed out); rollback=failed_rolled_back'
+        self.assertEqual(d.vision_detail(line+'\n'+secret,source),dict(stage='checking trusted HTTPS fallback',
+            reason='curl exited with 28 (request timed out)',rollback='failed_rolled_back'))
+        unknown=d.vision_detail(line.replace('curl exited with 28 (request timed out)',secret),source)
+        self.assertEqual(unknown['reason'],'unknown')
+        self.assertIsNone(d.vision_detail(line.replace('checking trusted HTTPS fallback',secret),source))
+        self.assertIsNone(d.vision_detail(line.replace('failed_rolled_back',secret),source))
+        self.assertNotIn(secret,json.dumps(unknown))
+
     def test_domain_failure_diagnostics_are_limited_to_public_source_constants(self):
         d=self.diagnostics();source=(ROOT/'assets/domains/managed.py').read_text()
         message='Unknown x-ui service layout.';secret='PRIVATE-SESSION-https://secret.invalid/token'
