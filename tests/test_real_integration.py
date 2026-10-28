@@ -512,6 +512,48 @@ http {{ access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {mai
 
     def test_reality(self): self.transport('reality')
 
+    def test_domain_updates_preserve_native_311_schema_and_host_client_bindings(self):
+        from test_integrated_features import helper
+        domains=helper('domains');root=self.root/'native-domain-root';folder=root/'etc/x-ui';folder.mkdir(parents=True)
+        path=folder/'x-ui.db'
+        with sqlite3.connect(self.root/'db/x-ui.db') as source, sqlite3.connect(path) as target:source.backup(target)
+        def connect(readonly=False):
+            db=sqlite3.connect('file:'+str(path)+'?mode='+('ro' if readonly else 'rw'),uri=True)
+            db.row_factory=sqlite3.Row;return db
+        canonical,_=seed(private_key=self.private,public_key=self.public_key)
+        with connect() as db:
+            for row in db.execute('SELECT id,remark FROM inbounds').fetchall():
+                original=canonical[row['remark'].split()[-1]]
+                db.execute('UPDATE inbounds SET listen=?,port=?,stream_settings=? WHERE id=?',
+                           (original['listen'],original['port'],original['stream_settings'],row['id']))
+            for key in ('webCertFile','subCertFile','webKeyFile','subKeyFile'):
+                db.execute('UPDATE settings SET value=? WHERE key=?',('/root/cert/deploy.example/'+('privkey.pem' if 'Key' in key else 'fullchain.pem'),key))
+            db.execute("UPDATE hosts SET group_id='native-group-'||id,cipher_suites='[\"fixture-cipher\"]',mihomo_x25519=1")
+            db.execute("UPDATE clients SET client_host_rule_ids='[\"native-group-1\"]'")
+        def state():
+            with connect(True) as db:
+                return {name:[dict(row) for row in db.execute('SELECT * FROM "'+name+'" ORDER BY rowid')]
+                        for name, in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        before=state()
+        with connect(True) as db:
+            context=domains.database_context(db,'deploy.example','cover.example')
+            edits=domains.database_edits(db,context,'new-panel.example','new-cover.example')
+        operation=domains.Operation('unused','unused',root)
+        # The canonical integration stays nonroot. Only this private connection
+        # replaces the production ownership wrapper; all UPDATE/WAL code is real.
+        with patch.object(operation,'connection',side_effect=connect):operation.database_update({'database':edits},True)
+        after=state();allowed={(e['table'],e['identity'],e['column']) for e in edits}
+        for table in before:
+            self.assertEqual(len(before[table]),len(after[table]),'Native table row count changed: '+table)
+            for old,new in zip(before[table],after[table]):
+                identity=old.get('key') if table=='settings' else old.get('id')
+                for key,value in old.items():
+                    if (table,identity,key) not in allowed:self.assertTrue(new[key]==value,'Native unrelated column changed: '+table+'.'+key)
+        self.assertTrue(after['clients']==before['clients'],'Native client identity/bindings changed')
+        self.assertTrue(after['client_inbounds']==before['client_inbounds'],'Native inbound attachments changed')
+        self.assertTrue(all('snis' in h and 'sni_shared_random' in h and 'mihomo_x25519' in h for h in after['hosts']))
+        self.passed.append('Change Domains native SQLite UPDATE / WAL / v3.11 Host bindings')
+
     def test_single_bootstrap_real_login_and_logout(self):
         from test_integrated_features import helper
         panel=helper('amneziawg')

@@ -280,6 +280,8 @@ if __name__ == '__main__':
             invoke('checks.installed(cold=True)', 'cold')
             phase = 'cold-transport-consumers'
             invoke('checks.transports()', 'cold-transports', 300)
+            phase = 'change-domains'
+            invoke('checks.change_domains()', 'change-domains', 300, tty=True)
             poweroff()
             phase = 'mandatory-dependency-negative'
             fresh_disk()
