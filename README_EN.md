@@ -263,7 +263,7 @@ Compatibility depends on your client app and its version.
 Standard subscriptions, JSON, and **Mihomo / Clash** are served via nginx and HTTPS. `provider=1` returns the original subscription for proxy providers rather than a complete Clash configuration.
 
 
-<a id="change-domains"></a
+<a id="change-domains"></a>
 
 ## 🌐 Change domains
 
