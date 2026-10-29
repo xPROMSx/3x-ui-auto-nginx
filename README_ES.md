@@ -263,7 +263,7 @@ La compatibilidad depende de la aplicación cliente y de su versión.
 Las suscripciones estándar, JSON y **Mihomo / Clash** se sirven mediante nginx y HTTPS. `provider=1` devuelve la suscripción original para los proveedores de proxy en lugar de una configuración completa de Clash.
 
 
-<a id="change-domains"></a
+<a id="change-domains"></a>
 
 ## 🌐 Cambiar dominios
 
