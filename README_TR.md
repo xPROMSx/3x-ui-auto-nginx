@@ -263,7 +263,7 @@ Uyumluluk kullandığınız istemci uygulamasına ve sürümüne bağlıdır.
 Standart abonelikler, JSON ve **Mihomo / Clash** nginx üzerinden HTTPS ile sunulur. `provider=1`, tam Clash yapılandırması yerine proxy provider'lar için özgün aboneliği döndürür.
 
 
-<a id="change-domains"></a
+<a id="change-domains"></a>
 
 ## 🌐 Alan adlarını değiştirme
 
