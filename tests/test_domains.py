@@ -273,6 +273,23 @@ class Domains(unittest.TestCase):
         self.assertTrue(f.state()==before)
         self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] for _,args in f.calls))
 
+    def test_cdn_rebuild_cleanup_checks_ownership_and_declining_removes_old_route(self):
+        from test_personal_backup import relocated
+        for foreign in ('none','before-preflight','after-preflight'):
+            with self.subTest(foreign=foreign):
+                f=self.fixture();f.cdn();before=f.state()
+                route=f.p('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf')
+                if foreign=='before-preflight':route.write_text('# foreign route; preserve\n')
+                script='systemctl() { :; }; msg_err() { :; };\n'
+                script+='\n'.join(relocated(function(name),f.root) for name in ('preflight_xhttp_cdn','clean_previous_install'))
+                script+='\nINSTALL_XHTTP_CDN=n; preflight_xhttp_cdn; '
+                if foreign=='after-preflight':script+="printf '# changed route; preserve\\n' > "+str(route)+'; '
+                script+='clean_previous_install'
+                result=subprocess.run(['bash','-eu','-c',script],capture_output=True,text=True)
+                self.assertEqual(result.returncode,0 if foreign=='none' else 1,result.stderr)
+                self.assertEqual(route.exists(),foreign!='none')
+                if foreign!='none':self.assertTrue(f.state()==before,'Foreign route caused data removal')
+
     def test_panel_reality_both_preserve_client_keys_ids_new_fields_and_optional_state(self):
         for mode in ('panel','reality','both'):
             with self.subTest(mode=mode):

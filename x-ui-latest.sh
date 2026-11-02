@@ -184,6 +184,16 @@ vision_domain=''
 
 # ─── Stop & clean previous install (called from main, after domain validation) ─
 clean_previous_install() {
+    # A confirmed full rebuild removes only the exact previously owned route.
+    # Preserve an unknown or independently modified optional snippet.
+    local cdn_route=/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf
+    if [[ -e $cdn_route || -L $cdn_route ]]; then
+        [[ -f $cdn_route && ! -L $cdn_route && $(stat -c '%u:%a:%h' "$cdn_route") == 0:600:1 &&
+           -n ${XHTTP_CDN_PREVIOUS_SHA:-} && $(sha256sum "$cdn_route" | cut -d ' ' -f1) == "$XHTTP_CDN_PREVIOUS_SHA" ]] || {
+            msg_err 'XHTTP CDN route ownership changed; rebuild stopped before cleanup.'; return 1;
+        }
+        rm -f "$cdn_route" || return 1
+    fi
     systemctl stop x-ui 2>/dev/null || true
     if [[ "${VISION_PREVIOUS_HOOK:-}" == owned ]]; then
         rm -f /etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx-vision
@@ -2257,6 +2267,49 @@ select_xhttp_cdn() {
 }
 
 preflight_xhttp_cdn() {
+    XHTTP_CDN_PREVIOUS_SHA=''
+    if [[ -e /etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf || -L /etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf ]]; then
+        XHTTP_CDN_PREVIOUS_SHA=$(python3 - <<'PYCDNOWNER'
+import hashlib, json, pathlib, re, sqlite3, stat
+root=pathlib.Path('/etc/x-ui')
+dbpath=root/'x-ui.db';marker=root/'auto-nginx-managed.json'
+route=pathlib.Path('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf')
+for directory in (root, root.parent, route.parent, route.parent.parent, route.parent.parent.parent):
+    info=directory.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid!=0 or info.st_mode&0o022:
+        raise ValueError('Unknown XHTTP CDN directory ownership')
+for path in (dbpath,marker,route):
+    info=path.lstat()
+    mask=0o022 if path==dbpath else 0o077
+    if not stat.S_ISREG(info.st_mode) or info.st_uid!=0 or info.st_nlink!=1 or info.st_mode&mask:
+        raise ValueError('Unknown XHTTP CDN ownership')
+    if path!=dbpath and stat.S_IMODE(info.st_mode)!=0o600:
+        raise ValueError('Unknown XHTTP CDN file mode')
+state=json.loads(marker.read_text());cdn=state['xhttp_cdn'];iid=state['inbound_roles']['xhttp_cdn']
+if (state.get('format')!=1 or state.get('layout')!='nginx-stream-v1' or
+        not re.fullmatch(r'source@[0-9a-f]{40}',state.get('installed_by','')) or
+        not re.fullmatch(r'[0-9a-f]{40}',state.get('source_ref','')) or
+        type(cdn.get('port')) is not int or not 1024<=cdn['port']<=65535 or
+        not re.fullmatch(r'/[A-Za-z0-9]{10,64}/cookie',cdn.get('path',''))):
+    raise ValueError('Unknown XHTTP CDN manifest')
+data=route.read_bytes();text=data.decode()
+if (text!=cdn['snippet'] or not text.startswith('# Managed by 3x-ui Auto Nginx: XHTTP CDN\n') or
+        re.findall(r'proxy_pass http://127\.0\.0\.1:([0-9]+);',text)!=[str(cdn['port'])]):
+    raise ValueError('Unknown XHTTP CDN route')
+with sqlite3.connect(dbpath.as_uri()+'?mode=ro',uri=True) as db:
+    rows=db.execute('SELECT protocol,listen,port,stream_settings,node_id FROM inbounds WHERE id=?',(iid,)).fetchall()
+if len(rows)!=1:raise ValueError('Unknown XHTTP CDN inbound')
+protocol,listen,port,value,node=rows[0];stream=json.loads(value)
+if ((protocol,listen,port)!=('vless','127.0.0.1',cdn['port']) or node not in (None,0) or
+        stream.get('network')!='xhttp' or stream.get('security')!='none' or
+        stream.get('xhttpSettings',{}).get('mode')!='packet-up' or stream['xhttpSettings'].get('path')!=cdn['path']):
+    raise ValueError('Unknown XHTTP CDN topology')
+print(hashlib.sha256(data).hexdigest())
+PYCDNOWNER
+        ) || {
+            msg_err "$(ui_text 'Existing XHTTP CDN route ownership could not be verified; stopped before cleanup.' 'Не удалось подтвердить принадлежность существующего маршрута XHTTP CDN; остановка до удаления данных.')"; return 1;
+        }
+    fi
     [[ ${INSTALL_XHTTP_CDN:-n} == y ]] || return 0
     [[ -n ${PANEL_TAG:-} && $PANEL_TAG == "$(verified_panel_release | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" ]] || {
         msg_err "$(ui_text 'XHTTP CDN requires the verified 3X-UI baseline; select N with other versions.' 'Для XHTTP CDN нужна проверенная базовая версия 3X-UI; с другими версиями выберите N.')"; return 1;
