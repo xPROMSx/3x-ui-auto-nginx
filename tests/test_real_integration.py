@@ -527,8 +527,31 @@ http {{ log_format reality_probe '$remote_addr|$proxy_protocol_addr'; access_log
     def test_reality(self): self.transport('reality')
 
     def test_reality_old_and_new_proxy_fallback_trust(self):
-        old = subprocess.check_output(['git','-c','safe.directory='+str(ROOT),'show',
-                    'f7f5cbbb2d00c1c0cdb2749745e2b4ff2aaf00c1:x-ui-latest.sh'],cwd=ROOT,text=True)
+        # Frozen pre-PROXY fallback; works with Canary's depth-one checkout.
+        old = r'''    cat > "/etc/nginx/sites-available/${reality_domain}" <<EOF
+server {
+    server_tokens off;
+    server_name ${reality_domain};
+    listen 127.0.0.1:9443 ssl${http2_listen};
+    ${http2_on}
+    index index.html index.htm index.php;
+    root /var/www/html/;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!eNULL:!MD5:!DES:!RC4:!ADH:!SSLv3:!EXP:!PSK:!DSS;
+    ssl_certificate     /etc/letsencrypt/live/${reality_domain}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${reality_domain}/privkey.pem;
+    if (\$host !~* ^(.+\.)?${reality_domain}\$)            { return 444; }
+    if (\$scheme ~* https)                                  { set \$safe 1; }
+    if (\$ssl_server_name !~* ^(.+\.)?${reality_domain}\$) { set \$safe "\${safe}0"; }
+    if (\$safe = 10)                                        { return 444; }
+    if (\$request_uri ~ "(\"|'|\`|~|,|:|;|%|\\$|&&|\?\?|0x00|0X00|\||\\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set \$hack 1; }
+    error_page 400 401 402 403 500 501 502 503 504 =404 /404;
+    proxy_intercept_errors on;
+
+    include /etc/nginx/snippets/includes.conf;
+}
+EOF
+'''
         for xver in (0,1):
             with self.subTest(xver=xver), ExitStack() as cleanup:
                 self.reality_source = old if xver==0 else None
@@ -666,10 +689,11 @@ http {{ log_format reality_probe '$remote_addr|$proxy_protocol_addr'; access_log
         for index in range(6):
             header.write_text(f'X-Real-IP: 203.0.113.{index+1}\nX-Forwarded-For: 198.51.100.{index+1}\n')
             with self.assertRaises(ValueError): api.request('login',{'username':'forwarding-fixture','password':'wrong-fixture-password'})
-        log=(self.root/'forwarded-panel.log').read_text()
+        log=(Path(env['XUI_LOG_FOLDER'])/'3xui.log').read_text()
         ips=re.findall(r'failed login: username="forwarding-fixture", IP="([^"]+)"',log)
         self.assertEqual(ips,['127.0.0.2']*6)
-        self.assertRegex(log,r'failed login: username="forwarding-fixture", IP="127\.0\.0\.2"[^\n]*blocked_until=')
+        self.assertTrue(re.search(r'failed login: username="forwarding-fixture", IP="127\.0\.0\.2"[^\n]*blocked_until=',log),
+                        'Native login limiter did not report a block for the actual source IP')
         self.passed.append('3.11 forwarding headers: native links / redirects / real login IP and limiter')
 
     def test_single_bootstrap_real_login_and_logout(self):
