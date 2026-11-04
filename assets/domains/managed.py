@@ -448,8 +448,11 @@ class Operation:
         if vision:
             row = context['rows'][context['inbound_roles']['vision']]
             expected += 'upstream vision { server 127.0.0.1:'+str(row['port'])+'; }'
+        layouts = (('', ''), ('include '+SNI_INCLUDE+';', 'include '+UPSTREAM_INCLUDE+';'))
+        if (context['telemt'] or {}).get('layout') == 'include':
+            layouts = layouts[1:]  # Files alone never prove an active include route.
         variants = [expected.replace('SNI_INCLUDE', sni).replace('UPSTREAM_INCLUDE', upstream).replace('IPV6', ipv6)
-                    for sni, upstream in (('', ''), ('include '+SNI_INCLUDE+';', 'include '+UPSTREAM_INCLUDE+';'))
+                    for sni, upstream in layouts
                     for ipv6 in ('', 'listen [::]:443;')]
         require(normalize(stream) in list(map(normalize, variants)),
                 'Unknown nginx stream layout; Vision and other routes were preserved.')

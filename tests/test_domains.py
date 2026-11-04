@@ -325,7 +325,8 @@ class Domains(unittest.TestCase):
 
     def test_telemt_conflicts_and_unknown_routes_refuse_before_backup(self):
         for includes in (False,True):
-            for fault in ('panel-conflict','reality-conflict','upstream','duplicate','vhost','domain','unknown','mixed','include-position'):
+            cases=('panel-conflict','reality-conflict','upstream','duplicate','vhost','domain','unknown','mixed','include-position')
+            for fault in cases+(('commented-includes',) if includes else ()):
                 with self.subTest(includes=includes,fault=fault):
                     f=self.fixture();f.telemt(includes);before=f.state()
                     stream=f.p(f.module.STREAM)
@@ -347,6 +348,11 @@ class Domains(unittest.TestCase):
                     elif fault=='include-position':
                         directive='    include /etc/nginx/stream-sni.d/*.conf;\n'
                         stream.write_text(stream.read_text().replace(directive,'')+'\n'+directive)
+                    elif fault=='commented-includes':
+                        text=stream.read_text()
+                        for directory in ('stream-sni.d','stream-upstreams.d'):
+                            text=text.replace('include /etc/nginx/'+directory+'/*.conf;','# include /etc/nginx/'+directory+'/*.conf;')
+                        stream.write_text(text)
                     with self.assertRaises(f.module.Refusal):
                         f.change('telegram.example' if fault=='panel-conflict' else 'new.example',
                                  'telegram.example' if fault=='reality-conflict' else None)
