@@ -89,7 +89,7 @@ def inbound(domain, port, fallback, cert, key, flag="🌐"):
 
 def fallback_config(domain, port, root='/var/www/html'):
     domain_name(domain)
-    errors = '    error_page 404 /404.html;\n' if root == '/var/www/html/cover-vision' else ''
+    errors = '    absolute_redirect off;\n    error_page 404 /404.html;\n' if root == '/var/www/html/cover-vision' else ''
     return MARKER + f'''server {{
     listen 127.0.0.1:{port} proxy_protocol;
     server_name {domain};
@@ -144,7 +144,9 @@ def nginx_artifact_domain(site, acme):
             expected = render(name[1], int(port[1]), root=roots[0])
         else:
             expected = render(name[1], ipv6=True)
-        if text != expected and not (render is acme_config and text == render(name[1], ipv6=False)):
+        if (text != expected and not (render is acme_config and text == render(name[1], ipv6=False)) and
+                not (render is fallback_config and roots[0] == '/var/www/html/cover-vision' and
+                     text == expected.replace('    absolute_redirect off;\n','',1))):
             raise ValueError('Modified Vision nginx configuration; preserved')
         names.add(name[1])
     if len(names) > 1:

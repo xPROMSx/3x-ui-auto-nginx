@@ -562,6 +562,20 @@ http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$p
                 if route.endswith('index.html'):route=route[:-10]
                 code,mime,body=request(domain,route)
                 self.assertEqual(code,200);self.assertIn('text/html',mime);self.assertEqual(body,page.read_bytes())
+            if role in ('reality','vision'):
+                with self.subTest(redirect_role=role):
+                    directory=next(p.parent for p in sorted(site.rglob('index.html')) if p.parent!=site)
+                    path='/'+str(directory.relative_to(site))
+                    headers_file=self.root/('redirect-'+role)
+                    code=subprocess.check_output(['curl','-q','-sS','--noproxy','*','--cacert',str(self.cert),
+                        '--resolve',f'{domain}:{self.public}:127.0.0.1','--max-time','10',
+                        '-D',str(headers_file),'-o','/dev/null','-w','%{http_code}',
+                        f'https://{domain}:{self.public}'+path],timeout=15)
+                    self.assertEqual(code,b'301')
+                    locations=re.findall(r'(?im)^location: ([^\r\n]+)',headers_file.read_text())
+                    self.assertEqual(locations,[path+'/'])
+                    followed,_,body=request(domain,locations[0])
+                    self.assertEqual(followed,200);self.assertEqual(body,(directory/'index.html').read_bytes())
             code,_,headers=request(domain,'/',True)
             self.assertEqual(code,200);self.assertNotIn(b'<!doctype',headers.lower())
             for relative in ('static/site.css','static/hero.svg','favicon.ico','favicon.svg',

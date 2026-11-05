@@ -35,6 +35,15 @@ class CoverResources(unittest.TestCase):
             for root in ('/var/www/html','/var/www/html/cover-vision'):
                 site.write_text(vision.fallback_config('vision.example',12345,root))
                 self.assertEqual(vision.nginx_artifact_domain(site,acme),'vision.example')
+                if root == '/var/www/html':
+                    self.assertNotIn('absolute_redirect',site.read_text())
+                else:
+                    # Backups made before relative redirects keep their exact known layout.
+                    site.write_text(site.read_text().replace('    absolute_redirect off;\n',''))
+                    self.assertEqual(vision.nginx_artifact_domain(site,acme),'vision.example')
+            site.write_text(vision.fallback_config('vision.example',12345,'/var/www/html/cover-vision').replace(
+                'absolute_redirect off;','absolute_redirect on;'))
+            with self.assertRaises(ValueError):vision.nginx_artifact_domain(site,acme)
             site.write_text(vision.fallback_config('vision.example',12345,'/srv/foreign'))
             with self.assertRaises(ValueError):vision.nginx_artifact_domain(site,acme)
 
@@ -143,18 +152,19 @@ class CoverPublication(unittest.TestCase):
 
     def test_new_sites_backup_restore_preserves_bytes_and_selection(self):
         from test_personal_backup import PersonalBackup, relocated
-        for vision in (False,True):
-            with self.subTest(vision=vision):
+        for vision,legacy_redirect in ((False,False),(True,False),(True,True)):
+            with self.subTest(vision=vision,legacy_redirect=legacy_redirect):
                 fixture=PersonalBackup('runTest');fixture.setUp()
                 try:
                     if vision:fixture.seed_vision()
-                    stage=self.root/('stage-'+str(vision));web=fixture.path('/var/www/html');state=fixture.path('/etc/x-ui/cover-sites.json')
+                    stage=self.root/('stage-'+str(vision)+'-'+str(legacy_redirect));web=fixture.path('/var/www/html');state=fixture.path('/etc/x-ui/cover-sites.json')
                     roles=['panel','reality']+(['vision'] if vision else [])
                     self.m.prepare(stage,state,roles);self.m.publish(stage,web,state,roles)
                     if vision:
                         from test_integrated_features import helper as feature
-                        fixture.write('/etc/nginx/sites-available/vision.conf',relocated(feature('vision').fallback_config(
-                            'vision.example.com',12001,root='/var/www/html/cover-vision'),fixture.root))
+                        site=feature('vision').fallback_config('vision.example.com',12001,root='/var/www/html/cover-vision')
+                        if legacy_redirect:site=site.replace('    absolute_redirect off;\n','')
+                        fixture.write('/etc/nginx/sites-available/vision.conf',relocated(site,fixture.root))
                     before={r:self.m.tree(web/('cover-'+r)) for r in roles};selection=state.read_bytes()
                     archive=fixture.backup();original=archive.read_bytes()
                     for r in roles:shutil.rmtree(web/('cover-'+r))

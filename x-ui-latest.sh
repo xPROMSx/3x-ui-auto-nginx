@@ -1177,6 +1177,7 @@ EOF
     cat > "/etc/nginx/sites-available/${reality_domain}" <<EOF
 server {
     server_tokens off;
+    absolute_redirect off;
     server_name ${reality_domain};
     listen 127.0.0.1:9443 ssl${http2_listen} proxy_protocol;
     real_ip_header proxy_protocol;
