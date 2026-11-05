@@ -105,7 +105,7 @@ def check_paths(web, state):
 
 def publish(stage, web, state, roles):
     before = read_state(state); selected = read_state(stage/'selection.json')
-    parents(web); web.mkdir(parents=True, exist_ok=True)
+    parents(web)
     for role in roles:
         destination = web/('cover-'+role)
         if role in before:
@@ -113,6 +113,8 @@ def publish(stage, web, state, roles):
             tree(destination)
         elif os.path.lexists(destination): raise ValueError('Foreign cover path; preserved: '+str(destination))
         else: tree(stage/('cover-'+role))
+    # A private caller umask must not make the public document-root parent 0700.
+    web.mkdir(mode=0o755, exist_ok=True); web.chmod(0o755)
     created = []
     try:
         for role in roles:

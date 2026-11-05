@@ -111,6 +111,18 @@ class CoverPublication(unittest.TestCase):
             self.assertFalse(any(name.endswith(('.py','.json')) for name in files))
             self.assertEqual(files,before[role])
 
+    def test_public_root_is_searchable_with_private_caller_umask(self):
+        stage=self.prepare('private-umask',['panel','reality'])
+        previous=os.umask(0o077)
+        try:self.m.publish(stage,self.web,self.state,['panel','reality'])
+        finally:os.umask(previous)
+        self.assertEqual(self.web.stat().st_mode&0o777,0o755)
+        self.assertEqual(self.state.stat().st_mode&0o777,0o600)
+        for role in ('panel','reality'):
+            site=self.web/('cover-'+role)
+            self.assertEqual(site.stat().st_mode&0o777,0o755)
+            self.assertEqual((site/'index.html').stat().st_mode&0o777,0o644)
+
     def test_foreign_paths_symlinks_and_failed_publication_preserve_data(self):
         stage=self.prepare('base',['panel','reality'])
         self.web.mkdir();outside=self.root/'foreign';outside.mkdir();(outside/'important').write_text('keep')
