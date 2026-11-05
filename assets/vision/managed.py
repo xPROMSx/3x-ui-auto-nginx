@@ -89,6 +89,7 @@ def inbound(domain, port, fallback, cert, key, flag="🌐"):
 
 def fallback_config(domain, port, root='/var/www/html'):
     domain_name(domain)
+    errors = '    error_page 404 /404.html;\n' if root == '/var/www/html/cover-vision' else ''
     return MARKER + f'''server {{
     listen 127.0.0.1:{port} proxy_protocol;
     server_name {domain};
@@ -98,7 +99,7 @@ def fallback_config(domain, port, root='/var/www/html'):
     real_ip_header proxy_protocol;
     set_real_ip_from 127.0.0.1;
     if ($host != {domain}) {{ return 404; }}
-    location / {{ try_files $uri $uri/ =404; }}
+{errors}    location / {{ try_files $uri $uri/ =404; }}
 }}
 '''
 
@@ -137,7 +138,10 @@ def nginx_artifact_domain(site, acme):
             port = re.search(r'^    listen 127\.0\.0\.1:(\d+) proxy_protocol;$', text, re.M)
             if not port or not 1024 <= int(port[1]) <= 65535:
                 raise ValueError('Unrecognized Vision fallback port')
-            expected = render(name[1], int(port[1]))
+            roots = re.findall(r'^    root ([^;]+);$', text, re.M)
+            if len(roots) != 1 or roots[0] not in ('/var/www/html','/var/www/html/cover-vision'):
+                raise ValueError('Unknown Vision static root')
+            expected = render(name[1], int(port[1]), root=roots[0])
         else:
             expected = render(name[1], ipv6=True)
         if text != expected and not (render is acme_config and text == render(name[1], ipv6=False)):
@@ -198,7 +202,7 @@ def configure(panel, domain, port, fallback, stream, site, enabled, cert, key, f
         panel.request('panel/api/hosts/add', {'inboundIds': [iid], 'remark': 'vision', 'hosts': [domain],
                       'port': 443, 'security': 'same', 'sni': domain, 'alpn': ['http/1.1'], 'allowInsecure': False})
         stage = 'writing Vision nginx fallback and SNI route'
-        site.write_text(fallback_config(domain, fallback)); site.chmod(0o644)
+        site.write_text(fallback_config(domain, fallback, root='/var/www/html/cover-vision')); site.chmod(0o644)
         enabled.symlink_to(site)
         stream.write_text(patched)
         stage = 'validating nginx configuration'
