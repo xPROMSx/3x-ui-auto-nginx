@@ -495,6 +495,7 @@ class Domains(unittest.TestCase):
 
     def test_twpm_vhost_digest_headers_and_manifest_refuse_before_backup(self):
         cases=(('keepalive','unknown'),('site','extra-header'),('site','csp'),('site','digest-invalid'),
+               ('site','digest-placeholder'),('keepalive','domain-placeholder'),
                ('site','digest-stale'),('site','duplicate-digest'),('keepalive','manifest-domain'),
                ('site','manifest-hash'),('site','missing-manifest'),('site','manifest-mode'),
                ('site','panel-conflict'),('site','reality-conflict'))
@@ -503,11 +504,12 @@ class Domains(unittest.TestCase):
                 f=self.fixture();owned=f.telemt(bool(index%2),layout);before=f.state()
                 vhost=f.p('/etc/nginx/conf.d/telemt-web-manager.conf')
                 marker=f.p('/var/lib/telemt-web-manager/manifest.json')
-                if fault in ('unknown','extra-header','csp','digest-invalid','digest-stale','duplicate-digest'):
+                if fault in ('unknown','extra-header','csp','digest-invalid','digest-placeholder','domain-placeholder','digest-stale','duplicate-digest'):
                     old,new={'unknown':('keepalive 32','keepalive 31'),
                              'extra-header':('    charset utf-8;','    charset utf-8;\n    add_header X-Custom unexpected;'),
                              'csp':("style-src 'self'","style-src 'unsafe-inline'"),
-                             'digest-invalid':('a'*64,'z'*64),'digest-stale':('a'*64,'b'*64),
+                             'digest-invalid':('a'*64,'z'*64),'digest-placeholder':('a'*64,'{site_digest}'),
+                             'domain-placeholder':('telegram.example','{domain}'),'digest-stale':('a'*64,'b'*64),
                              'duplicate-digest':('# TWPM original site v0.3 sha256: '+'a'*64+'\n',
                                                  ('# TWPM original site v0.3 sha256: '+'a'*64+'\n')*2)}[fault]
                     vhost.write_text(vhost.read_text().replace(old,new))

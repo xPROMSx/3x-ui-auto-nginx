@@ -462,6 +462,7 @@ class Operation:
         hostname(host)
         require(host not in context['domains'].values(), 'Telemt SNI conflicts with a managed 3X-UI domain.')
         vhost = self.read(TELEMT_FILES[0])
+        require('{domain}' not in vhost and '{site_digest}' not in vhost, 'Unexpanded Telemt HTTPS vhost markers.')
         canonical = re.sub(r'(?m)^(# TWPM original site v0\.3 sha256: )[0-9a-f]{64}$',
                            r'\1{site_digest}', vhost.replace(host, '{domain}'))
         vhost_digest = digest(canonical.encode())
