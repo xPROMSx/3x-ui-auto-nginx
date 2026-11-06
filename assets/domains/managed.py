@@ -791,8 +791,13 @@ class Operation:
         cert = '/etc/letsencrypt/live/'+panel+'/fullchain.pem'
         with self.connection(True) as db:
             settings = dict(db.execute('SELECT key,value FROM settings'))
-            clients = db.execute("SELECT DISTINCT c.sub_id FROM clients c JOIN client_inbounds ci ON ci.client_id=c.id "
-                                 "JOIN inbounds i ON i.id=ci.inbound_id WHERE c.enable=1 AND i.enable=1 AND c.sub_id<>'' ORDER BY c.id LIMIT 1").fetchall()
+            def active_clients(protocols):
+                query = ("SELECT DISTINCT c.sub_id FROM clients c JOIN client_inbounds ci ON ci.client_id=c.id "
+                         "JOIN inbounds i ON i.id=ci.inbound_id WHERE c.enable=1 AND i.enable=1 AND c.sub_id<>'' "
+                         "AND i.protocol IN ("+','.join('?' for _ in protocols)+") ORDER BY c.id LIMIT 1")
+                return db.execute(query, protocols).fetchall()
+            clients = active_clients(('vless','trojan','hysteria','amneziawg'))
+            json_clients = active_clients(('vless','trojan','hysteria'))
         pid = self.run('systemctl', 'show', 'x-ui', '-p', 'MainPID', '--value').decode().strip()
         listeners = self.run('ss', '-H', '-lntp').decode().splitlines()
         for key in ('webPort', 'subPort'):
@@ -809,13 +814,18 @@ class Operation:
         for key in ('subURI', 'subJsonURI'):
             url = urlsplit(settings[key])
             require(url.hostname == panel, 'Subscription URL domain is inconsistent.')
-            path = url.path+(quote(clients[0][0], safe='') if clients else 'xui-domains-health-invalid-id')
+            selected = json_clients if key == 'subJsonURI' else clients
+            path = url.path+(quote(selected[0][0], safe='') if selected else 'xui-domains-health-invalid-id')
             code, body = self.request(panel, path, cert, headers={'User-Agent': 'x-ui-domain-health', 'Accept': 'application/json'})
             enabled = settings.get('subEnable' if key == 'subURI' else 'subJsonEnable', 'true') == 'true'
-            if not clients or not enabled:
+            if not selected or not enabled:
                 require(code in (400, 404), 'Subscription backend did not reject an unknown client.')
             elif key == 'subJsonURI':
-                require(code == 200 and isinstance(json.loads(body), list), 'JSON subscription validation failed.')
+                configs = json.loads(body) if code == 200 else None
+                if isinstance(configs, dict): configs = [configs]
+                require(isinstance(configs, list) and configs and
+                        all(isinstance(item, dict) and isinstance(item.get('outbounds'), list) and item['outbounds'] for item in configs),
+                        'JSON subscription validation failed.')
             else:
                 require(code == 200, 'RAW subscription validation failed.')
                 base64.b64decode(b''.join(body.split()), validate=True)

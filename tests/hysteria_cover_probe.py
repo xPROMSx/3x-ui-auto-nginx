@@ -21,7 +21,7 @@ from http3 import request as http3_request
 from test_cover_sites import helper
 from test_integrated_features import helper as feature
 from test_personal_xhttp import function as installer_function
-from test_real_integration import port,stop
+from test_real_integration import ROOT,port,stop
 
 
 def run_profile(f):
@@ -364,3 +364,47 @@ def run_profile(f):
                 time.sleep(.2)
         if native_pid()!=renew_pid or state()!=(False,True,False):raise AssertionError('Native renewal restarted core or changed flags')
     finally:stop(process)
+    # A single enabled Xray profile is a native JSON object, not an array.
+    # Exercise the actual maintenance HTTPS gate through nginx and 3x-ui.
+    for name in ('ws','trojan-grpc'):
+        api.request('panel/api/inbounds/setEnable/'+str(ids[name]),{'enable':False})
+    _,single=exports()
+    if not isinstance(single,dict) or not single.get('outbounds'):raise AssertionError('Native single-profile JSON contract changed')
+    f.validate(single,'single-native-hysteria-export')
+    if not client('hysteria2',True,selected={'hysteria2':single}):raise AssertionError('Native single-profile client failed')
+    from http.server import ThreadingHTTPServer
+    from unittest.mock import patch
+    template=f.root/'health-clash.yaml.tpl'
+    template.write_text((ROOT/'assets/clash/clash.yaml').read_text().replace('${DOMAIN}','deploy.example').replace('${SUB_PATH}','subscription'))
+    source=(ROOT/'assets/diagnostics/mtr-backend.py').read_text().replace('"/var/www/subpage/clash.yaml.tpl"',repr(str(template)))
+    namespace={'__name__':'maintenance_clash'};exec(compile(source,'maintenance-clash.py','exec'),namespace)
+    clash=ThreadingHTTPServer(('127.0.0.1',f.backends['api']),namespace['Handler'])
+    f.addCleanup(clash.server_close);f.addCleanup(clash.shutdown)
+    threading.Thread(target=clash.serve_forever,daemon=True).start()
+    domains=feature('domains');operation=domains.Operation('unused','unused',f.root)
+    def connection(readonly=False):
+        db=sqlite3.connect('file:'+str(f.root/'db/x-ui.db')+'?mode=ro',uri=True);db.row_factory=sqlite3.Row;return db
+    def run(*args):
+        if args==('systemctl','show','x-ui','-p','MainPID','--value'):return str(panel.pid).encode()
+        return subprocess.check_output(args,timeout=15)
+    def request(domain,path,certificate,headers=None):
+        body_file=f.root/'health-response';body_file.touch(mode=0o600)
+        command=['curl','-q','-sS','--noproxy','*','--cacert',str(f.cert),'--resolve',f'{domain}:{f.public}:127.0.0.1',
+                 '--max-time','15','-o',str(body_file),'-w','%{http_code}']
+        for key,value in (headers or {}).items():command+=['-H',key+': '+value]
+        code=subprocess.check_output(command+[f'https://{domain}:{f.public}'+path],timeout=20)
+        return int(code),body_file.read_bytes()
+    context=dict(domains=dict(panel='deploy.example',reality='cover.example',vision=None),hysteria_cover=True,
+                 rows={roles['reality']:{'enable':0}},inbound_roles=roles)
+    with patch.object(operation,'connection',side_effect=connection),patch.object(operation,'run',side_effect=run),patch.object(operation,'request',side_effect=request):
+        operation.https_checks(context)
+        def error_json(domain,path,certificate,headers=None):
+            if path.startswith('/jsonsub/'):return 200,b'{"success":false}'
+            return request(domain,path,certificate,headers)
+        with patch.object(operation,'request',side_effect=error_json),f.assertRaises(domains.Refusal):
+            operation.https_checks(context)
+        # Native RAW-only WireGuard clients must not be selected for JSON health.
+        api.request('panel/api/clients/add',{'client':{'email':'maintenance-wg-only','enable':True},'inboundIds':[awg['id']]})
+        toggle('hysteria2',False);settled(False,False,False)
+        operation.https_checks(context)
+    print('Maintenance native single JSON / RAW-only AWG / all Xray roles OFF PASS',flush=True)
