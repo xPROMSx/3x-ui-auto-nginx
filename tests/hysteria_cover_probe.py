@@ -65,6 +65,12 @@ def run_profile(f):
         ['--cacert',str(f.cert),'--resolve',f'deploy.example:{f.backends["panel"]}:127.0.0.1','--resolve',f'deploy.example:{f.public}:127.0.0.1'])
     created=feature('client').create(api);neighbor=feature('client').create(api)
     subscription=created['subId']
+    # The official panel normalizes this supported non-Xray role to an empty
+    # stream_settings string. Health must still validate the three core roles.
+    awg=api.create('deploy.example',port(f.allocated_ports,udp=True))
+    with sqlite3.connect(f.root/'db/x-ui.db') as db:
+        if db.execute('SELECT stream_settings FROM inbounds WHERE id=?',(awg['id'],)).fetchone()[0]!='':
+            raise AssertionError('Native AmneziaWG empty-stream fixture changed')
     with sqlite3.connect(f.root/'db/x-ui.db') as db:
         counts={name:db.execute("SELECT json_array_length(settings,'$.clients') FROM inbounds WHERE id=?",(iid,)).fetchone()[0] for name,iid in roles.items()}
     print('NATIVE_CLIENT_SETUP '+json.dumps(dict(stored_client_counts=counts)),flush=True)
@@ -151,7 +157,7 @@ def run_profile(f):
                 for row in db.execute('SELECT * FROM '+table+' ORDER BY rowid'):
                     record=dict(row)
                     for key in ('up','down'):record.pop(key,None)
-                    if table=='inbounds':record.pop('enable',None)
+                    if table=='inbounds' and record['id'] in roles.values():record.pop('enable',None)
                     for key in ('settings','stream_settings','sniffing'):
                         if key in record:
                             try:record[key]=json.loads(record[key])

@@ -2213,7 +2213,8 @@ try:
     with sqlite3.connect(pathlib.Path(sys.argv[2]).as_uri()+'?mode=ro', uri=True) as db:
         rows = db.execute('SELECT protocol,listen,port,stream_settings,enable,node_id FROM inbounds').fetchall()
         settings = dict(db.execute('SELECT key,value FROM settings'))
-    parsed = [(r, json.loads(r[3])) for r in rows]
+    # Native AmneziaWG has no Xray stream and stores an empty string.
+    parsed = [(r, json.loads(r[3] or '{}')) for r in rows]
     def role(predicate):
         found = [(r,s) for r,s in parsed if predicate(r,s)]
         if len(found) != 1 or found[0][0][4] not in (0,1) or found[0][0][5] not in (None,0): raise ValueError('Unknown role')
