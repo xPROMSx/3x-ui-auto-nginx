@@ -263,13 +263,13 @@ make_port() {
 initialize_installation() {
     sub_path=$(gen_random_string 10)
     json_path=$(gen_random_string 10)
-    panel_path=$(gen_random_string 10)
+    panel_path=$(gen_random_string 16)
     ws_path=$(gen_random_string 10)
     trojan_path=$(gen_random_string 10)
-    xhttp_path=$(gen_random_string 10)
+    xhttp_path=$(gen_random_string 16)
     config_username=$(gen_random_string 10)
-    config_password=$(gen_random_string 10)
-    diag_path="/net-$(gen_random_string 12)/"
+    config_password=$(gen_random_string 20)
+    diag_path="/net-$(gen_random_string 16)/"
     diag_token=$(gen_random_string 16)
 }
 

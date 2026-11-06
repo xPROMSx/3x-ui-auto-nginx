@@ -651,8 +651,8 @@ sleep() { :; }
         })
 
     def test_nginx_prefix_and_headers(self):
-        self.assertIn("xhttp_path=$(gen_random_string 10)", SOURCE)
-        for path in ("Session7AbC", "1234567890"):
+        self.assertIn("xhttp_path=$(gen_random_string 16)", SOURCE)
+        for path in ("Session7AbC", "1234567890", "NewSession123456"):
             with self.subTest(path=path):
                 shared = render(SHARED, xhttp_path=path)
                 location = re.search(r"location \^~ /" + path + r"/ \{([^{}]*)\}", shared)

@@ -921,6 +921,44 @@ EOF
         self.assertTrue('error' in json.loads(body),'Expected bounded MTR validation response')
         self.passed.append('Diagnostics: anonymous deny / real panel SSO / LibreSpeed and MTR boundaries')
 
+    def test_fresh_secret_lengths_native_panel_bootstrap_and_login(self):
+        from test_integrated_features import helper
+        fresh=self.root/'fresh-db';fresh.mkdir()
+        credentials=self.root/'fresh-secrets.json'
+        initial=installer_function('_panel_initial_config').replace('/usr/local/x-ui/x-ui',shlex.quote(str(self.xui)))
+        script='\n'.join(installer_function(name) for name in ('gen_random_string','initialize_installation'))
+        script+='\n'+initial+'''
+umask 077
+initialize_installation
+_panel_initial_config >/dev/null
+export config_username config_password panel_path xhttp_path diag_path
+python3 - <<'PYFRESHSECRETS'
+import json, os
+from pathlib import Path
+Path(os.environ['FRESH_CREDENTIALS']).write_text(json.dumps({name:os.environ[name] for name in
+    ('config_username','config_password','panel_path','xhttp_path','diag_path')}))
+PYFRESHSECRETS
+'''
+        env={**os.environ,'XUI_DB_FOLDER':str(fresh),'XUI_BIN_FOLDER':str(self.root/'bin'),
+             'XUI_LOG_FOLDER':str(self.root/'logs'),'XUIDB':str(fresh/'x-ui.db'),
+             'panel_port':str(self.backends['panel']),'FRESH_CREDENTIALS':str(credentials)}
+        result=subprocess.run(['bash','-eu','-c','msg_err() { :; };\n'+script],env=env,capture_output=True,timeout=30)
+        self.assertEqual(result.returncode,0,'Native bootstrap rejected fresh secret sizes')
+        values=json.loads(credentials.read_text())
+        self.assertEqual({name:len(value) for name,value in values.items()},
+                         dict(config_username=10,config_password=20,panel_path=16,xhttp_path=16,diag_path=22))
+        with sqlite3.connect(fresh/'x-ui.db') as db:
+            path=db.execute("SELECT value FROM settings WHERE key='webBasePath'").fetchone()[0]
+            self.assertTrue(path=='/'+values['panel_path']+'/','Native panel changed the generated path')
+            for key,value in (('webCertFile',str(self.cert)),('webKeyFile',str(self.key)),('subEnable','false')):
+                db.execute('DELETE FROM settings WHERE key=?',(key,));db.execute('INSERT INTO settings(key,value) VALUES(?,?)',(key,value))
+        panel=self.launch([self.xui],'fresh-secret-panel',env);self.ready(panel,('127.0.0.1',self.backends['panel']))
+        api=helper('amneziawg').Panel(f'https://deploy.example:{self.backends["panel"]}'+path,
+            values['config_username'],values['config_password'],self.root,
+            ['--cacert',str(self.cert),'--resolve',f'deploy.example:{self.backends["panel"]}:127.0.0.1'])
+        api.request('panel/api/inbounds/list')
+        self.passed.append('Fresh secrets: native 16-character panel path / 20-character password / real login')
+
     def test_single_bootstrap_real_login_and_logout(self):
         from test_integrated_features import helper
         panel=helper('amneziawg')
