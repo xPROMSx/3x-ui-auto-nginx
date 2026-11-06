@@ -323,7 +323,9 @@ def disabled_cold_boot(prepare=False):
     result=subprocess.run(['bash','-c','source "$1"; domain=panel.example.test; reality_domain=reality.example.test; check_installation maintenance','fixture',str(ROOT/'x-ui-latest.sh')],capture_output=True,timeout=90)
     assert result.returncode==0,'Maintenance rejected disabled roles'
     if not prepare:core_enable(True)
-    return {'disabled_roles_preserved':True,'TCP_cover_without_REALITY':True,'native_Enable_after_boot':not prepare}
+    result={'disabled_roles_preserved':True,'TCP_cover_without_REALITY':True}
+    if not prepare:result['native_Enable_after_boot']=True
+    return result
 
 
 def http3_cover():
