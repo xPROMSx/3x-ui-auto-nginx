@@ -67,6 +67,9 @@ def restore_target():
     fixture.unlink()
     env = {**os.environ, **json.loads((ROOT/'environment.json').read_text()),
            'CURL_CA_BUNDLE':'/etc/ssl/certs/ca-certificates.crt'}
+    context=ssl.create_default_context(cafile=str(ROOT/'fixture.crt'))
+    with urllib.request.urlopen('https://10.0.2.2:15000/roots/0',context=context,timeout=10) as response:
+        Path('/usr/local/share/ca-certificates/pilot-pebble.crt').write_bytes(response.read())
     subprocess.run(['update-ca-certificates'], check=True, capture_output=True, timeout=120)
     # Real socket activation, including a nonstandard port, with both forwarded
     # SSH endpoints checked by the host after UFW and after a fresh QEMU boot.
