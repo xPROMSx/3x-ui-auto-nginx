@@ -47,6 +47,7 @@ def restore_content():
 
 
 def restore_source():
+    core_enable(False,names=('reality','xhttp'))
     Path('/etc/x-ui/pr2-persist').write_text('PR2-lite persistent data\n')
     result = subprocess.run(['bash','/usr/local/bin/x-ui-backup','backup','--json'],
                             capture_output=True, timeout=150)
@@ -115,9 +116,13 @@ def restore_verified(cold=False):
     before = {str(p):p.read_bytes() for p in Path('/etc/ufw').rglob('*') if p.is_file()}
     assert json.loads(run('/usr/bin/python3','-I',str(ROOT/'current-security.py'),'--enable-ufw'))['status'] == 'preserved'
     assert before == {str(p):p.read_bytes() for p in Path('/etc/ufw').rglob('*') if p.is_file()}
+    assert core_flags()==dict(reality=False,hysteria2=True,xhttp=False)
+    http3_cover()
+    domain='reality.example.test'
+    assert run('curl','-q','-fsS','--noproxy','*','--resolve',domain+':443:127.0.0.1','https://'+domain+'/')==Path('/var/www/html/cover-reality/index.html').read_text()
     if cold:
         assert Path('/proc/sys/kernel/random/boot_id').read_text() != (ROOT/'restore-boot-id').read_text()
-    return {'services_active':True, 'ufw_active':True, 'restored_content_preserved':True, 'boot_verified':True}
+    return {'disabled_roles_and_TCP_HTTP3':True,'services_active':True, 'ufw_active':True, 'restored_content_preserved':True, 'boot_verified':True}
 
 def load(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / (name + '.py'))
