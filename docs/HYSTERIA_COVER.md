@@ -22,6 +22,10 @@ Mihomo v1.19.32, Nginx 1.24.0 и aioquic 0.9.25 в одноразовом Ubuntu
 [Минимальный diff установщика](HYSTERIA_REALITY_PROPOSAL.patch) — предложение,
 а не применённая реализация. Ни старые VPS, ни их конфигурации не изменяются.
 
+Подробное исследование Disable/Enable и резервного stream backend: см.
+[независимость REALITY/Hysteria2](HYSTERIA_INDEPENDENCE.md). Оно уточняет
+maintenance-health, сертификатные hooks и оставшиеся проверки reboot.
+
 ## Что проверено
 
 Два ограниченных профиля, без повторения прежних file/DNS/loopback экспериментов:

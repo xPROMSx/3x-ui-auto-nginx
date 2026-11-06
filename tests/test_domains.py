@@ -283,6 +283,35 @@ class DomainFixture:
 
 
 class Domains(unittest.TestCase):
+    def test_scoped_domain_edits_preserve_disabled_core_roles(self):
+        # Exercise SQLite edits separately from the existing unconditional health
+        # gate. Disable is an editable state, not deletion of a managed role.
+        for reality_enabled, hy_enabled in ((0,1),(1,0),(0,0)):
+            for panel, reality in (('new-panel.example',None),(None,'new-cover.example'),
+                                   ('new-panel.example','new-cover.example')):
+                with self.subTest(enabled=(reality_enabled,hy_enabled),panel=bool(panel),reality=bool(reality)):
+                    f=self.fixture(); context=f.operation.discover()
+                    roles=context['inbound_roles']
+                    with f.operation.connection(False) as db:
+                        db.execute('UPDATE inbounds SET enable=? WHERE id=?',(reality_enabled,roles['reality']))
+                        db.execute('UPDATE inbounds SET enable=? WHERE id=?',(hy_enabled,roles['hysteria2']))
+                    before=f.state();context=f.operation.discover()
+                    with f.operation.connection(True) as db:
+                        edits=f.module.database_edits(db,context,panel or f.panel,reality or f.reality)
+                    self.assertFalse(any(edit['column']=='enable' for edit in edits))
+                    f.operation.database_update({'database':edits},True)
+                    after=f.state()
+                    with f.operation.connection(True) as db:
+                        flags=dict(db.execute('SELECT id,enable FROM inbounds'))
+                    self.assertEqual((flags[roles['reality']],flags[roles['hysteria2']]),(reality_enabled,hy_enabled))
+                    for table in ('users','clients','client_inbounds','client_traffics'):
+                        self.assertEqual(before[table],after[table])
+        for role in ('reality','hysteria2'):
+            f=self.fixture();iid=f.operation.discover()['inbound_roles'][role]
+            with f.operation.connection(False) as db:
+                db.execute('DELETE FROM inbounds WHERE id=?',(iid,))
+            with self.assertRaises(f.module.Refusal):f.operation.discover()
+
     def test_http_guard_formats_preserve_panel_reality_both_sequence_and_rollback(self):
         for historical in (False,True):
             with self.subTest(historical=historical):

@@ -473,7 +473,296 @@ location / {{ error_page 404 /404.html; try_files $uri $uri/ =404; }} }}'''
         print('HYSTERIA_UNIX_COMPARISON '+json.dumps(report,sort_keys=True),flush=True)
     finally:RealIntegration.doClassCleanups()
 
+def independence():
+    """Bounded native API toggles; no full static-site matrix or installer execution."""
+    import base64,copy,re
+    from test_integrated_features import helper as feature
+    from test_real_integration import port,render as original_render
+    from test_personal_xhttp import function as installer_function
+    RealIntegration.setUpClass();f=RealIntegration('runTest');report={}
+    try:
+        f.setUp();f.public=f.hysteria_port=443;f.backends.update(reality=8443,cover=9443)
+        generator=helper().module('generate')
+        for role,code in (('panel','A1'),('reality','B1')):generator.generate(code,f.root/'www/html'/('cover-'+role),[0,0,0,0])
+        cover=f.root/'www/html/cover-reality';socket_path=f.root/'hysteria-cover.sock'
+        expected=(cover/'index.html').read_bytes()
+        f.http_site=f'''server {{ listen unix:{socket_path}; server_name cover.example;
+server_tokens off; absolute_redirect off; root {cover}; index index.html; autoindex off;
+if ($host !~* ^cover\\.example$) {{ return 404; }}
+location / {{ error_page 404 /404.html; try_files $uri $uri/ =404; }} }}'''
+        import socketserver,threading
+        class Echo(socketserver.BaseRequestHandler):
+            def handle(self):
+                self.request.settimeout(8)
+                try:
+                    while data:=self.request.recv(4096):self.request.sendall(data)
+                except (OSError,socket.timeout):pass
+        echo=socketserver.ThreadingTCPServer(('127.0.0.1',0),Echo);echo.daemon_threads=True
+        f.addCleanup(echo.server_close);f.addCleanup(echo.shutdown);threading.Thread(target=echo.serve_forever,daemon=True).start()
+        with sqlite3.connect(f.root/'db/x-ui.db') as db:
+            real=db.execute("SELECT id,stream_settings FROM inbounds WHERE json_extract(stream_settings,'$.security')='reality'").fetchone()
+            stream=json.loads(real[1]);stream['realitySettings']['target']='127.0.0.1:9443'
+            db.execute('UPDATE inbounds SET port=8443,stream_settings=? WHERE id=?',(json.dumps(stream),real[0]))
+            hy=db.execute("SELECT id,stream_settings FROM inbounds WHERE protocol='hysteria'").fetchone()
+            stream=json.loads(hy[1]);stream['tlsSettings'].update(serverName='cover.example',rejectUnknownSni=True)
+            stream['hysteriaSettings']['masquerade']=dict(type='proxy',url='unix:'+str(socket_path),rewriteHost=False)
+            db.execute("UPDATE inbounds SET listen='0.0.0.0',port=443,stream_settings=? WHERE id=?",(json.dumps(stream),hy[0]))
+            db.execute("UPDATE hosts SET address='cover.example' WHERE inbound_id=?",(hy[0],))
+            key='xrayTemplateConfig';template=json.loads(db.execute('SELECT value FROM settings WHERE key=?',(key,)).fetchone()[0])
+            # Restore the official panel's local Handler API removed by the base
+            # transport-only fixture; setEnable uses this actual gRPC API.
+            template['log']={'loglevel':'debug'}
+            template['outbounds'][0]['settings']['finalRules'][0]['port']+=','+str(echo.server_address[1])
+            template['api']={'tag':'api','services':['HandlerService','LoggerService','StatsService','RoutingService']}
+            template['inbounds']=[dict(listen='127.0.0.1',port=62789,protocol='tunnel',settings=dict(rewriteAddress='127.0.0.1'),tag='api')]
+            template['routing']={'rules':[dict(type='field',inboundTag=['api'],outboundTag='api')]}
+            db.execute('UPDATE settings SET value=? WHERE key=?',(json.dumps(template),key))
+            # Replace the transport fixture's SQL-only synthetic client with
+            # genuine native API clients, including their native runtime cache.
+            db.execute('DELETE FROM client_inbounds');db.execute('DELETE FROM client_traffics');db.execute('DELETE FROM clients')
+            db.execute("UPDATE settings SET value='https://deploy.example/subscription/' WHERE key='subURI'")
+            db.execute("UPDATE settings SET value='https://deploy.example/jsonsub/' WHERE key='subJsonURI'")
+        roles={'reality':real[0],'hysteria2':hy[0]};policy='none'
+        def rendering(target,*args,**kwargs):
+            text=original_render(target,*args,**kwargs)
+            if target=='cat > /etc/nginx/stream-enabled/stream.conf' and policy!='none':
+                primary='127.0.0.1:8443'+(' max_fails=0' if policy=='max_fails=0' else '')
+                text=text.replace('upstream xray { server 127.0.0.1:8443; }',
+                    'upstream xray { server '+primary+'; server 127.0.0.1:9443 backup; }')
+            return text
+        def nginx_start():
+            with patch('test_real_integration.render',side_effect=rendering):return f.nginx_config()
+        nginx=nginx_start()
+        env={**os.environ,'XUI_DB_FOLDER':str(f.root/'db'),'XUI_BIN_FOLDER':str(f.root/'bin'),'XUI_LOG_FOLDER':str(f.root/'logs')}
+        def panel_start():
+            p=f.launch([f.xui],'toggle-panel',env);f.ready(p,('127.0.0.1',f.backends['panel']));return p
+        panel=panel_start()
+        api=feature('amneziawg').Panel('https://deploy.example/panel/','integration',f.auth,f.root,
+            ['--cacert',str(f.cert),'--resolve',f'deploy.example:{f.backends["panel"]}:127.0.0.1','--resolve','deploy.example:443:127.0.0.1'])
+        created=feature('client').create(api);neighbor=feature('client').create(api)
+        subscription=created['subId']
+        with sqlite3.connect(f.root/'db/x-ui.db') as db:
+            counts={name:db.execute("SELECT json_array_length(settings,'$.clients') FROM inbounds WHERE id=?",(iid,)).fetchone()[0] for name,iid in roles.items()}
+        print('NATIVE_CLIENT_SETUP '+json.dumps(dict(stored_client_counts=counts)),flush=True)
+        def state():
+            tcp=subprocess.check_output(['ss','-H','-lnt'],text=True)
+            udp=subprocess.check_output(['ss','-H','-lnu'],text=True)
+            return ('127.0.0.1:8443' in tcp,bool(re.search(r'(?:\*|0\.0\.0\.0|\[::\]|:::):443\s',udp)))
+        def settled(r,h):
+            deadline=time.monotonic()+10
+            while state()!=(r,h):
+                if time.monotonic()>deadline:raise AssertionError('Native API listener state did not converge')
+                time.sleep(.05)
+        settled(True,True)
+        def exports(sub_id=None):
+            result=[]
+            for path in ('subscription','jsonsub'):
+                c=http.client.HTTPConnection('127.0.0.1',f.backends['sub'],timeout=10)
+                c.sock=ssl.create_default_context(cafile=str(f.cert)).wrap_socket(socket.create_connection(('127.0.0.1',f.backends['sub']),timeout=10),server_hostname='deploy.example')
+                try:
+                    c.request('GET','/'+path+'/'+(sub_id or subscription),headers={'Host':'deploy.example'});response=c.getresponse();body=response.read()
+                    if response.status!=200:raise AssertionError('Native export unavailable')
+                    result.append(body)
+                finally:c.close()
+            return result[0],json.loads(result[1])
+        raw,configs=exports()
+        clients={}
+        for c in configs:
+            out=next(o for o in c['outbounds'] if o.get('protocol') in ('vless','trojan','hysteria'))
+            if out['protocol']=='hysteria':clients['hysteria2']=c
+            elif out.get('streamSettings',{}).get('security')=='reality':clients['reality']=c
+        def client_start(name,selected=None):
+            c=copy.deepcopy((selected or clients)[name]);out=next(o for o in c['outbounds'] if o.get('protocol') in ('vless','hysteria'))
+            settings=out['settings'];dest=settings['servers'][0] if 'servers' in settings else settings
+            dest.update(address='127.0.0.1',port=443)
+            if name=='hysteria2':out['streamSettings']['tlsSettings'].update(allowInsecure=False,certificates=[{'certificateFile':str(f.cert),'usage':'verify'}])
+            socks=port(f.allocated_ports);c['inbounds']=[dict(listen='127.0.0.1',port=socks,protocol='socks',settings=dict(auth='noauth'))]
+            c['outbounds']=[out];c.pop('routing',None);c.pop('dns',None);c['log']={'loglevel':'debug'}
+            p=f.launch([f.xray,'run','-c',f.validate(c,'toggle-'+name)],'toggle-'+name);f.ready(p,('127.0.0.1',socks))
+            return p,socks
+        def client(name,enabled,timeout=3,selected=None):
+            p,socks=client_start(name,selected)
+            before=len(f.origin_requests)
+            try:
+                result=subprocess.run(['curl','-q','-fsS','--noproxy','','--max-time',str(timeout),'--socks5-hostname',f'127.0.0.1:{socks}',
+                    f'http://127.0.0.1:{f.origin.server_port}/toggle-'+name],capture_output=True,timeout=timeout+3)
+                good=result.returncode==0 and result.stdout==f.marker.encode() and len(f.origin_requests)==before+1
+                if not enabled and (good or len(f.origin_requests)!=before):raise AssertionError('Disabled inbound still carried data')
+                return good
+            finally:stop(p)
+        def tls(host='cover.example',sni='cover.example',spoof=False,path='/'):
+            c=http.client.HTTPConnection('127.0.0.1',443,timeout=4)
+            ctx=ssl.create_default_context(cafile=str(f.cert))
+            if sni=='wrong.example':ctx.check_hostname=False  # Adversarial client only; certificate still trusted.
+            try:
+                c.sock=ctx.wrap_socket(socket.create_connection(('127.0.0.1',443),timeout=4,source_address=('127.0.0.2',0)),server_hostname=sni)
+                headers={'Host':host}
+                if spoof:headers.update({'X-Real-IP':'203.0.113.55','X-Forwarded-For':'203.0.113.56'})
+                c.request('GET',path,headers=headers);r=c.getresponse();body=r.read()
+                return r.status,body==expected
+            except (OSError,ssl.SSLError,http.client.HTTPException):return 0,False
+            finally:c.close()
+        def untrusted_proxy():
+            # A remote client cannot prepend its own PROXY header to TCP/443.
+            raw=socket.create_connection(('127.0.0.1',443),timeout=4,source_address=('127.0.0.2',0))
+            try:
+                raw.sendall(b'PROXY TCP4 203.0.113.99 127.0.0.1 12345 443\r\n')
+                try:
+                    secure=ssl.create_default_context(cafile=str(f.cert)).wrap_socket(raw,server_hostname='cover.example')
+                    secure.close()
+                except (OSError,ssl.SSLError):return True
+                return False
+            finally:raw.close()
+        def native_pid():
+            text=subprocess.check_output(['ss','-H','-lxnp'],text=True)
+            for line in text.splitlines():
+                if str(f.uds) in line:
+                    ids=re.findall(r'pid=(\d+)',line)
+                    if ids:return int(ids[0])
+            raise AssertionError('Native Xray XHTTP owner not found')
+        def snapshot():
+            with sqlite3.connect(f.root/'db/x-ui.db') as db:
+                db.row_factory=sqlite3.Row;data={}
+                for table in ('inbounds','hosts','users','clients','client_inbounds','settings'):
+                    records=[]
+                    for row in db.execute('SELECT * FROM '+table+' ORDER BY rowid'):
+                        record=dict(row)
+                        for key in ('up','down'):record.pop(key,None)
+                        if table=='inbounds':record.pop('enable',None)
+                        for key in ('settings','stream_settings','sniffing'):
+                            if key in record:
+                                try:record[key]=json.loads(record[key])
+                                except (ValueError,TypeError):pass
+                        records.append(record)
+                    data[table]=records
+                return data
+        public_files=[f.cert,f.key,*[p for p in (f.root/'www/html').rglob('*') if p.is_file()]]
+        immutable={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in public_files}
+        before=snapshot()
+        if not client('reality',True):raise AssertionError('Initial REALITY failed before any native toggle')
+        def toggle(name,value):
+            current=next(r for r in api.request('panel/api/inbounds/list')['obj'] if r['id']==roles[name])
+            if current['enable']==value:return
+            api.request('panel/api/inbounds/setEnable/'+str(current['id']),{'enable':value})
+            with sqlite3.connect(f.root/'db/x-ui.db') as db:
+                saved=db.execute('SELECT enable FROM inbounds WHERE id=?',(current['id'],)).fetchone()[0]
+            if bool(saved)!=value:raise AssertionError('Native setEnable did not save the flag')
+        def runtime():
+            code=installer_function('check_xray_runtime').replace('/dev/shm/uds2023.sock',str(f.uds)).replace('/usr/local/x-ui/bin',str(f.root/'bin'))
+            r=subprocess.run(['bash','-c',code+'\nsystemctl() { return 0; }; sleep() { :; }; check_xray_runtime'],capture_output=True,timeout=10)
+            return r.returncode==0
+        # Existing layout: show the new TCP cover dependency independently of UDP.
+        toggle('reality',False);settled(False,True)
+        report['no_backup']=dict(tcp=tls()[0],h3=dict(asyncio.run(h3(f,'/',authority='cover.example',sni='cover.example'))[0]).get(b':status')==b'200',hy=client('hysteria2',True))
+        toggle('reality',True);settled(True,True)
+        if not client('reality',True):raise AssertionError('Baseline REALITY failed after re-enable')
+        # Measure stock passive failover before selecting a fail_timeout solution.
+        policy='default';stop(nginx);nginx=nginx_start()
+        toggle('reality',False);settled(False,True)
+        if tls()!=(200,True):raise AssertionError('Default backup did not serve the site')
+        failed_at=time.monotonic();toggle('reality',True);settled(True,True)
+        immediate=client('reality',True,timeout=2)
+        waited=0
+        if not immediate:
+            waited=max(0,10.2-(time.monotonic()-failed_at));time.sleep(waited)
+            if not client('reality',True):raise AssertionError('REALITY did not recover after fail_timeout')
+        report['default_backup']=dict(immediate_reality=immediate,passive_exclusion_observed=not immediate,waited_seconds=round(waited,2))
+        policy='max_fails=0';stop(nginx);nginx=nginx_start();states=[];hot_pid=native_pid()
+        for r,h in ((True,True),(False,True),(True,False),(False,False),(True,True),(False,True),(True,True),(True,False),(True,True)):
+            toggle('reality',r);toggle('hysteria2',h);settled(r,h)
+            if client('reality',r)!=r:raise AssertionError('REALITY enabled connection failed')
+            if client('hysteria2',h)!=h:raise AssertionError('Hysteria enabled connection failed')
+            if tls(spoof=True)!=(200,True):raise AssertionError('Static TCP cover failed during native toggles')
+            if not untrusted_proxy():raise AssertionError('Public listener accepted an untrusted PROXY prelude')
+            if tls(path='/panel/')[0]!=404 or tls(path='/diagnostics/')[0]!=404:raise AssertionError('Backup exposed an administrative route')
+            if tls(host='attacker.example')[0]!=404 or tls(sni='wrong.example')[0]!=421:raise AssertionError('Backup bypassed Host/SNI guards')
+            log=(f.root/'reality-access.log').read_text().splitlines()
+            if '127.0.0.2|127.0.0.2' not in log[-3:]:raise AssertionError('Visitor PROXY address lost')
+            if h:
+                headers,body=asyncio.run(h3(f,'/',authority='cover.example',sni='cover.example'))
+                if dict(headers).get(b':status')!=b'200' or body!=expected:raise AssertionError('H3 cover affected by REALITY toggle')
+            raw,current=exports();profiles=[o['protocol'] for c in current for o in c['outbounds'] if o.get('protocol') in ('vless','trojan','hysteria')]
+            from urllib.parse import urlsplit,parse_qs
+            links=[urlsplit(value) for value in base64.b64decode(raw,validate=True).decode().splitlines()]
+            raw_r=any(parse_qs(value.query).get('security')==['reality'] for value in links)
+            raw_h=any(value.scheme in ('hy2','hysteria2') for value in links)
+            json_r=any(o.get('streamSettings',{}).get('security')=='reality' for c in current for o in c['outbounds'])
+            if (raw_r,raw_h,json_r,'hysteria' in profiles)!=(r,h,r,h):raise AssertionError('RAW/JSON did not reflect native enable flags')
+            flags={}
+            with sqlite3.connect(f.root/'db/x-ui.db') as db:flags=dict(db.execute('SELECT id,enable FROM inbounds'))
+            if bool(flags[roles['reality']])!=r or bool(flags[roles['hysteria2']])!=h:raise AssertionError('Panel overwrote enable flags')
+            after=snapshot()
+            if after!=before:
+                changed=[table for table in before if before[table]!=after[table]]
+                raise AssertionError('Native toggle changed unrelated state in: '+','.join(changed))
+            states.append(dict(reality=r,hysteria=h,listeners=state(),clients=True,tcp=True,http3=h,health=runtime(),export_profiles=len(profiles),exports_reality=json_r,exports_hysteria='hysteria' in profiles))
+        report['states']=states;report['hot_api_pid_unchanged']=native_pid()==hot_pid
+        # Hold a real TCP echo channel through the untouched inbound while its
+        # peer toggles; the origin is an ordinary local test fixture, not a proxy.
+        held=[]
+        for name,peer in (('hysteria2','reality'),('reality','hysteria2')):
+            process,socks=client_start(name)
+            try:
+                with socket.create_connection(('127.0.0.1',socks),timeout=5) as channel:
+                    channel.settimeout(5);channel.sendall(b'\x05\x01\x00')
+                    if channel.recv(2)!=b'\x05\x00':raise AssertionError('Held SOCKS greeting')
+                    channel.sendall(b'\x05\x01\x00\x01'+socket.inet_aton('127.0.0.1')+echo.server_address[1].to_bytes(2,'big'))
+                    if channel.recv(10)[:2]!=b'\x05\x00':raise AssertionError('Held SOCKS connect')
+                    for enabled in (True,False,True,False,True):
+                        toggle(peer,enabled);settled(enabled,True) if peer=='reality' else settled(True,enabled)
+                        payload=os.urandom(32);channel.sendall(payload);received=b''
+                        while len(received)<len(payload):
+                            part=channel.recv(len(payload)-len(received))
+                            if not part:raise AssertionError('Untouched transport channel disconnected')
+                            received+=part
+                        if received!=payload:raise AssertionError('Untouched transport payload changed')
+                held.append(name)
+            finally:stop(process)
+        report['held_channels_survive_peer_toggles']=held
+        # Persisted Disable must survive actual panel/Xray and nginx process restarts.
+        restarted=[]
+        for r,h in ((False,True),(True,False),(False,False)):
+            toggle('reality',r);toggle('hysteria2',h);settled(r,h)
+            stop(panel);f.release_subscription_socket();stop(nginx)
+            nginx=nginx_start();panel=panel_start();settled(r,h)
+            if tls()!=(200,True):raise AssertionError('Restart broke backup TCP cover')
+            if client('reality',r)!=r or client('hysteria2',h)!=h:raise AssertionError('Restart changed disabled transport behavior')
+            api=feature('amneziawg').Panel('https://deploy.example/panel/','integration',f.auth,f.root,
+                ['--cacert',str(f.cert),'--resolve','deploy.example:443:127.0.0.1'])
+            if h:
+                headers,body=asyncio.run(h3(f,'/',authority='cover.example',sni='cover.example'))
+                if dict(headers).get(b':status')!=b'200' or body!=expected:raise AssertionError('Restart did not recover HTTP3 cover')
+            restarted.append([r,h])
+        toggle('reality',True);toggle('hysteria2',True);settled(True,True)
+        with sqlite3.connect(f.root/'db/x-ui.db') as db:
+            xid=db.execute("SELECT id FROM inbounds WHERE json_extract(stream_settings,'$.network')='xhttp'").fetchone()[0]
+        api.request('panel/api/inbounds/setEnable/'+str(xid),{'enable':False})
+        deadline=time.monotonic()+10
+        while str(f.uds) in subprocess.check_output(['ss','-H','-lxnp'],text=True):
+            if time.monotonic()>deadline:raise AssertionError('Native XHTTP disable did not close its listener')
+            time.sleep(.05)
+        report['xhttp_disabled']=dict(health=runtime(),reality=client('reality',True),hysteria=client('hysteria2',True))
+        api.request('panel/api/inbounds/setEnable/'+str(xid),{'enable':True})
+        deadline=time.monotonic()+10
+        while str(f.uds) not in subprocess.check_output(['ss','-H','-lxnp'],text=True):
+            if time.monotonic()>deadline:raise AssertionError('Native XHTTP re-enable failed')
+            time.sleep(.05)
+        if not client('reality',True) or not client('hysteria2',True):raise AssertionError('Final re-enable did not recover both transports')
+        _,neighbor_exports=exports(neighbor['subId']);other={}
+        for config in neighbor_exports:
+            out=next(o for o in config['outbounds'] if o.get('protocol') in ('vless','trojan','hysteria'))
+            if out.get('protocol')=='hysteria':other['hysteria2']=config
+            elif out.get('streamSettings',{}).get('security')=='reality':other['reality']=config
+        if not client('reality',True,selected=other) or not client('hysteria2',True,selected=other):raise AssertionError('Neighbor client credentials did not survive toggles')
+        report['neighbor_client_preserved']=True
+        report['process_restart_states']=restarted
+        if immutable!={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in public_files}:raise AssertionError('Toggle/restart changed certificates or websites')
+        report['certificates_and_sites_unchanged']=True
+        print('HYSTERIA_INDEPENDENCE '+json.dumps(report,sort_keys=True),flush=True)
+    finally:f.doCleanups();RealIntegration.doClassCleanups()
+
 if __name__=='__main__':
     if os.geteuid()==0:raise RuntimeError('Run in a disposable nonroot test container')
-    if os.environ.get('HY_EXPERIMENT_MODES')=='unix-comparison':unix_comparison()
+    if os.environ.get('HY_EXPERIMENT_MODES')=='independence':independence()
+    elif os.environ.get('HY_EXPERIMENT_MODES')=='unix-comparison':unix_comparison()
     else:main()
