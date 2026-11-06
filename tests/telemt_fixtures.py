@@ -6,6 +6,8 @@ The integration suite also checks the historical bytes against the authenticated
 B/C below are exact render_vhost() outputs from TWPM PR #39,
 7902daf8c6bd25854c6ebdd88ccd2b6fdd9d3d96 (safety.py Git blob
 cae9c357309f6ae4bd6e6e5b59373a320f4a0e70).
+All three outputs are unchanged at 3bf3fbea7fa77d662983f102e778a7b16e4a15ee
+(safety.py Git blob 4ba6cd4c073e5b6d1bd419c1620de147cecd7b61).
 """
 
 VHOST = '''# Managed by telemt-web-manager v1. Manual changes require review.
