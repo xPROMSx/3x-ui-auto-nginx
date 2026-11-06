@@ -763,6 +763,74 @@ EOF
                         'Native login limiter did not report a block for the actual source IP')
         self.passed.append('3.11 forwarding headers: native links / redirects / real login IP and limiter')
 
+    def test_diagnostics_cookie_requires_real_panel_session(self):
+        from test_integrated_features import helper
+        public=self.root/'www/diagnostics'; public.mkdir(parents=True)
+        for name in ('index.html','librespeed/speedtest.js','librespeed/speedtest_worker.js'):
+            shutil.copyfile(ROOT/'assets/diagnostics'/name,public/Path(name).name)
+        (public/'testfiles').mkdir(); (public/'testfiles/probe.bin').write_bytes(b'diagnostics-download')
+        backend=self.launch([sys.executable,ROOT/'assets/diagnostics/mtr-backend.py',
+                             '--port',self.backends['api']],'diagnostics-backend')
+        self.ready(backend,('127.0.0.1',self.backends['api']))
+        self.nginx_config()
+        env={**os.environ,'XUI_DB_FOLDER':str(self.root/'db'),
+             'XUI_BIN_FOLDER':str(self.root/'bin'),'XUI_LOG_FOLDER':str(self.root/'logs')}
+        panel=self.launch([self.xui],'diagnostics-panel',env)
+        self.ready(panel,('127.0.0.1',self.backends['panel']))
+        options=['--cacert',str(self.cert),'--resolve',f'deploy.example:{self.public}:127.0.0.1']
+        def request(path,jar,protocol,method='GET',follow=False):
+            headers,body=self.root/'diag-headers',self.root/'diag-body'
+            for file in (headers,body): file.touch(mode=0o600)
+            command=['curl','-q','-sS','--noproxy','*',*options,protocol,
+                     '--cookie',str(jar),'--cookie-jar',str(jar),'--max-time','15',
+                     '--dump-header',str(headers),'--output',str(body),
+                     '--write-out','%{http_code}\n%{url_effective}\n%{http_version}']
+            if follow: command+=['--location','--max-redirs','4']
+            if method=='HEAD': command+=['--head']
+            elif method=='POST': command+=['--data','packet_count=1']
+            result=subprocess.check_output(command+[f'https://deploy.example:{self.public}'+path],timeout=20).decode().splitlines()
+            self.assertEqual(result[2],'2' if protocol=='--http2' else '1.1')
+            return int(result[0]),headers.read_bytes(),body.read_bytes(),urlsplit(result[1]).path
+        endpoints=(('/diagnostics/api/st/ping','GET'),('/diagnostics/api/st/getip','GET'),
+                   ('/diagnostics/api/st/up','POST'),('/diagnostics/api/mtr','POST'),
+                   ('/diagnostics/testfiles/probe.bin','GET'))
+        for protocol in ('--http1.1','--http2'):
+            with self.subTest(protocol=protocol):
+                jar=self.root/('anonymous-'+protocol); jar.touch(mode=0o600)
+                code,headers,_,_=request('/diagnostics/',jar,protocol)
+                self.assertEqual(code,302)
+                self.assertFalse(b'diag_key=' in headers,'Unauthenticated diagnostics response issued its access cookie')
+                self.assertTrue(b'/panel/diag' in headers)
+                code,headers,body,path=request('/diagnostics/',jar,protocol,follow=True)
+                self.assertEqual((code,path),(200,'/panel/'))
+                self.assertFalse(b'diag_key=' in headers or '\tdiag_key\t' in jar.read_text(),
+                                 'Anonymous redirect chain acquired diagnostics access')
+                self.assertFalse(b'Network Diagnostics' in body)
+                code,headers,_,_=request('/panel/diag',jar,protocol)
+                self.assertEqual(code,302)
+                self.assertFalse(b'diag_key=' in headers,'Anonymous SSO issued diagnostics access')
+                for endpoint,method in endpoints:
+                    self.assertEqual(request(endpoint,jar,protocol,method)[0],404)
+                self.assertEqual(request('/__diag_auth',jar,protocol)[0],404)
+        api=helper('amneziawg').Panel(f'https://deploy.example:{self.public}/panel/',
+                                     'integration',self.auth,self.root,options)
+        self.assertEqual(request('/panel/diag',api.cookie,'--http2')[0],302)
+        self.assertTrue('\tdiag_key\t' in api.cookie.read_text(),'Authenticated SSO did not issue diagnostics access')
+        for protocol in ('--http1.1','--http2'):
+            code,headers,body,_=request('/diagnostics/',api.cookie,protocol)
+            self.assertEqual(code,200)
+            self.assertFalse(b'diag_key=' in headers,'Diagnostics page must not mint or renew its cookie')
+            self.assertTrue(b'Network Diagnostics' in body)
+            for file in ('speedtest.js','speedtest_worker.js','testfiles/probe.bin'):
+                self.assertEqual(request('/diagnostics/'+file,api.cookie,protocol)[0],200)
+            self.assertEqual(request('/diagnostics/api/st/ping',api.cookie,protocol)[0],200)
+            self.assertEqual(request('/diagnostics/api/st/getip',api.cookie,protocol)[2],b'127.0.0.1')
+            self.assertEqual(request('/diagnostics/api/st/up',api.cookie,protocol,'POST')[0],200)
+        code,_,body,_=request('/diagnostics/api/mtr',api.cookie,'--http2','POST')
+        self.assertEqual(code,400)  # Real backend still rejects the local/private MTR destination.
+        self.assertTrue('error' in json.loads(body),'Expected bounded MTR validation response')
+        self.passed.append('Diagnostics: anonymous deny / real panel SSO / LibreSpeed and MTR boundaries')
+
     def test_single_bootstrap_real_login_and_logout(self):
         from test_integrated_features import helper
         panel=helper('amneziawg')
