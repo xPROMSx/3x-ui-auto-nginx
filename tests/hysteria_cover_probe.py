@@ -8,6 +8,7 @@ not a required assertion that any candidate is suitable for production.
 """
 import asyncio, hashlib, http.client, json, os, socket, sqlite3, ssl, subprocess, time
 from pathlib import Path
+from unittest.mock import patch
 from aioquic.asyncio import connect, QuicConnectionProtocol
 from aioquic.h3.connection import H3Connection, H3_ALPN
 from aioquic.h3.events import HeadersReceived, DataReceived
@@ -29,18 +30,28 @@ class H3(QuicConnectionProtocol):
                 if isinstance(response,HeadersReceived):headers.extend(response.headers)
                 else:body.extend(response.data)
                 if response.stream_ended and not future.done():future.set_result((headers,bytes(body)))
-    async def request(self,path,method='GET',authority='deploy.example',extra=()):
+    async def request(self,path,method='GET',authority='deploy.example',extra=(),body=b''):
         stream=self._quic.get_next_available_stream_id();future=asyncio.get_running_loop().create_future()
         self.pending[stream]=(future,[],bytearray())
         headers=[(b':method',method.encode()),(b':scheme',b'https'),(b':authority',authority.encode()),(b':path',path.encode()),*extra]
-        self.http.send_headers(stream,headers,end_stream=True);self.transmit()
+        self.http.send_headers(stream,headers,end_stream=not body)
+        if body:self.http.send_data(stream,body,end_stream=True)
+        self.transmit()
         return await asyncio.wait_for(future,10)
 
-async def h3(f,path,method='GET',authority='deploy.example',sni='deploy.example',extra=()):
+# aioquic 0.9 exposes local_port but not a source-address option. Bind its real
+# UDP socket to a distinct loopback client, without substituting network I/O.
+class SourceSocket(socket.socket):
+    def bind(self,address):
+        if self.family==socket.AF_INET6 and address[0]=='::':address=('::ffff:127.0.0.2',*address[1:])
+        return super().bind(address)
+
+async def h3(f,path,method='GET',authority='deploy.example',sni='deploy.example',extra=(),body=b''):
     config=QuicConfiguration(is_client=True,alpn_protocols=H3_ALPN,server_name=sni,idle_timeout=5)
     config.load_verify_locations(cafile=str(f.cert))
-    async with connect('127.0.0.1',443,configuration=config,create_protocol=H3) as client:
-        return await client.request(path,method,authority,extra)
+    with patch('aioquic.asyncio.client.socket.socket',SourceSocket):
+        async with connect('127.0.0.1',443,configuration=config,create_protocol=H3) as client:
+            return await client.request(path,method,authority,extra,body)
 
 def summary(headers,body):
     headers={k.decode().lower():v.decode() for k,v in headers}
@@ -63,7 +74,7 @@ def main():
         f.nginx_config()
         def tcp(path,method='GET',authority='deploy.example'):
             context=ssl.create_default_context(cafile=str(f.cert));connection=http.client.HTTPConnection('127.0.0.1',443,timeout=10)
-            connection.sock=context.wrap_socket(socket.create_connection(('127.0.0.1',443),timeout=10),server_hostname='deploy.example')
+            connection.sock=context.wrap_socket(socket.create_connection(('127.0.0.1',443),timeout=10,source_address=('127.0.0.2',0)),server_hostname='deploy.example')
             try:
                 connection.request(method,path,headers={'Host':authority});response=connection.getresponse();body=response.read()
                 return summary([(b':status',str(response.status).encode()),*[(k.encode(),v.encode()) for k,v in response.getheaders()]],body),body
@@ -98,13 +109,40 @@ def main():
             hy=next(i['streamSettings']['hysteriaSettings'] for i in generated['inbounds'] if i['protocol']=='hysteria')
             if hy.get('masquerade')!=masq:raise AssertionError('Native panel did not preserve masquerade')
             context=ssl.create_default_context(cafile=str(f.cert));c=http.client.HTTPConnection('127.0.0.1',443,timeout=10)
-            c.sock=context.wrap_socket(socket.create_connection(('127.0.0.1',443),timeout=10),server_hostname='deploy.example')
+            c.sock=context.wrap_socket(socket.create_connection(('127.0.0.1',443),timeout=10,source_address=('127.0.0.2',0)),server_hostname='deploy.example')
             try:
                 c.request('GET','/jsonsub/fixture',headers={'Host':'deploy.example'});response=c.getresponse();export=response.read()
                 if response.status!=200:raise AssertionError('Native subscription export failed')
                 json.loads(export)  # Verify this is the native JSON export, not an error page.
             finally:c.close()
             export_contains_server_path=b'hysteria-cover.sock' in export or str(site).encode() in export
+            source_ip_result=None
+            if mode=='proxy-own-domain':
+                from test_integrated_features import helper as feature_helper
+                from http.cookies import SimpleCookie
+                directory=f.root/'source-ip-api';directory.mkdir()
+                api=feature_helper('amneziawg').Panel('https://deploy.example/panel/','integration',f.auth,directory,
+                    ['--cacert',str(f.cert),'--resolve','deploy.example:443:127.0.0.1','--interface','127.0.0.2'])
+                try:api.request('login',{'username':'tcp-source-fixture','password':'wrong-fixture'})
+                except ValueError:pass
+                else:raise AssertionError('Wrong TCP login accepted')
+                headers,body=asyncio.run(h3(f,'/panel/csrf-token'))
+                token=json.loads(body)['obj'];cookies=SimpleCookie()
+                for key,value in headers:
+                    if key==b'set-cookie':cookies.load(value.decode())
+                cookie='; '.join(key+'='+value.value for key,value in cookies.items())
+                headers,body=asyncio.run(h3(f,'/panel/login','POST',extra=[
+                    (b'content-type',b'application/json'),(b'x-csrf-token',token.encode()),(b'cookie',cookie.encode())],
+                    body=json.dumps({'username':'h3-source-fixture','password':'wrong-fixture'}).encode()))
+                if json.loads(body).get('success') is not False:raise AssertionError('Wrong HTTP3 login accepted')
+                import re
+                log=(f.root/'logs/3xui.log').read_text()
+                tcp_ips=re.findall(r'failed login: username="tcp-source-fixture", IP="([^"]+)"',log)
+                h3_ips=re.findall(r'failed login: username="h3-source-fixture", IP="([^"]+)"',log)
+                source_ip_result=({'tcp_source_ip_preserved':tcp_ips==['127.0.0.2'],
+                    'h3_source_ip_preserved':h3_ips==['127.0.0.2'],'tcp_login_logged':bool(tcp_ips),
+                    'h3_login_logged':bool(h3_ips),'h3_recorded_loopback':h3_ips==['127.0.0.1']})
+                if not source_ip_result['tcp_source_ip_preserved'] or not h3_ips:raise AssertionError('Native login IP control failed')
             rows=[]
             for path,method,authority in probes:
                 reference,_=tcp(path,method,authority)
@@ -123,7 +161,7 @@ def main():
             except (ConnectionError,TimeoutError):bad_sni=True
             if not bad_sni:raise AssertionError('Wrong SNI certificate was trusted')
             f.client('hysteria2',server_log='h3-panel-'+mode+'.log');f.client('hysteria2',negative=True,server_log='h3-panel-'+mode+'.log')
-            report[mode]=dict(native_preserved=True,site_files_unchanged=True,export_contains_server_path=export_contains_server_path,results=rows,wrong_auth=wrong_auth,
+            report[mode]=dict(native_login_ip=source_ip_result,native_preserved=True,site_files_unchanged=True,export_contains_server_path=export_contains_server_path,results=rows,wrong_auth=wrong_auth,
                               wrong_sni_tls_rejected=bad_sni,client_positive_negative='PASS')
             stop(panel);f.release_subscription_socket()
         after={str(p.relative_to(site)):hashlib.sha256(p.read_bytes()).hexdigest() for p in site.rglob('*') if p.is_file()}
