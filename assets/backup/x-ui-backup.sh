@@ -1831,7 +1831,7 @@ new_cover = (cover_site.exists() or cover_site.is_symlink() or cover_enabled.exi
 if new_cover:
     if len(cover_rows) != 1 or len(xray_blocks) != 1: raise ValueError('Ambiguous staged Hysteria cover')
     row, hs = cover_rows[0]; tls = hs.get('tlsSettings',{})
-    if (row[0] not in ('','0.0.0.0') or row[3] not in (None,0) or hs.get('network') != 'hysteria' or hs.get('security') != 'tls' or
+    if (row[0] not in ('','0.0.0.0') or row[3] not in (None,0) or hs.get('hysteriaSettings',{}).get('version') != 2 or hs.get('network') != 'hysteria' or hs.get('security') != 'tls' or
             hs.get('hysteriaSettings',{}).get('masquerade') != dict(type='proxy',url='unix:/run/3x-ui-hysteria-cover.sock',rewriteHost=False) or
             tls.get('serverName') != reality or tls.get('rejectUnknownSni') is not True or len(tls.get('certificates',[])) != 1):
         raise ValueError('Unknown staged Hysteria cover/TLS policy')

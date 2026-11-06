@@ -194,6 +194,12 @@ def run_profile(f):
                 "unix = subprocess.check_output(['ss','-H','-lxnp'],text=True)"+f'.replace({actual!r},{original!r})')
         result=subprocess.run(['bash','-c',code+'\nsystemctl() { return 0; }; sleep() { :; }; XUIDB="$1"; check_configured_xray_runtime','fixture',str(target)],capture_output=True,timeout=12)
         if result.returncode:raise AssertionError('Maintenance health rejected native enabled/disabled roles')
+        if not any(state()):
+            with sqlite3.connect(target) as db:
+                db.execute("UPDATE inbounds SET stream_settings=json_set(stream_settings,'$.hysteriaSettings.version',1) WHERE id=?",(roles['hysteria2'],))
+            bad=subprocess.run(['bash','-c',code+'\nsystemctl() { return 0; }; sleep() { :; }; XUIDB="$1"; check_configured_xray_runtime','fixture',str(target)],capture_output=True,timeout=12)
+            if bad.returncode==0:raise AssertionError('Disabled unknown Hysteria version accepted by maintenance')
+
         strict=installer_function('check_xray_runtime').replace('/usr/local/x-ui/bin',str(f.root/'bin'))
         network_relocation=f".replace({('127.0.0.1:'+str(f.backends['reality']))!r},'127.0.0.1:8443').replace({('127.0.0.1:'+str(f.hysteria_port))!r},'0.0.0.0:443')"
         strict=re.sub(r"(network = subprocess.check_output\([^\n]+\))",lambda m:m[0]+network_relocation,strict)

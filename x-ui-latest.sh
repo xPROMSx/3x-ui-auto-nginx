@@ -2219,7 +2219,7 @@ try:
         if len(found) != 1 or found[0][0][4] not in (0,1) or found[0][0][5] not in (None,0): raise ValueError('Unknown role')
         return found[0]
     real, rs = role(lambda r,s: r[:3] == ('vless','127.0.0.1',8443) and s.get('security') == 'reality')
-    if rs.get('realitySettings',{}).get('target') != '127.0.0.1:9443': raise ValueError('Unknown target')
+    if rs.get('realitySettings',{}).get('target') != '127.0.0.1:9443' or rs['realitySettings'].get('xver') not in (0,1): raise ValueError('Unknown target')
     xhttp, xs = role(lambda r,s: r[:3] == ('vless','/dev/shm/uds2023.sock,0666',0) and s.get('network') == 'xhttp' and
                      s.get('security') == 'none' and s.get('xhttpSettings',{}).get('mode') == 'stream-up')
     hy, hs = role(lambda r,s: r[0] == 'hysteria' and r[1] in ('','0.0.0.0') and r[2] == 443 and
@@ -2227,6 +2227,7 @@ try:
     panel = re.fullmatch(r'/root/cert/([^/]+)/fullchain.pem', settings.get('webCertFile',''))
     reality = rs.get('realitySettings',{}).get('serverNames',[])
     if not panel or len(reality) != 1: raise ValueError('Unknown domains')
+    if hs.get('hysteriaSettings',{}).get('version') != 2: raise ValueError('Unknown Hysteria version')
     masq = hs.get('hysteriaSettings',{}).get('masquerade')
     if masq is None:
         name, base = panel[1], '/root/cert/'+panel[1]

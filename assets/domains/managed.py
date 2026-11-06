@@ -159,6 +159,7 @@ def database_context(db, panel, reality, manifest=None):
     role('xhttp', lambda r, s: (r['protocol'], r['listen'], r['port']) == ('vless', '/dev/shm/uds2023.sock,0666', 0) and
          s.get('network') == 'xhttp' and s.get('security') == 'none' and s.get('xhttpSettings', {}).get('mode') == 'stream-up')
     _, hy = role('hysteria2', lambda r, s: r['protocol'] == 'hysteria' and r['listen'] in ('', '0.0.0.0') and r['port'] == 443 and s.get('network') == 'hysteria')
+    require(hy.get('hysteriaSettings', {}).get('version') == 2, 'Unknown managed Hysteria2 version.')
     masquerade = hy.get('hysteriaSettings', {}).get('masquerade')
     cover = masquerade is not None
     require(not cover or masquerade == HYSTERIA_MASQUERADE, 'Unknown managed Hysteria2 masquerade.')
