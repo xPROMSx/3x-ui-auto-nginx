@@ -1089,7 +1089,6 @@ server {
         alias /var/www/diagnostics/;
         index index.html;
         try_files \$uri \$uri/ /index.html;
-        add_header Set-Cookie "diag_key=${diag_token}; Path=${diag_path}; Secure; HttpOnly; SameSite=Lax; Max-Age=604800" always;
         add_header Cache-Control "no-store" always;
         add_header X-Robots-Tag "noindex, nofollow" always;
     }

@@ -811,7 +811,8 @@ EOF
                 self.assertFalse(b'diag_key=' in headers,'Anonymous SSO issued diagnostics access')
                 for endpoint,method in endpoints:
                     self.assertEqual(request(endpoint,jar,protocol,method)[0],404)
-                self.assertEqual(request('/__diag_auth',jar,protocol)[0],404)
+                # Its local error handler coerces the internal-only 404 to an authentication deny.
+                self.assertEqual(request('/__diag_auth',jar,protocol)[0],401)
         api=helper('amneziawg').Panel(f'https://deploy.example:{self.public}/panel/',
                                      'integration',self.auth,self.root,options)
         self.assertEqual(request('/panel/diag',api.cookie,'--http2')[0],302)
