@@ -26,7 +26,7 @@ import time
 import unittest
 from unittest.mock import patch
 import uuid
-from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
+from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urljoin, urlsplit
 
 from test_personal_xhttp import ROOT, FIXTURE, render, seed, SHARED, MAIN, function as installer_function
 from release_contract import selection, verify, validate_layout
@@ -464,7 +464,7 @@ class RealIntegration(unittest.TestCase):
 worker_processes 1; daemon off; pid {self.root}/nginx.pid; error_log {self.root}/nginx-error.log;
 events {{ worker_connections 256; }}
 stream {{ {stream} }}
-http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$proxy_protocol_addr'; access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {main} {cover} {getattr(self, 'vision_site', '')} }}
+http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$proxy_protocol_addr'; access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {main} {cover} {getattr(self, 'vision_site', '')} {getattr(self, 'http_site', '')} }}
 '''
         path = self.root/'nginx.conf';path.write_text(config)
         result = subprocess.run([self.nginx,'-t','-p',str(self.root)+'/', '-c',path],text=True,capture_output=True,timeout=15)
@@ -762,6 +762,95 @@ EOF
         self.assertTrue(re.search(r'failed login: username="forwarding-fixture", IP="127\.0\.0\.2"[^\n]*blocked_until=',log),
                         'Native login limiter did not report a block for the actual source IP')
         self.passed.append('3.11 forwarding headers: native links / redirects / real login IP and limiter')
+
+    def test_native_public_http_authorities_and_subscription_assets(self):
+        from test_integrated_features import helper
+        http_port=port(self.allocated_ports)
+        acme=self.root/'acme/.well-known/acme-challenge'; acme.mkdir(parents=True)
+        (acme/'probe').write_text('http-01-probe')
+        self.http_site=(render('cat > /etc/nginx/sites-available/80.conf',ipv6_listen='')+
+                        helper('vision').acme_config('vision.example',ipv6=False)).replace(
+                            'listen 80;',f'listen 127.0.0.1:{http_port};').replace('/var/www/acme',str(self.root/'acme'))
+        self.nginx_config()
+        env={**os.environ,'XUI_DB_FOLDER':str(self.root/'db'),
+             'XUI_BIN_FOLDER':str(self.root/'bin'),'XUI_LOG_FOLDER':str(self.root/'logs')}
+        panel=self.launch([self.xui],'http-panel',env)
+        self.ready(panel,('127.0.0.1',self.backends['sub']))
+        self.ready(panel,('127.0.0.1',self.backends['reality']))
+        def canonical(configs):
+            configs=copy.deepcopy(configs)
+            for config in configs:
+                for outbound in config['outbounds']:
+                    reality=outbound.get('streamSettings',{}).get('realitySettings',{})
+                    if 'shortId' in reality:
+                        self.assertTrue(reality['shortId'] in self.short_ids,'Unknown native short ID')
+                        reality['shortId']='managed-short-id'
+            return configs
+        def request(host,path='/',protocol='--http1.1',method='GET',headers=(),direct=None,http=False):
+            response,body=self.root/'http-response',self.root/'http-body'
+            for file in (response,body): file.touch(mode=0o600)
+            number=http_port if http else self.public
+            command=['curl','-q','-sS','--noproxy','*','--cacert',str(self.cert),protocol,
+                     '--resolve',f'{host}:{number}:127.0.0.1','--max-time','15',
+                     '--dump-header',str(response),'--output',str(body),'--write-out','%{http_code}\n%{http_version}']
+            for header in headers: command+=['--header',header]
+            if direct: command+=['--haproxy-protocol','--connect-to',f'{host}:{number}:127.0.0.1:{self.backends[direct]}']
+            if method=='HEAD':command+=['--head']
+            result=subprocess.check_output(command+[f'{"http" if http else "https"}://{host}:{number}'+path],timeout=20).decode().splitlines()
+            self.assertEqual(result[1],'2' if protocol=='--http2' else '1.1')
+            return int(result[0]),response.read_bytes(),body.read_bytes()
+        for protocol in ('--http1.1','--http2'):
+            for host in ('deploy.example','cover.example'):
+                for method in ('GET','HEAD'):
+                    with self.subTest(protocol=protocol,host=host,method=method):
+                        self.assertEqual(request(host,protocol=protocol,method=method)[0],200)
+                        for invalid in (host.replace('.','X'), 'x.'+host, host+'.attacker.example'):
+                            self.assertEqual(request(host,protocol=protocol,method=method,headers=['Host: '+invalid])[0],404)
+                self.assertEqual(request(host.upper(),protocol=protocol)[0],200)
+                self.assertEqual(request(host,protocol=protocol,headers=['Host: '+host.upper()])[0],200)
+                other='cover.example' if host=='deploy.example' else 'deploy.example'
+                self.assertEqual(request(other,protocol=protocol,direct='tls' if host=='deploy.example' else 'cover',
+                                         headers=['Host: '+host])[0],421)
+                code,_,html=request(host,'/subscription/fixture',protocol,headers=['Accept: text/html'])
+                self.assertEqual(code,200)
+                self.assertTrue(b'window.__SUB_PAGE_DATA__=' in html,'Native HTML subscription was not served')
+                assets=sorted({urlsplit(urljoin('/subscription/fixture',value)).path
+                    for value in re.findall(r'(?:src|href)=["\x27]([^"\x27]+)',html.decode()) if '/assets/' in value})
+                self.assertTrue(any(path.endswith('.js') for path in assets) and any(path.endswith('.css') for path in assets))
+                for path in assets:
+                    code,_,body=request(host,path,protocol)
+                    self.assertEqual(code,200)
+                    self.assertTrue(body,'Empty native HTML asset')
+                code,_,raw=request(host,'/subscription/fixture',protocol)
+                self.assertEqual(code,200)
+                self.assertTrue(len(base64.b64decode(raw,validate=True).splitlines())==5,'RAW subscription changed')
+                code,_,body=request(host,'/jsonsub/fixture',protocol)
+                self.assertEqual(code,200)
+                self.assertTrue(canonical(json.loads(body))==canonical(self.json_subscription),'JSON subscription changed')
+            self.assertEqual(request('deploy.example','/assets',protocol)[0],301)
+            self.assertEqual(request('deploy.example','/assets/',protocol)[0],200)
+            for path in ('/assets','/assets/'):
+                self.assertEqual(request('cover.example',path,protocol)[0],404)
+            # The same identifiable native JS remains available only on the main root path.
+            asset=next(path for path in assets if path.endswith('.js'))
+            root_asset=asset.removeprefix('/subscription')
+            self.assertEqual(request('deploy.example',root_asset,protocol)[0],200)
+            self.assertEqual(request('cover.example',root_asset,protocol)[0],404)
+        for host in ('deploy.example','cover.example','vision.example'):
+            for method in ('GET','HEAD'):
+                code,headers,_=request(host,'/page?query=1',method=method,http=True)
+                self.assertEqual(code,301)
+                self.assertTrue(b'Location: https://'+host.encode()+b'/page?query=1\r\n' in headers)
+                self.assertFalse(re.search(rb'(?im)^server: nginx/',headers))
+            self.assertEqual(request(host,'/.well-known/acme-challenge/probe',http=True)[2],b'http-01-probe')
+            self.assertEqual(request(host.upper(),http=True)[0],301)
+        for host in ('attacker.example','deployXexample','coverXexample'):
+            for method in ('GET','HEAD'):
+                code,headers,_=request(host,method=method,http=True)
+                self.assertEqual(code,404)
+                self.assertFalse(b'location:' in headers.lower())
+                self.assertFalse(re.search(rb'(?im)^server: nginx/',headers))
+        self.passed.append('Public HTTP: exact Host/SNI, h1/h2, scoped assets, native HTML/RAW/JSON, HTTP-01')
 
     def test_diagnostics_cookie_requires_real_panel_session(self):
         from test_integrated_features import helper
