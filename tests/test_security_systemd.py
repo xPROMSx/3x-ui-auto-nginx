@@ -722,6 +722,15 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                         if outcome.returncode:
                             state=run('systemctl','show','fail2ban.service','--property='+fields)
                             print('FAIL2BAN_CONTROLLED_LIMIT '+json.dumps(dict(line.split('=',1) for line in state.splitlines()) | {'attempt':restart+1,'exit':outcome.returncode}),flush=True)
+                            journal=subprocess.run(['journalctl','-u','fail2ban.service','-n','40','--no-pager','-o','cat'],capture_output=True,timeout=10).stdout.lower()
+                            logfile=Path('/var/log/fail2ban.log')
+                            detail=(logfile.read_bytes()[-32768:] if logfile.exists() else b'').lower()
+                            observed=journal+detail+outcome.stderr.lower()
+                            tokens=(b'too quickly',b'start-limit-hit',b'server already running',b'failed during configuration',
+                                    b'have not found any log file',b'permission denied',b'database is locked',
+                                    b'failed to create server socket',b'control process exited',b'address already in use')
+                            print('FAIL2BAN_REASON_FLAGS '+json.dumps({token.decode():token in observed for token in tokens}),flush=True)
+                            print('FAIL2BAN_EXIT_STATUS '+run('systemctl','show','fail2ban.service','--property=ExecMainCode,ExecMainStatus').replace('\n',' '),flush=True)
                             break
                     run('systemctl','reset-failed','fail2ban.service')
                     run('systemctl','restart','fail2ban.service')
