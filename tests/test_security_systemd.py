@@ -717,14 +717,16 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                     fields='Result,StartLimitBurst,StartLimitIntervalUSec'
                     before_budget=run('systemctl','show','fail2ban.service','--property='+fields)
                     print('FAIL2BAN_NATIVE_LIMIT '+json.dumps(dict(line.split('=',1) for line in before_budget.splitlines())),flush=True)
+                    probe_started=str(time.time())
+                    logfile=Path('/var/log/fail2ban.log')
+                    log_offset=logfile.stat().st_size if logfile.exists() else 0
                     for restart in range(6):
                         outcome=subprocess.run(['systemctl','restart','fail2ban.service'],capture_output=True,timeout=10)
                         if outcome.returncode:
                             state=run('systemctl','show','fail2ban.service','--property='+fields)
                             print('FAIL2BAN_CONTROLLED_LIMIT '+json.dumps(dict(line.split('=',1) for line in state.splitlines()) | {'attempt':restart+1,'exit':outcome.returncode}),flush=True)
-                            journal=subprocess.run(['journalctl','-u','fail2ban.service','-n','40','--no-pager','-o','cat'],capture_output=True,timeout=10).stdout.lower()
-                            logfile=Path('/var/log/fail2ban.log')
-                            detail=(logfile.read_bytes()[-32768:] if logfile.exists() else b'').lower()
+                            journal=subprocess.run(['journalctl','-u','fail2ban.service','--since=@'+probe_started,'--no-pager','-o','cat'],capture_output=True,timeout=10).stdout.lower()
+                            detail=(logfile.read_bytes()[log_offset:][-32768:] if logfile.exists() else b'').lower()
                             observed=journal+detail+outcome.stderr.lower()
                             tokens=(b'too quickly',b'start-limit-hit',b'server already running',b'failed during configuration',
                                     b'have not found any log file',b'permission denied',b'database is locked',
