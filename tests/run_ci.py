@@ -42,8 +42,8 @@ SUITES = {
 
 
 def root_shards(tests):
-    """Partition all registered root tests into four isolated processes."""
-    shards = [[], [], [], []]
+    """Partition root tests for parallel execution and a lock-exclusive phase."""
+    shards = [[], [], [], [], []]
     personal_count = 0
     for case in tests:
         owner = type(case).__module__ + '.' + type(case).__name__
@@ -52,6 +52,9 @@ def root_shards(tests):
             personal_count += 1
         elif owner == 'test_audit_findings.AuditRecovery':
             shards[2].append(case)
+        elif owner == 'test_manager.ManagerBackup':
+            # These tests launch recognizable legacy peers; keep them exclusive.
+            shards[4].append(case)
         else:
             shards[3].append(case)
     assigned = [case.id() for shard in shards for case in shard]
@@ -115,7 +118,7 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--check-completeness', action='store_true')
     mode.add_argument('--suite', choices=SUITES)
-    parser.add_argument('--root-shard', type=int, choices=range(1, 5))
+    parser.add_argument('--root-shard', type=int, choices=range(1, 6))
     args = parser.parse_args()
     if args.root_shard is not None and args.suite != 'root':
         parser.error('--root-shard requires --suite root')
@@ -133,7 +136,7 @@ def main():
     tests = suites[args.suite]
     if args.root_shard is not None:
         tests = root_shards(tests)[args.root_shard - 1]
-        print(f'ROOT SHARD {args.root_shard}/4: {len(tests)} tests', flush=True)
+        print(f'ROOT SHARD {args.root_shard}/5: {len(tests)} tests', flush=True)
     result = unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(tests))
     return 0 if result.wasSuccessful() else 1
 

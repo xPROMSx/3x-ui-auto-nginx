@@ -416,9 +416,10 @@ class CIScope(unittest.TestCase):
         self.assertEqual(len(assigned), len(set(assigned)))
         self.assertTrue(all(shards))
         self.assertTrue(all(type(case).__name__ == 'AuditRecovery' for case in shards[2]))
+        self.assertTrue(all(type(case).__name__ == 'ManagerBackup' for case in shards[4]))
         self.assertTrue(all(type(case).__name__ == 'PersonalBackup'
                             for shard in shards[:2] for case in shard))
-        self.assertFalse(any(type(case).__name__ in ('PersonalBackup', 'AuditRecovery')
+        self.assertFalse(any(type(case).__name__ in ('PersonalBackup', 'AuditRecovery', 'ManagerBackup')
                              for case in shards[3]))
         rejected = subprocess.run(
             ['python3', 'tests/run_ci.py', '--suite', 'nonroot', '--root-shard', '1'],

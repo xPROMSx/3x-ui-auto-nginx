@@ -58,6 +58,15 @@ jobs:
               failed=1
             fi
           done
+          # ManagerBackup deliberately tests global peer locks and must not
+          # overlap the other fixture processes.
+          if sudo --preserve-env=NGINX_BIN python3 tests/run_ci.py --suite root --root-shard 5 2>&1 |
+             sed -u 's/^/[root-5] /'; then
+            printf 'Root shard 5: PASS\n'
+          else
+            printf 'Root shard 5: FAIL\n'
+            failed=1
+          fi
           exit "$failed"
       - name: Whitespace validation
         if: steps.scope.outputs.docs_only != 'true'
