@@ -711,6 +711,21 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                 for name,value in (('maxretry','5'),('findtime','1800'),('bantime','3600')):
                     self.assertEqual(run('fail2ban-client','get','sshd',name).strip(),value)
                 run('fail2ban-client','status','sshd')
+                # Temporary bounded diagnosis of the fast-guest restart budget.
+                if 'VERSION_ID="24.04"' in Path('/etc/os-release').read_text():
+                    run('systemctl','reset-failed','fail2ban.service')
+                    fields='Result,StartLimitBurst,StartLimitIntervalUSec'
+                    before_budget=run('systemctl','show','fail2ban.service','--property='+fields)
+                    print('FAIL2BAN_NATIVE_LIMIT '+json.dumps(dict(line.split('=',1) for line in before_budget.splitlines())),flush=True)
+                    for restart in range(6):
+                        outcome=subprocess.run(['systemctl','restart','fail2ban.service'],capture_output=True,timeout=10)
+                        if outcome.returncode:
+                            state=run('systemctl','show','fail2ban.service','--property='+fields)
+                            print('FAIL2BAN_CONTROLLED_LIMIT '+json.dumps(dict(line.split('=',1) for line in state.splitlines()) | {'attempt':restart+1,'exit':outcome.returncode}),flush=True)
+                            break
+                    run('systemctl','reset-failed','fail2ban.service')
+                    run('systemctl','restart','fail2ban.service')
+                    security.verify_fail2ban([22])
                 # Run real AGH alongside strict resolved, with a trusted offline
                 # HTTPS DNS upstream. Neither system DNS nor AGH uses the other.
                 from test_real_services import question
