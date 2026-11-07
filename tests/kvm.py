@@ -10,7 +10,7 @@ def preflight():
     if cpus < 4:
         raise RuntimeError('VM acceptance requires at least four available CPUs')
     try:
-        with open('/dev/kvm', 'rb') as device:
+        with open('/dev/kvm', 'r+b') as device:
             version = fcntl.ioctl(device, 0xAE00, 0)  # KVM_GET_API_VERSION
             if version != 12:
                 raise RuntimeError('Unsupported KVM API version')

@@ -62,6 +62,14 @@ The same Vision/API case and native AWG transfer case run in both Ubuntu service
 
 `stack-services.yml` also runs the canonical `systemd` suite against Ubuntu 24.04, Ubuntu 26.04 and Debian 13 userspace inside QEMU KVM. Docker exports each root filesystem; an ordinary container boots it with the tools image's Ubuntu kernel. No privileged Docker, host cgroups, outside network or paid infrastructure is used. Native Fail2ban/sshd, APT configuration/timers and resolved are exercised. Generated test CA and local authenticated TLS DNS endpoints provide actual TLS traffic, with packet capture excluding plaintext fallback. This tests native distro userspace with a common CI kernel, not each distro's production kernel or cloud network.
 
+VM acceptance requires at least four available CPUs and usable KVM. The shared
+preflight opens `/dev/kvm`, checks its API and creates a VM; every QEMU boot uses
+`-accel kvm` without TCG fallback. Docker exposes only `/dev/kvm`, without
+`--privileged`, CPU quotas or a container memory cap. Fresh retains 4096 MiB guest
+RAM and systemd retains 2048 MiB. Safe job summaries report CPU/RAM availability,
+QEMU peak RSS, cgroup memory/OOM and CPU throttling counters. Missing KVM is an
+explicit failure, including on local machines; it never silently runs TCG.
+
 See [v2 audit scope](docs/V2_AUDIT.md) for option states, ownership, portable Restore and remaining live acceptance boundaries.
 
 Required enforcement is configured by the repository owner, not by workflow code.

@@ -423,6 +423,11 @@ class CIScope(unittest.TestCase):
         with patch.object(module.os,'sched_getaffinity',return_value={0,1,2,3}), \
              patch('builtins.open',side_effect=PermissionError):
             with self.assertRaisesRegex(RuntimeError,'no TCG fallback'):module.preflight()
+        for replies in ([12,PermissionError()], [11]):
+            with patch.object(module.os,'sched_getaffinity',return_value={0,1,2,3}), \
+                 patch('builtins.open',mock_open()), \
+                 patch.object(module.fcntl,'ioctl',side_effect=replies):
+                with self.assertRaises(RuntimeError):module.preflight()
         with patch.object(module.os,'sched_getaffinity',return_value={0,1}):
             with self.assertRaisesRegex(RuntimeError,'four available CPUs'):module.preflight()
 

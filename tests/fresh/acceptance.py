@@ -68,10 +68,15 @@ def boot():
             raise RuntimeError('QEMU exited during boot')
         try:
             ready = ssh('test "$(cat /proc/1/comm)" = systemd && systemctl is-active --quiet ssh '
-                        '&& systemctl is-active --quiet pilot-external-network', 10)
+                        '&& systemctl is-active --quiet pilot-external-network '
+                        '&& getconf _NPROCESSORS_ONLN && awk \'/^MemTotal:/ {print $2}\' /proc/meminfo', 10)
         except subprocess.TimeoutExpired:
             continue
         if ready.returncode == 0:
+            cpus, memory_kib = map(int, ready.stdout.split())
+            assert cpus == 4, 'Guest did not bring all four CPUs online'
+            report[phase+'_guest_online_cpus'] = cpus
+            report[phase+'_guest_memory_total_bytes'] = memory_kib*1024
             report[phase+'_boot_seconds'] = round(time.monotonic()-started, 2)
             return
         time.sleep(.5)

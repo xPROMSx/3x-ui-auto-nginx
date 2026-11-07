@@ -36,6 +36,7 @@ After=systemd-journald.service dbus.service
 [Service]
 Type=oneshot
 WorkingDirectory=/repo
+ExecStartPre=/usr/bin/python3 -c 'import os; print("Guest online CPUs:", os.cpu_count(), flush=True); assert os.cpu_count()==4'
 ExecStart=/bin/bash -c 'python3 tests/run_ci.py --suite systemd; rc=$?; if [ "$rc" = 0 ]; then echo XUI_SYSTEMD_TEST_PASS; else echo XUI_SYSTEMD_TEST_FAIL; fi; systemctl poweroff; exit "$rc"'
 StandardOutput=journal+console
 StandardError=journal+console
