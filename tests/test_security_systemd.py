@@ -585,8 +585,18 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             def command(*args,**kwargs):
                 if args==('systemctl','restart','systemd-resolved.service'):
                     plain_at_restart.append(len(plain_seen))
-                result=production_command(*args,**kwargs)
-                return result
+                try:
+                    return production_command(*args,**kwargs)
+                except ValueError:
+                    if args==('systemctl','restart','fail2ban.service'):
+                        # Unit state only: never publish its journal/configuration.
+                        fields=('Result','ActiveState','SubState','ExecMainStatus',
+                                'StartLimitBurst','StartLimitIntervalUSec')
+                        info=subprocess.run(['systemctl','show','fail2ban.service',
+                            '--property='+','.join(fields),'--no-pager'],capture_output=True,text=True,timeout=10)
+                        values=dict(line.split('=',1) for line in info.stdout.splitlines() if '=' in line)
+                        print('FAIL2BAN_RESTART_STATE '+json.dumps({k:values[k] for k in fields if k in values}),flush=True)
+                    raise
             security.command=command
             # An offline local APT repository contains real distro resolved/UFW
             # packages and two tiny upgrade/retention packages. No host upgrade.
