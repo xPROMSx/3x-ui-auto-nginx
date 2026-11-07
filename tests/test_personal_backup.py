@@ -1695,12 +1695,12 @@ class PersonalBackup(unittest.TestCase):
 
     def add_node_inbound_fixture(self, protocol, node_id, enabled, *, masquerade=False, remote_tls=False):
         """Copy a supported local role into a distinct 3x-ui node without changing it."""
-        port = '8443' if protocol == 'vless' else '443'
+        port = 8443 if protocol == 'vless' else 443
         with sqlite3.connect(self.path('/etc/x-ui/x-ui.db')) as db:
             db.row_factory = sqlite3.Row
             if not any(row[1] == 'node_id' for row in db.execute('PRAGMA table_info(inbounds)')):
                 db.execute('ALTER TABLE inbounds ADD COLUMN node_id INTEGER')
-            source = db.execute('SELECT * FROM inbounds WHERE protocol=? AND port=? AND node_id IS NULL',
+            source = db.execute('SELECT * FROM inbounds WHERE protocol=? AND CAST(port AS INTEGER)=? AND node_id IS NULL',
                                 (protocol, port)).fetchone()
             self.assertIsNotNone(source)
             record = dict(source)
