@@ -10,6 +10,9 @@ import subprocess
 import threading
 import time
 import traceback
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from kvm import preflight
 
 from diagnostics import VISION_STAGES, domain_failure, vision_detail, api_restart_metrics, api_restart_nginx_errors
 
@@ -52,8 +55,8 @@ def boot():
     kernel = (ROOT/'kernel.path').read_text().strip()
     report['kernel'] = Path(kernel).name
     extra_ssh = ',hostfwd=tcp:127.0.0.1:22221-:2222' if os.environ.get('XUI_RESTORE_ACCEPTANCE') == '1' else ''
-    vm = launch(['qemu-system-x86_64', '-machine', 'accel=tcg', '-cpu', 'max', '-m', '4096',
-        '-smp', '2', '-nodefaults', '-no-reboot', '-display', 'none', '-serial', 'stdio',
+    vm = launch(['qemu-system-x86_64', '-accel', 'kvm', '-cpu', 'max', '-m', '4096',
+        '-smp', '4', '-nodefaults', '-no-reboot', '-display', 'none', '-serial', 'stdio',
         '-monitor', 'none', '-drive', 'file=/pilot/disk.raw,format=raw,if=virtio',
         '-netdev', 'user,id=n0,hostfwd=tcp:127.0.0.1:22220-:22,hostfwd=tcp:127.0.0.1:18080-:80'+extra_ssh,
         '-device', 'virtio-net-pci,netdev=n0', '-kernel', kernel, '-initrd', '/pilot/initrd.img',
@@ -325,6 +328,9 @@ if __name__ == '__main__':
     try:
         report['image_prepare_seconds'] = int((ROOT/'images.ready').read_text())-int((ROOT/'started').read_text())
         report['disk_prepare_seconds'] = int((ROOT/'disk.ready').read_text())-int((ROOT/'images.ready').read_text())
+        report.update(preflight())
+        report['guest_cpus'] = 4
+        report['guest_memory_mib'] = 4096
         fixtures()
         if os.environ.get('XUI_RESTORE_ACCEPTANCE') == '1':
             restore_acceptance(ref)
@@ -357,6 +363,13 @@ if __name__ == '__main__':
         if events.exists():
             counters = dict(line.split() for line in events.read_text().splitlines())
             report['container_oom_events'] = {key:int(counters[key]) for key in ('oom','oom_kill') if key in counters}
+        for filename in ('cpu.max', 'memory.max'):
+            path = Path('/sys/fs/cgroup')/filename
+            if path.exists(): report['container_'+filename.replace('.', '_')] = path.read_text().strip()
+        cpu = Path('/sys/fs/cgroup/cpu.stat')
+        if cpu.exists():
+            counters = dict(line.split() for line in cpu.read_text().splitlines())
+            report['container_cpu_throttling'] = {k:int(counters[k]) for k in ('nr_periods','nr_throttled','throttled_usec') if k in counters}
         report['total_seconds'] = round(time.time()-float((ROOT/'started').read_text()), 2)
         (ROOT/'summary.json').write_text(json.dumps(report))
         print(json.dumps(report, sort_keys=True), flush=True)
