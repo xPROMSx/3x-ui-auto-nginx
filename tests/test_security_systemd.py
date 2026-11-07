@@ -482,6 +482,12 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
         from test_integrated_features import helper
         security = helper('security')
         run = lambda *args: subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=90)
+        def configure_scenario():
+            # Independent cases must not share a consumed start budget. KVM can
+            # run them within systemd's five-start/ten-second window. Preserve
+            # native unit limits and every within-operation failure/rollback.
+            run('systemctl','reset-failed','fail2ban.service')
+            return security.configure()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); cert, key = root/'cert.pem', root/'key.pem'
             run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
@@ -585,18 +591,8 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             def command(*args,**kwargs):
                 if args==('systemctl','restart','systemd-resolved.service'):
                     plain_at_restart.append(len(plain_seen))
-                try:
-                    return production_command(*args,**kwargs)
-                except ValueError:
-                    if args==('systemctl','restart','fail2ban.service'):
-                        # Unit state only: never publish its journal/configuration.
-                        fields=('Result','ActiveState','SubState','ExecMainStatus',
-                                'StartLimitBurst','StartLimitIntervalUSec')
-                        info=subprocess.run(['systemctl','show','fail2ban.service',
-                            '--property='+','.join(fields),'--no-pager'],capture_output=True,text=True,timeout=10)
-                        values=dict(line.split('=',1) for line in info.stdout.splitlines() if '=' in line)
-                        print('FAIL2BAN_RESTART_STATE '+json.dumps({k:values[k] for k in fields if k in values}),flush=True)
-                    raise
+                result=production_command(*args,**kwargs)
+                return result
             security.command=command
             # An offline local APT repository contains real distro resolved/UFW
             # packages and two tiny upgrade/retention packages. No host upgrade.
@@ -652,7 +648,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             independent=security.Transaction()
             try:
                 fail_tls.set()
-                independent_result=security.configure()
+                independent_result=configure_scenario()
                 self.assertEqual(independent_result['status'],'configured',independent_result)
                 self.assertEqual(independent_result['apt'],'configured')
                 self.assertEqual(independent_result['fail2ban'],'configured')
@@ -695,7 +691,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                         'dst port 53 and (dst host 1.1.1.1 or dst host 1.0.0.1 or dst host 8.8.8.8 or dst host 8.8.4.4)'],
                         stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
             try:
-                result = security.configure()
+                result = configure_scenario()
                 self.assertEqual(disabled.read_bytes(),disabled_policy)
                 if result['status'] != 'configured': print('TLS queries observed:',len(seen),'server errors:',errors,flush=True)
                 self.assertEqual(result['status'], 'configured', result)
@@ -711,32 +707,6 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                 for name,value in (('maxretry','5'),('findtime','1800'),('bantime','3600')):
                     self.assertEqual(run('fail2ban-client','get','sshd',name).strip(),value)
                 run('fail2ban-client','status','sshd')
-                # Temporary bounded diagnosis of the fast-guest restart budget.
-                if 'VERSION_ID="24.04"' in Path('/etc/os-release').read_text():
-                    run('systemctl','reset-failed','fail2ban.service')
-                    fields='Result,StartLimitBurst,StartLimitIntervalUSec'
-                    before_budget=run('systemctl','show','fail2ban.service','--property='+fields)
-                    print('FAIL2BAN_NATIVE_LIMIT '+json.dumps(dict(line.split('=',1) for line in before_budget.splitlines())),flush=True)
-                    probe_started=str(time.time())
-                    logfile=Path('/var/log/fail2ban.log')
-                    log_offset=logfile.stat().st_size if logfile.exists() else 0
-                    for restart in range(6):
-                        outcome=subprocess.run(['systemctl','restart','fail2ban.service'],capture_output=True,timeout=10)
-                        if outcome.returncode:
-                            state=run('systemctl','show','fail2ban.service','--property='+fields)
-                            print('FAIL2BAN_CONTROLLED_LIMIT '+json.dumps(dict(line.split('=',1) for line in state.splitlines()) | {'attempt':restart+1,'exit':outcome.returncode}),flush=True)
-                            journal=subprocess.run(['journalctl','-u','fail2ban.service','--since=@'+probe_started,'--no-pager','-o','cat'],capture_output=True,timeout=10).stdout.lower()
-                            detail=(logfile.read_bytes()[log_offset:][-32768:] if logfile.exists() else b'').lower()
-                            observed=journal+detail+outcome.stderr.lower()
-                            tokens=(b'too quickly',b'start-limit-hit',b'server already running',b'failed during configuration',
-                                    b'have not found any log file',b'permission denied',b'database is locked',
-                                    b'failed to create server socket',b'control process exited',b'address already in use')
-                            print('FAIL2BAN_REASON_FLAGS '+json.dumps({token.decode():token in observed for token in tokens}),flush=True)
-                            print('FAIL2BAN_EXIT_STATUS '+run('systemctl','show','fail2ban.service','--property=ExecMainCode,ExecMainStatus').replace('\n',' '),flush=True)
-                            break
-                    run('systemctl','reset-failed','fail2ban.service')
-                    run('systemctl','restart','fail2ban.service')
-                    security.verify_fail2ban([22])
                 # Run real AGH alongside strict resolved, with a trusted offline
                 # HTTPS DNS upstream. Neither system DNS nor AGH uses the other.
                 from test_real_services import question
@@ -793,7 +763,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                     run('resolvectl','default-route','xui-test','yes')
                     before_tls=len(seen)
                     restarts=len(plain_at_restart)
-                    route_result=security.configure()
+                    route_result=configure_scenario()
                     security.verify_dns()
                     self.assertEqual(len(plain_at_restart),restarts,'Final Security step restarted prepared DNS')
                     self.assertEqual(route_result['status'],'configured',route_result)
@@ -815,7 +785,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                         raise ValueError('controlled Fail2ban restart failure')
                     return command(*args,**kwargs)
                 security.command=fail_jail
-                try: partial=security.configure()
+                try: partial=configure_scenario()
                 finally: security.command=command
                 self.assertTrue(restart_failure[0])
                 self.assertEqual(partial['status'],'partial',partial)
@@ -834,7 +804,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                 run('systemctl','enable','--now','ssh.socket')
                 with socket.create_connection(('127.0.0.1',2222),timeout=5) as ssh:
                     self.assertTrue(ssh.recv(200).startswith(b'SSH-2.0-'))
-                self.assertEqual(security.configure()['status'],'configured')
+                self.assertEqual(configure_scenario()['status'],'configured')
                 self.assertEqual(security.ssh_ports(effective,run('systemctl','show','ssh.socket','-p','Listen','--value')),[2222])
                 self.assertIn('2222',run('fail2ban-client','-d'))
                 self.assertEqual(run('/usr/sbin/sshd','-T'),effective)
@@ -858,7 +828,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                 self.assertEqual(run('/usr/sbin/sshd','-T'),effective)
                 # A late unavailable TLS upstream does not couple final APT/SSH
                 # setup to DNS. Explicit DNS recovery still uses its checkpoint.
-                failed = security.configure()
+                failed = configure_scenario()
                 self.assertEqual(failed['status'],'configured',failed)
                 self.assertEqual(failed['apt'],'configured',failed)
                 self.assertEqual(failed['fail2ban'],'configured',failed)

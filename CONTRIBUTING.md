@@ -68,7 +68,9 @@ preflight opens `/dev/kvm`, checks its API and creates a VM; every QEMU boot use
 `--privileged`, CPU quotas or a container memory cap. Fresh retains 4096 MiB guest
 RAM and systemd retains 2048 MiB. Safe job summaries report CPU/RAM availability,
 QEMU peak RSS, cgroup memory/OOM and CPU throttling counters. Missing KVM is an
-explicit failure, including on local machines; it never silently runs TCG.
+explicit failure, including on local machines; it never silently runs TCG. Native security
+scenarios reset consumed Fail2ban start counters only between independent cases;
+unit limits and within-operation failure/rollback checks remain unchanged.
 
 See [v2 audit scope](docs/V2_AUDIT.md) for option states, ownership, portable Restore and remaining live acceptance boundaries.
 
