@@ -7,7 +7,7 @@ from pathlib import Path
 import tarfile
 import unittest
 from certificate_fixtures import relocate
-from test_adguard import BINARY, HELPER, OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA
+from test_adguard import BINARY, HELPER, OFFICIAL_AMD64_SHA, LEGACY_FIXTURE_BINARY_SHA
 
 
 # Exact pre-ClientID project snippet; preflight never executes archive helpers.
@@ -52,7 +52,7 @@ class AdGuardBackup(unittest.TestCase):
         self.root=self.fixture.root
         self.fixture.env.update(ROOT=str(self.root), CALLS=str(self.root/'binary-calls'))
         # Private trusted fixture digest; actual sha256sum remains unstubbed.
-        self.fixture.script.write_text(self.fixture.script.read_text().replace(OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA))
+        self.fixture.script.write_text(self.fixture.script.read_text().replace(OFFICIAL_AMD64_SHA, LEGACY_FIXTURE_BINARY_SHA))
 
     def install_fixture(self, active=True, legacy=False):
         f=self.fixture
@@ -84,7 +84,7 @@ schema_version: 34
             yaml=f.path('/opt/AdGuardHome/AdGuardHome.yaml')
             yaml.write_text(yaml.read_text().replace('      - POST /dns-query\n',
                 '      - POST /dns-query\n      - GET /dns-query/{ClientID}\n      - POST /dns-query/{ClientID}\n'))
-        f.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh',relocate(helper,self.root).replace(OFFICIAL_AMD64_SHA, FIXTURE_BINARY_SHA),0o600)
+        f.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh',relocate(helper,self.root).replace(OFFICIAL_AMD64_SHA, LEGACY_FIXTURE_BINARY_SHA),0o600)
         # Generate the exact snippet from the same managed helper.
         import subprocess
         r=subprocess.run(['bash','-c','source "$1"; AGH_WEB_PORT=18081; AGH_PATH=adg-ABCDEFGHIJKL; agh_snippet','fixture',str(f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh'))],capture_output=True,text=True)
@@ -296,7 +296,7 @@ schema_version: 34
             start = source.index(name + '() {')
             end = source.index('\nEOFNG\n}', start) + len('\nEOFNG\n}') if name == 'agh_snippet' else source.index('\n}\n', start) + 2
             return source[start:end]
-        for name in ('agh_binary_hash', 'agh_verify_binary', 'agh_binary', 'agh_config', 'agh_snippet'):
+        for name in ('agh_binary_hash', 'agh_trusted_key', 'agh_verify_binary', 'agh_binary', 'agh_config', 'agh_snippet'):
             self.assertEqual(function(SOURCE, name), function(HELPER, name))
         start = SOURCE.index('preflight_staged_adguard()')
         preflight = SOURCE[start:SOURCE.index('\n)\n', start) + 2]

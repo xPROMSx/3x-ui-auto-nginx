@@ -225,6 +225,8 @@ After installation, the following are available:
 
 Public TCP/UDP port **53** is not opened. The AdGuard Home configuration and data are included in **Backup / Restore v3**.
 
+New installations enable AdGuard Home's built-in update checks and web-interface updates. The initial release is SHA-256 pinned, while Backup/Restore verifies vendor signatures of updated executables. Existing installations are not changed automatically.
+
 **⚠️ Security recommendation**
 
 For a personal VPS, create a separate [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) for each device.
