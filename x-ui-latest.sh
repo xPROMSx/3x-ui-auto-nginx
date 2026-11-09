@@ -3970,7 +3970,7 @@ PY
     # Hashes are part of this release's installer; both helpers use one source.
     curl -q -fsSL --connect-timeout 10 --max-time 45 "$GITHUB_RAW/assets/adguard/managed.sh" -o "$AGH_TEMP/helper" &&
     curl -q -fsSL --connect-timeout 10 --max-time 45 "$GITHUB_RAW/assets/backup/x-ui-backup.sh" -o "$AGH_TEMP/backup" || exit 1
-    printf '%s  %s\n' '3f1926d8df6ee2dc42f99346da7465e5d1b946112f5c03df6c04fd7580d93e4e' "$AGH_TEMP/helper" '0a19e597431106d765f57126b6bdf662dd5a8d493b6ead3b263b4aff43b03ea7' "$AGH_TEMP/backup" |
+    printf '%s  %s\n' 'bd045bbdb2a59e019f2ac6ec0eb34a2a04e98c2f4a01cb3e9907bd6fe4d94a17' "$AGH_TEMP/helper" '74ebc80e2a34475de0842c77f863ea5f0b7c0d7febddcdd7f9ef1f5e130fc72d' "$AGH_TEMP/backup" |
         sha256sum --check --status || exit 1
     bash -n "$AGH_TEMP/helper" && bash -n "$AGH_TEMP/backup" || exit 1
     # Only the authenticated new helper is executed, before replacing anything.
@@ -3981,7 +3981,9 @@ PY
         # component update is part of this separate maintenance operation.
         apt-get install -y --no-install-recommends gnupg gpgv || exit 1
     }
-    [[ "$(cat "$AGH_SNIPPET")" == "$(agh_snippet)" ]] || exit 1
+    local snippet
+    snippet=$(cat "$AGH_SNIPPET") || exit 1
+    [[ "$snippet" == "$(agh_snippet)" || "$snippet" == "$(agh_snippet legacy)" ]] || exit 1
     [[ "$AGH_ARCH" == "$(dpkg --print-architecture)" ]] || exit 1
     if (( was_active )); then agh_health && agh_dns_probe || exit 1; fi
     if [[ -e "${targets[4]}" || -L "${targets[4]}" ]]; then

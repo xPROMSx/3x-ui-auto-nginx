@@ -99,7 +99,9 @@ load_adguard_backup_state() {
            -f /etc/nginx/snippets/x-ui-auto-optional/adguard.conf && ! -e /etc/nginx/snippets/adguard.conf ]] || die 'Partial AdGuard Home state.'
         . /usr/local/lib/3x-ui-pro/managed-adguard.sh
         agh_config && agh_unit || die 'AdGuard Home configuration/service contract is invalid.'
-        [[ "$(cat "$AGH_SNIPPET")" == "$(agh_snippet)" ]] || die 'AdGuard Home nginx state is inconsistent.'
+        local snippet
+        snippet=$(cat "$AGH_SNIPPET") || die 'Cannot read AdGuard Home nginx state.'
+        [[ "$snippet" == "$(agh_snippet)" || "$snippet" == "$(agh_snippet legacy)" ]] || die 'AdGuard Home nginx state is inconsistent.'
         [[ "$AGH_ARCH" == "$ARCH" ]] || die 'AdGuard Home architecture does not match the host.'
         ADGUARD_HOME=true
     fi

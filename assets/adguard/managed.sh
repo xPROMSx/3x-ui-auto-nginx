@@ -339,7 +339,9 @@ agh_health() {
     agh_config && agh_unit && systemctl is-active --quiet AdGuardHome && agh_listeners || return 1
     local expected body backend
     expected=$(agh_snippet) || return 1
-    [[ -f "$AGH_SNIPPET" && ! -L "$AGH_SNIPPET" && "$(cat "$AGH_SNIPPET")" == "$expected" ]] || return 1
+    [[ -f "$AGH_SNIPPET" && ! -L "$AGH_SNIPPET" ]] || return 1
+    body=$(cat "$AGH_SNIPPET") || return 1
+    [[ "$body" == "$expected" || "$body" == "$(agh_snippet legacy)" ]] || return 1
     agh_doh_probe "http://127.0.0.1:${AGH_WEB_PORT}/dns-query" || return 1
     agh_doh_probe "https://${AGH_DOMAIN}/dns-query" "${AGH_DOMAIN}:443:127.0.0.1" || return 1
     backend=$(curl --noproxy '*' -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:${AGH_WEB_PORT}/login.html") || return 1
