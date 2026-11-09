@@ -731,7 +731,9 @@ def native_agh_update():
     expected80=hashlib.sha256((agh/'AdGuardHome').read_bytes()).digest()
     def digest(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
     protected=['/usr/local/x-ui/x-ui','/usr/bin/x-ui','/usr/sbin/nginx','/usr/bin/certbot']
-    protected += [str(p) for p in Path('/usr/local/x-ui/bin').glob('*') if p.is_file()]
+    # Native setEnable/restart regenerates this startup snapshot; component
+    # executables and all other bin assets must remain byte-identical.
+    protected += [str(p) for p in Path('/usr/local/x-ui/bin').glob('*') if p.is_file() and p.name!='config.json']
     unchanged={path:digest(path) for path in protected}
     def download(url,target,sha):
         subprocess.run(['curl','-fLsS','--connect-timeout','15','--max-time','180',url,'-o',str(target)],
