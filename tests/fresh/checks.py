@@ -777,6 +777,13 @@ def native_agh_update():
     historical_archive=Path((ROOT/'before-domains-archive').read_text())
     historical_digest=digest(historical_archive)
     restore_before_domains()
+    enabled_before=run('systemctl','is-enabled','AdGuardHome')
+    run('systemctl','stop','AdGuardHome')
+    private_command('enable-stopped',['bash',str(ROOT/'x-ui-latest.sh'),'--enable-agh-updates'])
+    inactive=subprocess.run(['systemctl','is-active','AdGuardHome'],capture_output=True,text=True)
+    assert inactive.stdout.strip()=='inactive' and inactive.returncode==3
+    assert run('systemctl','is-enabled','AdGuardHome')==enabled_before
+    run('systemctl','start','AdGuardHome');installed()
     for name in ('enable-first','enable-repeat'):
         private_command(name,['bash',str(ROOT/'x-ui-latest.sh'),'--enable-agh-updates'])
         assert run(str(agh/'AdGuardHome'),'--version')=='AdGuard Home, version v0.107.79\n'
@@ -844,6 +851,7 @@ def native_agh_update():
         (ROOT/'before-domains-archive').read_text()))['adguard_version']=='v0.107.80'
     assert {path:digest(path) for path in protected}==unchanged
     return dict(historical_79_Backup_Restore_Change_Domains=True,enablement_idempotent_and_binary_unchanged=True,
+                stopped_service_and_autostart_preserved=True,
                 historical_archive_restores_disabled_updates=True,native_79_to_80_systemd_exec_and_signed_health=True,
                 updated_80_Backup_Restore_Change_Domains=True,unrelated_component_binaries_unchanged=True,
                 invalid_real_signature_and_binary_refused_before_execution=True)
