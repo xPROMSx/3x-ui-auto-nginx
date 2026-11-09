@@ -188,10 +188,9 @@ if (options.get('disabled', 'false') == 'true') != legacy:
     raise ValueError('Invalid AGH native-update flag')
 if options.get('service') != 'run':
     raise ValueError('Invalid AGH service run action')
-directories = [shlex.split(line.split('=', 1)[1]) for line in unit.splitlines()
-               if line.startswith('WorkingDirectory=')]
-if directories and directories != [[root]] and directories != [[root + '/']]:
-    raise ValueError('Invalid AGH systemd working directory')
+# Upstream records the install caller's cwd as systemd WorkingDirectory.
+# AGH's effective data directory is the explicit -w/--work-dir checked above;
+# do not reject the official unit merely because those two directories differ.
 PY
 }
 

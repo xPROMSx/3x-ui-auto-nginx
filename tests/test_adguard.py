@@ -343,7 +343,8 @@ class AdGuardInstaller(unittest.TestCase):
         unit = self.root/'etc/systemd/system/AdGuardHome.service'
         original = unit.read_text()
         for text in (original.replace(' -c ', ' --config=').replace(' -w ', ' --work-dir=').replace('-s run', '--service=run'),
-                     original.replace(' -s run', ' --service run')):
+                     original.replace(' -s run', ' --service run'),
+                     original+'WorkingDirectory=/root\n'):
             unit.write_text(text)
             r = self.run_shell((), 'source "$HELPER_FIXTURE"; agh_config && agh_unit')
             self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
