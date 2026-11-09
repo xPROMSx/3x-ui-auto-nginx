@@ -188,7 +188,7 @@ validate_archive() {
     "${runner[@]}" python3 - "$1" "${2:-restore}" "${3:-}" "$DB" "$XRAY_DIR" "${REQUIRED_PATHS[@]}" -- \
         "${RUNTIME_PATHS[@]:0:2}" "${TREE_PATHS[@]}" -- \
         /usr/bin/x-ui "${EXTRA_PATHS[@]}" <<'PY'
-import errno, gzip, ipaddress, json, os, posixpath, shutil, signal, stat, sys, tarfile
+import errno, gzip, ipaddress, json, os, posixpath, re, shutil, signal, stat, sys, tarfile
 from contextlib import contextmanager
 from pathlib import PurePosixPath
 archive, mode, output, db, xray_dir, *paths = sys.argv[1:]
