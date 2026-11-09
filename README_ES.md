@@ -225,6 +225,8 @@ Después de instalarlo, estarán disponibles:
 
 No se abren los puertos públicos TCP/UDP **53**. La configuración y los datos de AdGuard Home se incluyen en **Backup / Restore v3**.
 
+En las instalaciones nuevas, se habilitan la comprobación de actualizaciones y las actualizaciones desde la interfaz web de AdGuard Home. La versión inicial se verifica mediante SHA-256; durante Backup/Restore, los ejecutables actualizados se verifican con la firma oficial de AdGuard. Las instalaciones existentes no se modifican automáticamente.
+
 **⚠️ Recomendación de seguridad**
 
 Para un VPS personal, crea un [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) para cada dispositivo.

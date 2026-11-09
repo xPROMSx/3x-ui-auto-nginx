@@ -225,6 +225,8 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 不会向公网开放 TCP/UDP **53** 端口。AdGuard Home 的配置和数据将纳入 **Backup / Restore v3**。
 
+新安装默认启用 AdGuard Home 内置更新检查和网页界面更新。初始版本通过 SHA-256 校验；在 Backup/Restore 时，更新后的可执行文件通过 AdGuard 官方签名验证。现有安装不会自动修改。
+
 **⚠️ 安全建议**
 
 个人 VPS 建议为每台设备创建独立的 [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid)。

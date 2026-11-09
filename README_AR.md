@@ -225,6 +225,8 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 لا يُفتح المنفذ العام **53** عبر TCP أو UDP. تُضمَّن إعدادات AdGuard Home وبياناته في **Backup / Restore v3**.
 
+في التثبيتات الجديدة، يتم تفعيل التحقق من تحديثات AdGuard Home والتحديث عبر واجهته على الويب. يُتحقق من الإصدار الأولي باستخدام SHA-256، وتُفحص التواقيع الرسمية من AdGuard للملفات التنفيذية المحدَّثة أثناء Backup/Restore. لا تُعدَّل التثبيتات الحالية تلقائيًا.
+
 **⚠️ توصية أمنية**
 
 لخادم VPS شخصي، أنشئ [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) مستقلًا لكل جهاز.

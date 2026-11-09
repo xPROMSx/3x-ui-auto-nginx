@@ -225,6 +225,8 @@ Kurulumdan sonra şu adresler kullanılabilir:
 
 Genel TCP/UDP **53** portları açılmaz. AdGuard Home yapılandırması ve verileri **Backup / Restore v3** kapsamındadır.
 
+Yeni kurulumlarda AdGuard Home'un güncelleme denetimi ve web arayüzünden güncelleme özelliği açıktır. İlk sürüm SHA-256 ile doğrulanır; güncellenmiş çalıştırılabilir dosyaların resmi AdGuard imzaları Backup/Restore sırasında kontrol edilir. Mevcut kurulumlar otomatik olarak değiştirilmez.
+
 **⚠️ Güvenlik önerisi**
 
 Kişisel VPS'inizde her cihaz için ayrı bir [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) oluşturun.

@@ -225,6 +225,8 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 پورت عمومی **53** برای TCP/UDP باز نمی‌شود. پیکربندی و داده‌های AdGuard Home در **Backup / Restore v3** ذخیره می‌شوند.
 
+در نصب‌های جدید، بررسی به‌روزرسانی‌ها و به‌روزرسانی از طریق رابط وب AdGuard Home فعال است. نسخهٔ اولیه با SHA-256 بررسی می‌شود و هنگام Backup/Restore امضای رسمی AdGuard برای فایل‌های اجرایی به‌روزشده تأیید می‌شود. نصب‌های موجود به‌طور خودکار تغییر نمی‌کنند.
+
 **⚠️ توصیهٔ امنیتی**
 
 برای VPS شخصی، بهتر است برای هر دستگاه یک [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) جداگانه بسازید.
