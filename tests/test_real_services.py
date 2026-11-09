@@ -25,9 +25,9 @@ from urllib.parse import urlsplit
 from certificate_fixtures import ROOT, function
 from test_real_integration import download, port, stop
 
-AGH_VERSION = 'v0.107.80'
+AGH_VERSION = 'v0.107.79'
 PEBBLE_VERSION = 'v2.10.1'
-AGH_SHA = '28593bc761d71469abdbc6f39ca42cbed763ec92b63082c729177b037ed51d18'
+AGH_SHA = 'c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f'
 PEBBLE_SHA = '4f2fcb5bca8c85c9cf73ad140fccfc0d2be40bd81ab99879c79b7b8a0b4f70ed'
 HELPER = ROOT/'assets/adguard/managed.sh'
 
