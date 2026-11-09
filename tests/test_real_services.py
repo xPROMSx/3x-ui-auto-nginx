@@ -384,7 +384,13 @@ location / {{ return 404; }} }}\n'''
         expected_digest=hashlib.sha256(expected['AdGuardHome']).digest()
         while time.monotonic()<deadline:
             self.assertIsNone(process.poll(),'Official updater exited instead of exec')
-            if hashlib.sha256(Path('/proc',str(process.pid),'exe').read_bytes()).digest()==expected_digest:
+            try: image=Path('/proc',str(process.pid),'exe').read_bytes()
+            except FileNotFoundError:
+                # Linux briefly removes the old exe link during exec. Keep
+                # waiting for the image, while still refusing process exit.
+                self.assertIsNone(process.poll(),'Official updater process disappeared')
+                image=b''
+            if hashlib.sha256(image).digest()==expected_digest:
                 break
             time.sleep(.05)
         else: self.fail('Official updater did not exec the new binary')

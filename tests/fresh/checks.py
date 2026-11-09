@@ -800,6 +800,9 @@ def native_agh_update():
         with urllib.request.urlopen(req,timeout=120) as response:
             assert response.status==200
             data=response.read()
+        if path=='update':
+            assert data==b'OK\n'
+            return None
         return json.loads(data) if data else None
     version=request('version.json',{'recheck_now':True})
     assert version['new_version']=='v0.107.80' and version['can_autoupdate'] is True
@@ -807,7 +810,11 @@ def native_agh_update():
     request('update',{})
     deadline=time.monotonic()+15
     while time.monotonic()<deadline:
-        if hashlib.sha256(Path('/proc',str(pid),'exe').read_bytes()).digest()==expected80: break
+        try: image=Path('/proc',str(pid),'exe').read_bytes()
+        except FileNotFoundError:
+            assert Path('/proc',str(pid)).exists(),'Native updater process disappeared'
+            image=b''  # The exe link can be absent during the exec transition.
+        if hashlib.sha256(image).digest()==expected80: break
         time.sleep(.05)
     else: raise AssertionError('Native AGH updater did not exec official .80')
     assert int(run('systemctl','show','AdGuardHome','-p','MainPID','--value'))==pid
