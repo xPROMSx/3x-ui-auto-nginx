@@ -2593,10 +2593,10 @@ adguard_admin_probe() {
             -o "$directory/status.json" -w '%{http_code}' \
             "https://${domain}/${AGH_PATH}/control/status") || exit 1
         [[ "$result" == 200 ]] || exit 1
-        python3 - "$directory/status.json" "$AGH_WEB_PORT" "$AGH_DNS_PORT" <<'PY'
+        python3 - "$directory/status.json" "$AGH_WEB_PORT" "$AGH_DNS_PORT" "$AGH_VERSION" <<'PY'
 import json, pathlib, sys
 status = json.loads(pathlib.Path(sys.argv[1]).read_text())
-if not isinstance(status, dict) or status.get('version') != 'v0.107.79' or status.get('running') is not True:
+if not isinstance(status, dict) or status.get('version') != sys.argv[4] or status.get('running') is not True:
     raise ValueError('Invalid authenticated AGH status')
 for key, expected in (('http_port', sys.argv[2]), ('dns_port', sys.argv[3])):
     if type(status.get(key)) is not int or status[key] != int(expected):
@@ -2612,7 +2612,7 @@ adguard_stage() {
     install -o root -g root -m 0600 "$AGH_TEMP/helper" /usr/local/lib/3x-ui-pro/managed-adguard.sh || return 1
     . /usr/local/lib/3x-ui-pro/managed-adguard.sh
     agh_release "$(uname -m)" || return 1
-    apt-get install -y --no-install-recommends apache2-utils || return 1
+    apt-get install -y --no-install-recommends apache2-utils gnupg || return 1
     curl -fsSL --connect-timeout 15 --max-time 180 \
         "https://github.com/AdguardTeam/AdGuardHome/releases/download/${AGH_VERSION}/AdGuardHome_linux_${AGH_ARCH}.tar.gz" \
         -o "$AGH_TEMP/archive" || return 1
@@ -2719,10 +2719,11 @@ EOFAGH
 import json, sys
 file, domain, path, web, dns, arch = sys.argv[1:]
 with open(file, 'w') as out:
-    json.dump(dict(version='v0.107.79', domain=domain, path=path, web_port=int(web), dns_port=int(dns), arch=arch), out)
+    json.dump(dict(version='v0.107.80', updates_enabled=True, domain=domain, path=path, web_port=int(web), dns_port=int(dns), arch=arch), out)
 PY
     [[ $? == 0 ]] || return 1
     chmod 0600 /opt/AdGuardHome/managed.json || return 1
+    agh_install_trust_key || return 1
     agh_install_service || return 1
     agh_snippet > "$AGH_TEMP/candidate" || return 1
     install -o root -g root -m 0600 "$AGH_TEMP/candidate" /etc/nginx/snippets/x-ui-auto-optional/adguard.conf || return 1
@@ -2864,7 +2865,7 @@ show_results() {
     esac
     case "${AGH_RESULT:-not_requested}" in
         installed)
-            msg_ok "$(ui_text ' [✓] AdGuard Home           Running (v0.107.79)' ' [✓] AdGuard Home           Работает (v0.107.79)')"
+            msg_ok "$(ui_text ' [✓] AdGuard Home           Running (v0.107.80)' ' [✓] AdGuard Home           Работает (v0.107.80)')"
             msg_ok "$(ui_text ' [✓] DNS-over-HTTPS         Ready' ' [✓] DNS-over-HTTPS         Готов')" ;;
         failed_rolled_back)
             msg_warn "$(ui_text ' [!] AdGuard Home           Failed — rolled back' ' [!] AdGuard Home           Ошибка — выполнен откат')"
