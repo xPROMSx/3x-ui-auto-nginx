@@ -295,6 +295,8 @@ def fresh_acceptance(ref, group='all'):
         invoke('checks.change_domains()', 'change-domains', 1200, tty=True)
         phase = 'restore-before-domains'
         invoke('checks.restore_before_domains()', 'restore-before-domains', 600, tty=True)
+        phase = 'native-agh-update'
+        invoke('checks.native_agh_update()', 'native-agh-update', 1200, tty=True)
         poweroff()
     if group in ('all','negative'):
         phase = 'mandatory-dependency-negative'

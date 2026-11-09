@@ -241,6 +241,9 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 شناسه‌های طولانی و تصادفی انتخاب کنید. [راهنمای رسمی امنیت AdGuard Home](https://adguard-dns.io/kb/adguard-home/running-securely/) را ببینید.
 
+
+برای نصب‌های قدیمی پشتیبانی‌شده، عملیات جداگانهٔ `--enable-agh-updates` ارائه می‌شود: [راهنما و فرمان نسخهٔ آینده](docs/ADGUARD_UPDATES.md). Installation نصب مجدد است و به‌روزرسانی VPS موجود نیست. نصب جدید با نسخهٔ تأییدشدهٔ v0.107.80 شروع می‌شود؛ تغییرات آیندهٔ upstream ممکن است به بررسی سازگاری نیاز داشته باشند.
+
 </details>
 
 ---

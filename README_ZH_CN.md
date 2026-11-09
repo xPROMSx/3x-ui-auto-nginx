@@ -241,6 +241,9 @@ DoH 地址格式示例：
 
 请使用较长的随机标识符。参见 [AdGuard Home 官方安全建议](https://adguard-dns.io/kb/adguard-home/running-securely/)。
 
+
+受支持的旧安装可使用独立操作 `--enable-agh-updates`：[说明及未来发行版命令](docs/ADGUARD_UPDATES.md)。Installation 会重新安装，而不是更新现有 VPS。全新安装使用已验证的 v0.107.80；未来 upstream 变更可能需要重新审查兼容性。
+
 </details>
 
 ---

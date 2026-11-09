@@ -64,7 +64,7 @@ m = json.loads((root / 'managed.json').read_text())
 if not (m['version'] in ('v0.107.79', 'v0.107.80') and m['arch'] in ('amd64', 'arm64')):
     raise ValueError('Invalid AGH version/architecture')
 enabled = m.get('updates_enabled', False)
-if type(enabled) is not bool or enabled != (m['version'] == 'v0.107.80'):
+if type(enabled) is not bool:
     raise ValueError('Invalid AGH native-update contract')
 if not (re.fullmatch(r'adg-[A-Za-z0-9]{12}', m['path'])):
     raise ValueError('Invalid AGH admin prefix')
@@ -82,17 +82,39 @@ if not (m['web_port'] != m['dns_port']):
 # Read only managed scalar/list fields in the canonical YAML written by AGH.
 # Unrecognized representations fail closed; native --check-config handles YAML.
 s = (root / 'AdGuardHome.yaml').read_text()
+s = '\n'.join(line for line in s.splitlines() if not line.lstrip().startswith('#')) + '\n'
 def section(name):
-    match = re.search(r'^' + name + r':\s*\n((?:[ \t].*\n|\n)*)', s, re.M)
-    if not (match):
+    matches = re.findall(r'^' + name + r':\s*\n((?:[ \t].*\n|\n)*)', s, re.M)
+    if len(matches) != 1:
         raise ValueError('Invalid AGH required YAML section')
-    return match[1]
+    return matches[0]
+def indent(text):
+    widths = [len(m[1]) for m in re.finditer(r'^( +)\S', text, re.M)]
+    return ' ' * min(widths) if widths else ''
+def value(text):
+    # Bounded plain/quoted scalar forms, with optional YAML comments. Do not
+    # interpret comments inside quotes as part of a different managed path.
+    match = re.fullmatch(r"(?:'([^']*)'|\"([^\"\\]*)\"|([^#'\"]*?))(?:\s+#.*)?\s*", text.strip())
+    if match is None:
+        raise ValueError('Unsupported AGH managed scalar representation')
+    return next(part for part in match.groups() if part is not None).strip()
 def scalar(text, key):
-    matches = re.findall(r'^  ' + key + r':\s*(.*?)\s*$', text, re.M)
-    if not (len(matches) == 1):
+    matches = re.findall(r'^' + indent(text) + key + r':\s*(.*?)\s*$', text, re.M)
+    if len(matches) != 1:
         raise ValueError('Invalid AGH unique YAML field')
-    return matches[0].strip('"\'')
-schemas = re.findall(r'^schema_version:\s*([0-9]+)\s*$', s, re.M)
+    return value(matches[0])
+def nested(text, key):
+    lines = text.splitlines(keepends=True)
+    starts = [i for i, line in enumerate(lines) if line.rstrip() == indent(text) + key + ':']
+    if len(starts) != 1:
+        raise ValueError('Invalid AGH required nested section')
+    result = []
+    for line in lines[starts[0]+1:]:
+        if line.strip() and len(line)-len(line.lstrip()) <= len(indent(text)):
+            break
+        result.append(line)
+    return ''.join(result)
+schemas = re.findall(r'^schema_version:\s*([0-9]+)\s*(?:#.*)?$', s, re.M)
 if len(schemas) != 1 or int(schemas[0]) < 34:
     raise ValueError('Invalid AGH schema')
 http, dns, tls = section('http'), section('dns'), section('tls')
@@ -100,16 +122,16 @@ if not (scalar(http, 'address') == '127.0.0.1:' + str(m['web_port'])):
     raise ValueError('Invalid AGH loopback HTTP address')
 if not (scalar(dns, 'port') == str(m['dns_port'])):
     raise ValueError('Invalid AGH DNS port')
-hosts = re.search(r'^  bind_hosts:\s*\n((?:    - .*\n)+)', dns, re.M)
-if not (hosts and [x.strip().strip('"\'') for x in re.findall(r'^    - (.*)$', hosts[1], re.M)] == ['127.0.0.1']):
+hosts = re.findall(r'^' + indent(dns) + r'bind_hosts:\s*\n((?: +- .*\n)+)', dns, re.M)
+if not (len(hosts) == 1 and [value(x) for x in re.findall(r'^ +- (.*)$', hosts[0], re.M)] == ['127.0.0.1']):
     raise ValueError('Invalid AGH loopback DNS bind')
 if not (scalar(tls, 'enabled') == 'false'):
     raise ValueError('Invalid AGH native TLS disabled')
-if not (re.search(r'^    insecure_enabled: true\s*$', http, re.M)):
+if scalar(nested(http, 'doh'), 'insecure_enabled') != 'true':
     raise ValueError('Invalid AGH DoH insecure bridge')
 for part in ('querylog', 'statistics'):
     p = section(part) if re.search(r'^' + part + ':', s, re.M) else ''
-    if p and re.search(r'^  dir_path:', p, re.M):
+    if p and re.search(r'^' + indent(p) + 'dir_path:', p, re.M):
         directory = scalar(p, 'dir_path')
         if not (not directory or pathlib.Path(directory).resolve().is_relative_to(data_root.resolve())):
             raise ValueError('Invalid AGH managed data directory')
@@ -138,21 +160,38 @@ if not (len(lines) == 1):
 args = shlex.split(lines[0].split('=', 1)[1])
 if not (args[0] == root + '/AdGuardHome'):
     raise ValueError('Invalid AGH service executable')
-# Upstream service serializer uses long names and adds -s/--service run.
-def value(short, long):
-    key = long if long in args else short
-    return args[args.index(key) + 1]
-if not (value('-c', '--config') == root + '/AdGuardHome.yaml'):
+# Accept the short/long and --name=value spellings of the same bounded
+# service contract. Reject duplicate or unknown options rather than counting
+# words, which makes harmless serialization changes look like foreign units.
+aliases = {'-c': 'config', '--config': 'config', '-w': 'work', '--work-dir': 'work',
+           '-s': 'service', '--service': 'service', '--no-check-update': 'disabled'}
+options = {}
+tokens = iter(args[1:])
+for token in tokens:
+    key, equals, value = token.partition('=')
+    name = aliases.get(key)
+    if name is None or name in options:
+        raise ValueError('Invalid AGH service option')
+    if name == 'disabled':
+        value = value if equals else 'true'
+        if value not in ('true', 'false'):
+            raise ValueError('Invalid AGH native-update flag')
+    elif not equals:
+        value = next(tokens, None)
+    options[name] = value
+if options.get('config') != root + '/AdGuardHome.yaml':
     raise ValueError('Invalid AGH explicit config file')
-if not (value('-w', '--work-dir') == root):
+if options.get('work') != root:
     raise ValueError('Invalid AGH explicit work directory')
 legacy = updates == 'no'
-if ('--no-check-update' in args) != legacy:
+if (options.get('disabled', 'false') == 'true') != legacy:
     raise ValueError('Invalid AGH native-update flag')
-if not (value('-s', '--service') == 'run'):
+if options.get('service') != 'run':
     raise ValueError('Invalid AGH service run action')
-if len(args) != (8 if legacy else 7):
-    raise ValueError('Invalid AGH ExecStart arguments')
+directories = [shlex.split(line.split('=', 1)[1]) for line in unit.splitlines()
+               if line.startswith('WorkingDirectory=')]
+if directories and directories != [[root]] and directories != [[root + '/']]:
+    raise ValueError('Invalid AGH systemd working directory')
 PY
 }
 
@@ -277,6 +316,24 @@ PY
     result=$?
     rm -rf "$directory"
     return "$result"
+}
+
+agh_dns_probe() {
+    python3 - "$AGH_DNS_PORT" <<'PY'
+import secrets, socket, struct, sys
+ident = secrets.token_bytes(2)
+query = ident + bytes.fromhex('0100000100000000000003777777076578616d706c6503636f6d0000010001')
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+    sock.settimeout(10)
+    sock.connect(('127.0.0.1', int(sys.argv[1])))
+    sock.send(query)
+    response = sock.recv(65535)
+if len(response) < 12 or response[:2] != ident:
+    raise ValueError('Invalid AGH native DNS response')
+_, flags, questions, answers, _, _ = struct.unpack('!6H', response[:12])
+if not (flags & 0x8000 and not flags & 0x020f and questions == 1 and answers > 0):
+    raise ValueError('Invalid AGH native DNS result')
+PY
 }
 
 agh_health() {

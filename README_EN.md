@@ -241,6 +241,9 @@ Once configured, requests without an allowed ClientID, including requests to `/d
 
 Choose long, random identifiers. See the [official AdGuard Home security guidance](https://adguard-dns.io/kb/adguard-home/running-securely/).
 
+
+Supported older installations use the separate `--enable-agh-updates` operation: [instructions and future release command](docs/ADGUARD_UPDATES.md). Installation is a rebuild, not an update of an existing VPS. Fresh installations start with verified v0.107.80; future upstream changes may require compatibility review.
+
 </details>
 
 ---

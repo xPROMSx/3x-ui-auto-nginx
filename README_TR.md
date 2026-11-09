@@ -241,6 +241,9 @@ Yapılandırmadan sonra izin verilen bir ClientID içermeyen sorgular, normal `/
 
 Uzun ve rastgele kimlikler seçin. [Resmî AdGuard Home güvenlik önerilerine](https://adguard-dns.io/kb/adguard-home/running-securely/) bakın.
 
+
+Desteklenen eski kurulumlar için ayrı `--enable-agh-updates` işlemi sunulur: [talimatlar ve gelecek sürüm komutu](docs/ADGUARD_UPDATES.md). Installation yeniden kurulum yapar; mevcut VPS için güncelleme değildir. Yeni kurulum doğrulanmış v0.107.80 ile başlar; gelecekteki upstream değişiklikleri uyumluluk incelemesi gerektirebilir.
+
 </details>
 
 ---

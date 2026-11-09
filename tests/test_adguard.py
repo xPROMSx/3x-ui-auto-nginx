@@ -325,6 +325,61 @@ class AdGuardInstaller(unittest.TestCase):
         (binary.parent/'AdGuardHome.sig').unlink()
         self.assertNotEqual(self.run_shell((), 'source "$HELPER_FIXTURE"; agh_config').returncode, 0)
 
+    def test_legacy_binary_accepts_explicit_native_updates(self):
+        r = self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'), 'install_adguard')
+        self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
+        root = self.root/'opt/AdGuardHome'
+        (root/'AdGuardHome').write_text(BINARY)
+        metadata = json.loads((root/'managed.json').read_text())
+        metadata.update(version='v0.107.79', updates_enabled=True)
+        (root/'managed.json').write_text(json.dumps(metadata))
+        self.helper.write_text(self.helper.read_text().replace(FIXTURE_BINARY_SHA, LEGACY_FIXTURE_BINARY_SHA))
+        r = self.run_shell((), 'source "$HELPER_FIXTURE"; agh_config && agh_unit')
+        self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
+
+    def test_equivalent_service_option_spelling(self):
+        r = self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'), 'install_adguard')
+        self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
+        unit = self.root/'etc/systemd/system/AdGuardHome.service'
+        original = unit.read_text()
+        for text in (original.replace(' -c ', ' --config=').replace(' -w ', ' --work-dir=').replace('-s run', '--service=run'),
+                     original.replace(' -s run', ' --service run')):
+            unit.write_text(text)
+            r = self.run_shell((), 'source "$HELPER_FIXTURE"; agh_config && agh_unit')
+            self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
+
+    def test_cosmetic_yaml_indentation_and_comments(self):
+        r = self.run_shell(('cleanup_adguard','adguard_stage','install_adguard'), 'install_adguard')
+        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+        path=self.root/'opt/AdGuardHome/AdGuardHome.yaml'
+        text=re.sub(r'(?m)^( +)',lambda match:match[0]*2,path.read_text())
+        text=re.sub(r'(?m)^( +address: .*| +port: [0-9]+)$',r'\1 # unchanged endpoint',text)
+        path.write_text(text)
+        r=self.run_shell((), 'source "$HELPER_FIXTURE"; agh_config')
+        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
+
+    def test_enablement_entrypoint_never_falls_through_to_installation(self):
+        source = function('entrypoint')+'''
+enable_agh_updates() { echo enablement; return "${ENABLE_STATUS:-0}"; }
+run_installation() { echo UNEXPECTED_INSTALLATION; return 99; }
+msg_err() { echo "$*" >&2; }
+entrypoint "$@"
+'''
+        for arguments, expected in ((('--enable-agh-updates',),0),
+                                    (('--enable-agh-updates','-install','y'),2),
+                                    (('-install','y','--enable-agh-updates'),2)):
+            result = subprocess.run(['bash','-c',source,'fixture',*arguments],capture_output=True,text=True)
+            self.assertEqual(result.returncode,expected,result.stdout+result.stderr)
+            self.assertNotIn('UNEXPECTED_INSTALLATION',result.stdout)
+        result = subprocess.run(['bash','-c',source,'fixture','--enable-agh-updates'],
+                                env={**os.environ,'ENABLE_STATUS':'7'},capture_output=True,text=True)
+        self.assertEqual(result.returncode,7)
+        self.assertNotIn('UNEXPECTED_INSTALLATION',result.stdout)
+
+    def test_enablement_helper_hashes_match_this_tree(self):
+        for path in ('assets/adguard/managed.sh', 'assets/backup/x-ui-backup.sh'):
+            self.assertIn("'"+hashlib.sha256((ROOT/path).read_bytes()).hexdigest()+"'",INSTALLER)
+
     def test_optional_summary_and_unit_contract(self):
         for choice in ('n','y'):
             r=self.run_shell(('show_results',), ('AGH_RESULT=installed; ' if choice=='y' else 'AGH_RESULT=not_requested; ') + 'AGH_PATH=adg-ABCDEFGHIJKL; AGH_PASSWORD=single-secret; panel_path=panel; config_username=user; config_password=panel-pass; reality_domain=cover.example; ufw() { echo "Status: active"; }; show_results',INSTALL_AGH=choice)
@@ -398,7 +453,7 @@ class AdGuardInstaller(unittest.TestCase):
         yaml.write_text(original_yaml)
         m = json.loads(original_meta)
         for key, value in (('web_port', 443), ('dns_port', 53), ('dns_port', m['web_port']),
-                           ('web_port', '18081'), ('version', 'bad'), ('updates_enabled', False), ('arch', 'bad'),
+                           ('web_port', '18081'), ('version', 'bad'), ('updates_enabled', 'true'), ('arch', 'bad'),
                            ('path', 'bad'), ('domain', 'bad..domain')):
             with self.subTest(key=key, value=value):
                 metadata.write_text(json.dumps({**m, key: value}))

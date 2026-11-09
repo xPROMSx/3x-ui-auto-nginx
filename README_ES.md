@@ -241,6 +241,9 @@ Tras configurarlo, se rechazarán las consultas que no tengan un ClientID permit
 
 Utiliza identificadores largos y aleatorios. Consulta las [recomendaciones oficiales de seguridad de AdGuard Home](https://adguard-dns.io/kb/adguard-home/running-securely/).
 
+
+Las instalaciones anteriores compatibles usan la operación independiente `--enable-agh-updates`: [instrucciones y comando para una futura versión](docs/ADGUARD_UPDATES.md). Installation reinstala el sistema; no actualiza un VPS existente. La instalación nueva comienza con v0.107.80 verificada; los cambios futuros de upstream pueden requerir revisar la compatibilidad.
+
 </details>
 
 ---

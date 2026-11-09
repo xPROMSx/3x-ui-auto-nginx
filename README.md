@@ -257,6 +257,9 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 Используйте длинные случайные идентификаторы. Подробнее — в [официальных рекомендациях AdGuard Home](https://adguard-dns.io/kb/ru/adguard-home/running-securely/).
 
+
+Для поддерживаемых старых установок предусмотрена отдельная команда `--enable-agh-updates`: [инструкция и команда для будущего релиза](docs/ADGUARD_UPDATES.md). Installation не является обновлением существующего VPS. Первичная версия новой установки — проверенная v0.107.80; будущие изменения upstream могут потребовать проверки совместимости.
+
 </details>
 
 ---

@@ -241,6 +241,9 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 اختر معرّفات عشوائية طويلة. راجع [إرشادات AdGuard Home الرسمية للأمان](https://adguard-dns.io/kb/adguard-home/running-securely/).
 
+
+للتثبيتات القديمة المدعومة، استخدم العملية المنفصلة `--enable-agh-updates`: [التعليمات وأمر الإصدار المستقبلي](docs/ADGUARD_UPDATES.md). Installation إعادة تثبيت وليست تحديثًا لخادم VPS قائم. يبدأ التثبيت الجديد بالإصدار المتحقق منه v0.107.80؛ قد تتطلب تغييرات upstream المستقبلية مراجعة التوافق.
+
 </details>
 
 ---
