@@ -225,8 +225,6 @@ Kurulumdan sonra şu adresler kullanılabilir:
 
 Genel TCP/UDP **53** portları açılmaz. AdGuard Home yapılandırması ve verileri **Backup / Restore v3** kapsamındadır.
 
-Yeni kurulumlarda AdGuard Home'un güncelleme denetimi ve web arayüzünden güncelleme özelliği açıktır. İlk sürüm SHA-256 ile doğrulanır; güncellenmiş çalıştırılabilir dosyaların resmi AdGuard imzaları Backup/Restore sırasında kontrol edilir. Mevcut kurulumlar otomatik olarak değiştirilmez.
-
 **⚠️ Güvenlik önerisi**
 
 Kişisel VPS'inizde her cihaz için ayrı bir [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) oluşturun.
@@ -241,8 +239,11 @@ Yapılandırmadan sonra izin verilen bir ClientID içermeyen sorgular, normal `/
 
 Uzun ve rastgele kimlikler seçin. [Resmî AdGuard Home güvenlik önerilerine](https://adguard-dns.io/kb/adguard-home/running-securely/) bakın.
 
+**v2.4.1** sürümünden itibaren yeni kurulumlarda AdGuard Home güncellemelerini doğrudan web arayüzünden kontrol edip yükleyebilirsiniz. AdGuard Home'u bu yükleyicinin önceki bir sürümüyle kurduysanız VPS'nizde tek komutla güncellemeleri etkinleştirin:
 
-Desteklenen eski kurulumlar için ayrı `--enable-agh-updates` işlemi sunulur: [talimatlar ve gelecek sürüm komutu](docs/ADGUARD_UPDATES.md). Installation yeniden kurulum yapar; mevcut VPS için güncelleme değildir. Yeni kurulum doğrulanmış v0.107.80 ile başlar; gelecekteki upstream değişiklikleri uyumluluk incelemesi gerektirebilir.
+```bash
+sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.1; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
+```
 
 </details>
 

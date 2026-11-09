@@ -225,8 +225,6 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 لا يُفتح المنفذ العام **53** عبر TCP أو UDP. تُضمَّن إعدادات AdGuard Home وبياناته في **Backup / Restore v3**.
 
-في التثبيتات الجديدة، يتم تفعيل التحقق من تحديثات AdGuard Home والتحديث عبر واجهته على الويب. يُتحقق من الإصدار الأولي باستخدام SHA-256، وتُفحص التواقيع الرسمية من AdGuard للملفات التنفيذية المحدَّثة أثناء Backup/Restore. لا تُعدَّل التثبيتات الحالية تلقائيًا.
-
 **⚠️ توصية أمنية**
 
 لخادم VPS شخصي، أنشئ [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) مستقلًا لكل جهاز.
@@ -241,8 +239,11 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 اختر معرّفات عشوائية طويلة. راجع [إرشادات AdGuard Home الرسمية للأمان](https://adguard-dns.io/kb/adguard-home/running-securely/).
 
+بدءًا من **v2.4.1**، يمكنك في التثبيتات الجديدة التحقق من تحديثات AdGuard Home وتثبيتها مباشرةً من واجهته على الويب. إذا ثبّتَّ AdGuard Home بإصدار أقدم من هذا المثبّت، فعِّل التحديثات بأمر واحد على خادم VPS:
 
-للتثبيتات القديمة المدعومة، استخدم العملية المنفصلة `--enable-agh-updates`: [التعليمات وأمر الإصدار المستقبلي](docs/ADGUARD_UPDATES.md). Installation إعادة تثبيت وليست تحديثًا لخادم VPS قائم. يبدأ التثبيت الجديد بالإصدار المتحقق منه v0.107.80؛ قد تتطلب تغييرات upstream المستقبلية مراجعة التوافق.
+```bash
+sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.1; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
+```
 
 </details>
 

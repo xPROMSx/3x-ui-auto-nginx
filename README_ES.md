@@ -225,8 +225,6 @@ Después de instalarlo, estarán disponibles:
 
 No se abren los puertos públicos TCP/UDP **53**. La configuración y los datos de AdGuard Home se incluyen en **Backup / Restore v3**.
 
-En las instalaciones nuevas, se habilitan la comprobación de actualizaciones y las actualizaciones desde la interfaz web de AdGuard Home. La versión inicial se verifica mediante SHA-256; durante Backup/Restore, los ejecutables actualizados se verifican con la firma oficial de AdGuard. Las instalaciones existentes no se modifican automáticamente.
-
 **⚠️ Recomendación de seguridad**
 
 Para un VPS personal, crea un [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) para cada dispositivo.
@@ -241,8 +239,11 @@ Tras configurarlo, se rechazarán las consultas que no tengan un ClientID permit
 
 Utiliza identificadores largos y aleatorios. Consulta las [recomendaciones oficiales de seguridad de AdGuard Home](https://adguard-dns.io/kb/adguard-home/running-securely/).
 
+Desde **v2.4.1**, las instalaciones nuevas permiten buscar e instalar actualizaciones de AdGuard Home desde su interfaz web. Si instalaste AdGuard Home con una versión anterior de este instalador, habilita las actualizaciones con un solo comando en tu VPS:
 
-Las instalaciones anteriores compatibles usan la operación independiente `--enable-agh-updates`: [instrucciones y comando para una futura versión](docs/ADGUARD_UPDATES.md). Installation reinstala el sistema; no actualiza un VPS existente. La instalación nueva comienza con v0.107.80 verificada; los cambios futuros de upstream pueden requerir revisar la compatibilidad.
+```bash
+sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.1; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
+```
 
 </details>
 

@@ -225,8 +225,6 @@ After installation, the following are available:
 
 Public TCP/UDP port **53** is not opened. The AdGuard Home configuration and data are included in **Backup / Restore v3**.
 
-New installations enable AdGuard Home's built-in update checks and web-interface updates. The initial release is SHA-256 pinned, while Backup/Restore verifies vendor signatures of updated executables. Existing installations are not changed automatically.
-
 **⚠️ Security recommendation**
 
 For a personal VPS, create a separate [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) for each device.
@@ -241,8 +239,11 @@ Once configured, requests without an allowed ClientID, including requests to `/d
 
 Choose long, random identifiers. See the [official AdGuard Home security guidance](https://adguard-dns.io/kb/adguard-home/running-securely/).
 
+Starting with **v2.4.1**, new installations let you check for and install AdGuard Home updates directly from its web interface. If you installed AdGuard Home with an earlier version of this installer, enable updates with one command on your VPS:
 
-Supported older installations use the separate `--enable-agh-updates` operation: [instructions and future release command](docs/ADGUARD_UPDATES.md). Installation is a rebuild, not an update of an existing VPS. Fresh installations start with verified v0.107.80; future upstream changes may require compatibility review.
+```bash
+sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.1; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
+```
 
 </details>
 

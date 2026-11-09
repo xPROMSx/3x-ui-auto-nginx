@@ -225,8 +225,6 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 不会向公网开放 TCP/UDP **53** 端口。AdGuard Home 的配置和数据将纳入 **Backup / Restore v3**。
 
-新安装默认启用 AdGuard Home 内置更新检查和网页界面更新。初始版本通过 SHA-256 校验；在 Backup/Restore 时，更新后的可执行文件通过 AdGuard 官方签名验证。现有安装不会自动修改。
-
 **⚠️ 安全建议**
 
 个人 VPS 建议为每台设备创建独立的 [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid)。
@@ -241,8 +239,11 @@ DoH 地址格式示例：
 
 请使用较长的随机标识符。参见 [AdGuard Home 官方安全建议](https://adguard-dns.io/kb/adguard-home/running-securely/)。
 
+从 **v2.4.1** 开始，全新安装的 AdGuard Home 可直接在网页界面中检查并安装更新。如果你使用本安装脚本的旧版本安装了 AdGuard Home，可以在 VPS 上运行一条命令来启用更新：
 
-受支持的旧安装可使用独立操作 `--enable-agh-updates`：[说明及未来发行版命令](docs/ADGUARD_UPDATES.md)。Installation 会重新安装，而不是更新现有 VPS。全新安装使用已验证的 v0.107.80；未来 upstream 变更可能需要重新审查兼容性。
+```bash
+sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.1; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
+```
 
 </details>
 

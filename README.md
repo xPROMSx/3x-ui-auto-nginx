@@ -241,8 +241,6 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 Публичные TCP/UDP-порты **53** не открываются. Конфигурация и данные AdGuard Home сохраняются в **Backup / Restore v3**.
 
-На новых установках штатная проверка обновлений AdGuard Home и обновление через его веб-интерфейс включены. Начальная версия проверяется по SHA-256, а обновлённые исполняемые файлы при Backup/Restore проверяются по официальной подписи AdGuard. Существующие установки автоматически не изменяются.
-
 **⚠️ Рекомендация по безопасности**
 
 Для личного VPS рекомендуется использовать отдельный [ClientID](https://adguard-dns.io/kb/ru/adguard-home/clients/#clientid) для каждого устройства.
@@ -257,8 +255,11 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 Используйте длинные случайные идентификаторы. Подробнее — в [официальных рекомендациях AdGuard Home](https://adguard-dns.io/kb/ru/adguard-home/running-securely/).
 
+Начиная с **v2.4.1**, на новых установках проверка и установка обновлений AdGuard Home доступны прямо в его веб-интерфейсе. Если AdGuard Home установлен нашим скриптом до **v2.4.1**, включите эту возможность одной командой на VPS:
 
-Для поддерживаемых старых установок предусмотрена отдельная команда `--enable-agh-updates`: [инструкция и команда для будущего релиза](docs/ADGUARD_UPDATES.md). Installation не является обновлением существующего VPS. Первичная версия новой установки — проверенная v0.107.80; будущие изменения upstream могут потребовать проверки совместимости.
+```bash
+sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.1; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
+```
 
 </details>
 
