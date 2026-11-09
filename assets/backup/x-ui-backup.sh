@@ -368,9 +368,14 @@ try:
                         state['active'] not in ('active', 'inactive', 'failed') or type(state['enabled']) is not bool):
                         fail('Invalid service-state metadata: expected active/inactive/failed and boolean enabled')
             if meta['adguard_home']:
-                if meta.get('adguard_version') != 'v0.107.79' or meta.get('adguard_arch') not in ('amd64', 'arm64') or meta['adguard_arch'] != meta.get('arch'):
+                version = meta.get('adguard_version')
+                if (not isinstance(version, str) or not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', version) or
+                        tuple(map(int, version[1:].split('.'))) < (0, 107, 79) or
+                        meta.get('adguard_arch') not in ('amd64', 'arm64') or meta['adguard_arch'] != meta.get('arch')):
                     fail('Invalid AdGuard Home release metadata')
                 required += ['files/' + p for p in (agh_tree, agh_tree + '/AdGuardHome', agh_tree + '/AdGuardHome.yaml', agh_tree + '/managed.json', agh_helper, agh_snippet)]
+                if version != 'v0.107.79':
+                    required += ['files/' + agh_tree + '/AdGuardHome.sig', 'files/' + agh_tree + '/AdGuardHome-public.gpg']
         members = {}
         for member in tar:
             name = clean(member.name)
@@ -505,15 +510,15 @@ write_metadata() {
         xray_version=$("$xray" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) || xray_version=unknown
         break
     done
-    python3 - "$STAGING/meta.json" "$OS_ID" "$OS_VERSION" "$ARCH" "$xui_version" "$xray_version" "$source_ip" "$ADGUARD_HOME" "$AGH_ARCH" "$BACKUP_SERVICE_STATES" <<'PY'
+    python3 - "$STAGING/meta.json" "$OS_ID" "$OS_VERSION" "$ARCH" "$xui_version" "$xray_version" "$source_ip" "$ADGUARD_HOME" "$AGH_ARCH" "$BACKUP_SERVICE_STATES" "${AGH_RUNNING_VERSION:-v0.107.79}" <<'PY'
 import datetime, json, socket, sys
-path, os_id, os_version, arch, x_ui, xray, ipv4, agh, agh_arch, services = sys.argv[1:]
+path, os_id, os_version, arch, x_ui, xray, ipv4, agh, agh_arch, services, agh_version = sys.argv[1:]
 with open(path, 'w') as out:
     json.dump(dict(format_version=3, created=datetime.datetime.now(datetime.timezone.utc).isoformat(),
                    hostname=socket.gethostname(), os_id=os_id, os_version=os_version, arch=arch,
                    x_ui_version=x_ui, xray_version=xray, source_ipv4=ipv4, adguard_home=(agh == "true"),
                    service_states=json.loads(services),
-                   **(dict(adguard_version="v0.107.79", adguard_arch=agh_arch) if agh == "true" else {})), out, indent=2)
+                   **(dict(adguard_version=agh_version, adguard_arch=agh_arch) if agh == "true" else {})), out, indent=2)
     out.write('\n')
 PY
 }
@@ -1659,17 +1664,35 @@ agh_binary_hash() {
     esac
 }
 
+agh_trusted_key() {
+    local key="$AGH_DIR/AdGuardHome-public.gpg" fingerprint
+    [[ -f "$key" && ! -L "$key" ]] || return 1
+    fingerprint=$(gpg --batch --no-default-keyring --keyring "$key" --with-colons --fingerprint 2>/dev/null |
+        awk -F: '$1 == "pub" { count++ } $1 == "fpr" && !seen++ { value=$10 } END { if (count == 1) print value }') || return 1
+    [[ "$fingerprint" == "28645AC9776EC4C00BCE2AFC0FE641E7235E2EC6" ]]
+}
+
 agh_verify_binary() {
     local expected actual
     [[ -f "$AGH_DIR/AdGuardHome" && ! -L "$AGH_DIR/AdGuardHome" && -x "$AGH_DIR/AdGuardHome" ]] || return 1
     expected=$(agh_binary_hash "$1") || return 1
     actual=$(sha256sum "$AGH_DIR/AdGuardHome") || return 1
-    [[ "${actual%% *}" == "$expected" ]]
+    [[ "${actual%% *}" != "$expected" ]] || return 0
+    [[ -f "$AGH_DIR/AdGuardHome.sig" && ! -L "$AGH_DIR/AdGuardHome.sig" ]] || return 1
+    agh_trusted_key &&
+        gpgv --keyring "$AGH_DIR/AdGuardHome-public.gpg" \
+            "$AGH_DIR/AdGuardHome.sig" "$AGH_DIR/AdGuardHome" >/dev/null 2>&1
 }
 
 agh_binary() {
+    local version major minor patch baseline=79
     agh_verify_binary "${AGH_ARCH:-$(uname -m)}" || return 1
-    [[ "$("$AGH_DIR/AdGuardHome" --version)" == "AdGuard Home, version $AGH_VERSION" ]]
+    version=$("$AGH_DIR/AdGuardHome" --version) || return 1
+    [[ "$version" =~ ^AdGuard\ Home,\ version\ v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 1
+    major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]}
+    [[ "${AGH_INITIAL_VERSION:-}" != v0.107.80 ]] || baseline=80
+    (( major > 0 || minor > 107 || (minor == 107 && patch >= baseline) )) || return 1
+    AGH_RUNNING_VERSION="v${major}.${minor}.${patch}"
 }
 
 agh_config() {
@@ -1681,8 +1704,11 @@ import json, pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
 data_root = pathlib.Path(sys.argv[2])
 m = json.loads((root / 'managed.json').read_text())
-if not (m['version'] == 'v0.107.79' and m['arch'] in ('amd64', 'arm64')):
+if not (m['version'] in ('v0.107.79', 'v0.107.80') and m['arch'] in ('amd64', 'arm64')):
     raise ValueError('Invalid AGH version/architecture')
+enabled = m.get('updates_enabled', False)
+if type(enabled) is not bool or enabled != (m['version'] == 'v0.107.80'):
+    raise ValueError('Invalid AGH native-update contract')
 if not (re.fullmatch(r'adg-[A-Za-z0-9]{12}', m['path'])):
     raise ValueError('Invalid AGH admin prefix')
 domain = m['domain']
@@ -1709,8 +1735,9 @@ def scalar(text, key):
     if not (len(matches) == 1):
         raise ValueError('Invalid AGH unique YAML field')
     return matches[0].strip('"\'')
-if not (re.search(r'^schema_version: 34\s*$', s, re.M)):
-    raise ValueError('Invalid AGH schema 34')
+schemas = re.findall(r'^schema_version:\s*([0-9]+)\s*$', s, re.M)
+if len(schemas) != 1 or int(schemas[0]) < 34:
+    raise ValueError('Invalid AGH schema')
 http, dns, tls = section('http'), section('dns'), section('tls')
 if not (scalar(http, 'address') == '127.0.0.1:' + str(m['web_port'])):
     raise ValueError('Invalid AGH loopback HTTP address')
@@ -1729,14 +1756,16 @@ for part in ('querylog', 'statistics'):
         directory = scalar(p, 'dir_path')
         if not (not directory or pathlib.Path(directory).resolve().is_relative_to(data_root.resolve())):
             raise ValueError('Invalid AGH managed data directory')
-for k in ('web_port', 'dns_port', 'path', 'domain', 'arch'):
+for k in ('web_port', 'dns_port', 'path', 'domain', 'arch', 'version'):
     print(m[k])
+print('yes' if enabled else 'no')
 PY
     ) || return 1
     local -a fields
     mapfile -t fields <<< "$values"
     AGH_WEB_PORT=${fields[0]} AGH_DNS_PORT=${fields[1]} AGH_PATH=${fields[2]} AGH_DOMAIN=${fields[3]} AGH_ARCH=${fields[4]}
-    agh_binary && "$AGH_DIR/AdGuardHome" -c "$AGH_DIR/AdGuardHome.yaml" -w "$AGH_DIR" --no-check-update --check-config
+    AGH_INITIAL_VERSION=${fields[5]} AGH_UPDATES_ENABLED=${fields[6]}
+    agh_binary && "$AGH_DIR/AdGuardHome" -c "$AGH_DIR/AdGuardHome.yaml" -w "$AGH_DIR" --check-config
 }
 
 agh_snippet() {
@@ -1791,13 +1820,14 @@ EOFNG
 }
 
 preflight_staged_adguard() (
-    local AGH_VERSION=v0.107.79 AGH_DIR="$STAGING/files/opt/AdGuardHome"
+    local AGH_VERSION=v0.107.80 AGH_DIR="$STAGING/files/opt/AdGuardHome"
     local AGH_DATA_ROOT=/opt/AdGuardHome
     local snippet="$STAGING/files/etc/nginx/snippets/x-ui-auto-optional/adguard.conf"
     # Authenticate using trusted host-architecture hashes before ANY staged execution.
     agh_verify_binary "$ARCH" ||
         die 'Staged AdGuard Home executable SHA256 mismatch; target state was not changed.'
-    agh_config && [[ "$AGH_ARCH" == "$ARCH" ]] ||
+    agh_config && [[ "$AGH_ARCH" == "$ARCH" ]] &&
+        [[ "$AGH_RUNNING_VERSION" == "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["adguard_version"])' "$STAGING/meta.json")" ]] ||
         die 'Staged AdGuard Home configuration/binary contract is invalid; target state was not changed.'
     [[ -f "$snippet" && ! -L "$snippet" ]] &&
         { cmp -s "$snippet" <(agh_snippet) || cmp -s "$snippet" <(agh_snippet legacy); } ||
@@ -2267,7 +2297,9 @@ restore_service_states() {
 }
 
 prepare_stopped_adguard_service() {
-    # v0.107.79 -s install also starts AGH. Render its systemd contract without that side effect.
+    # Official -s install starts AGH; preserve a stopped archived service.
+    local update_flag=''
+    [[ "${AGH_UPDATES_ENABLED:-no}" == yes ]] || update_flag=" --no-check-update"
     install -o root -g root -m 0644 /dev/stdin /etc/systemd/system/AdGuardHome.service <<EOF || return 1
 [Unit]
 Description=AdGuard Home: Network-level blocker
@@ -2276,7 +2308,7 @@ After=syslog.target network-online.target
 [Service]
 StartLimitInterval=5
 StartLimitBurst=10
-ExecStart=${AGH_DIR}/AdGuardHome -c ${AGH_DIR}/AdGuardHome.yaml -w ${AGH_DIR} --no-check-update -s run
+ExecStart=${AGH_DIR}/AdGuardHome -c ${AGH_DIR}/AdGuardHome.yaml -w ${AGH_DIR}${update_flag} -s run
 WorkingDirectory=${AGH_DIR}
 StandardOutput=journal
 StandardError=journal
@@ -2449,6 +2481,7 @@ cmd_restore() {
     ADGUARD_HOME=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["adguard_home"]).lower())' "$STAGING/meta.json")
     load_restored_services
     if [[ "$ADGUARD_HOME" == true ]]; then
+        command -v gpg >/dev/null && command -v gpgv >/dev/null || install_missing_packages gnupg
         preflight_staged_adguard
     fi
     preflight_staged_core
