@@ -609,7 +609,7 @@ def manager_backup():
             'AGH_upstreams_and_nonempty_rewrite_preserved':True}
 
 
-def change_domains(single=False):
+def change_domains(single=False, panel_target='panel-next.example.test'):
     """Same installed VM: actual menu, Backup, Pebble, SQL and real consumers."""
     import hashlib, pty, select
     env={**os.environ,**json.loads((ROOT/'environment.json').read_text()),'TERM':'dumb','NO_COLOR':'1'}
@@ -633,8 +633,8 @@ def change_domains(single=False):
     panel,reality='panel.example.test','reality.example.test'
     core_enable(False)
     before=database()
-    operations = (('1','panel-next.example.test',reality),
-                  ('2','panel-next.example.test','reality-next.example.test'),
+    operations = (('1',panel_target,reality),
+                  ('2',panel_target,'reality-next.example.test'),
                   ('3','panel-final.example.test','reality-final.example.test'))
     for choice,new_panel,new_reality in (operations[:1] if single else operations):
         marker=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text());roles=marker['inbound_roles']
@@ -770,7 +770,10 @@ def native_agh_update():
     run('systemctl','daemon-reload');run('systemctl','start','AdGuardHome');installed()
     user_state=adguard_state()
     # A genuine old-helper Backup/Restore and Change Domains precede enablement.
-    change_domains(single=True)
+    # Restore preserves later certificates as foreign state but restores the
+    # old ownership manifest. Each independent scenario needs a fresh target;
+    # do not bypass the production refusal of an unowned existing lineage.
+    change_domains(single=True,panel_target='panel-legacy.example.test')
     historical_archive=Path((ROOT/'before-domains-archive').read_text())
     historical_digest=digest(historical_archive)
     restore_before_domains()
@@ -781,7 +784,7 @@ def native_agh_update():
         assert json.loads(metadata.read_text())['updates_enabled'] is True
         assert '--no-check-update' not in unit.read_text()
         assert adguard_state()==user_state
-    change_domains(single=True);restore_before_domains()
+    change_domains(single=True,panel_target='panel-enabled.example.test');restore_before_domains()
     # Restore an archive created before enablement with the current trusted tool.
     private_command('restore-historical',['bash','-c','source "$1"; backup_action restore','fixture',str(ROOT/'x-ui-latest.sh')],
                     input=(str(historical_archive)+'\nn\nn\nYES\n').encode(),timeout=480)
@@ -836,7 +839,7 @@ def native_agh_update():
     (negative/'AdGuardHome.sig').write_bytes(signature)
     with (negative/'AdGuardHome').open('ab') as binary: binary.write(b'altered')
     assert verify_negative()!=0,'Altered real executable was accepted'
-    change_domains(single=True);restore_before_domains()
+    change_domains(single=True,panel_target='panel-updated.example.test');restore_before_domains()
     assert json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',
         (ROOT/'before-domains-archive').read_text()))['adguard_version']=='v0.107.80'
     assert {path:digest(path) for path in protected}==unchanged

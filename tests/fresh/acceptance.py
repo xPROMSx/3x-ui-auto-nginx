@@ -114,7 +114,7 @@ def invoke(expression, result_name, timeout=180, tty=False):
         report[phase+'_dns_probes'] = probes
     if result.returncode:
         failure_location(result.stdout+result.stderr)
-        if phase == 'change-domains':
+        if phase in ('change-domains', 'native-agh-update'):
             private = ssh('cat /root/pilot/domains-[123].private.log', 15)
             if private.returncode == 0:
                 failure = domain_failure(private.stdout.decode(errors='replace'), (REPO/'assets/domains/managed.py').read_text())
