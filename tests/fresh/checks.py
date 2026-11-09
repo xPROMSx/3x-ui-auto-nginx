@@ -853,8 +853,10 @@ def native_agh_update():
     with (negative/'AdGuardHome').open('ab') as binary: binary.write(b'altered')
     assert verify_negative()!=0,'Altered real executable was accepted'
     change_domains(single=True,panel_target='panel-updated.example.test');restore_before_domains()
-    assert json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',
-        (ROOT/'before-domains-archive').read_text()))['adguard_version']=='v0.107.80'
+    updated_archive=Path((ROOT/'before-domains-archive').read_text())
+    assert json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',str(updated_archive)))['adguard_home'] is True
+    with tarfile.open(updated_archive) as saved:
+        assert json.load(saved.extractfile('meta.json'))['adguard_version']=='v0.107.80'
     assert {path:digest(path) for path in protected}==unchanged
     return dict(historical_79_Backup_Restore_Change_Domains=True,enablement_idempotent_and_binary_unchanged=True,
                 stopped_service_and_autostart_preserved=True,
