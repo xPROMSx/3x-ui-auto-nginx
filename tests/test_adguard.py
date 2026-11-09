@@ -98,7 +98,7 @@ ss() {
     echo "tcp LISTEN 0 128 ${LISTEN_WEB:-127.0.0.1}:${AGH_WEB_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=5))"
     echo "${DNS_PROTOCOL:-udp} UNCONN 0 0 ${LISTEN_DNS:-127.0.0.1}:${AGH_DNS_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=6))"
     if [[ -n "${EXTRA_AGH_UDP:-}" ]]; then
-    echo "udp UNCONN 0 0 ${EXTRA_AGH_UDP} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=51))"
+        echo "udp UNCONN 0 0 ${EXTRA_AGH_UDP} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=51))"
     fi
 }
 curl() {
