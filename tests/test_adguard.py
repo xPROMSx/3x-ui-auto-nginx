@@ -163,13 +163,13 @@ elif [[ "$*" == *--check-config* ]]; then
 elif [[ "$*" == *'-s install'* ]]; then
     [[ "${FAIL:-}" != service ]] || exit 1
     mkdir -p "$ROOT/etc/systemd/system"
-    printf 'ExecStart=%s/opt/AdGuardHome/AdGuardHome -c %s/opt/AdGuardHome/AdGuardHome.yaml -w %s/opt/AdGuardHome -s run\\n' "$ROOT" "$ROOT" "$ROOT" > "$ROOT/etc/systemd/system/AdGuardHome.service"
+    printf 'ExecStart=%s/opt/AdGuardHome/AdGuardHome -c %s/opt/AdGuardHome/AdGuardHome.yaml -w %s/opt/AdGuardHome -s run --no-check-update\\n' "$ROOT" "$ROOT" "$ROOT" > "$ROOT/etc/systemd/system/AdGuardHome.service"
     touch "$ROOT/active"
 else exit 1; fi
 '''
 
 
-INSTALL_BINARY = BINARY.replace('v0.107.79', 'v0.107.80')
+INSTALL_BINARY = BINARY.replace('v0.107.79', 'v0.107.80').replace(' -s run --no-check-update', ' -s run')
 FIXTURE_BINARY_SHA = hashlib.sha256(INSTALL_BINARY.encode()).hexdigest()
 LEGACY_FIXTURE_BINARY_SHA = hashlib.sha256(BINARY.encode()).hexdigest()
 
