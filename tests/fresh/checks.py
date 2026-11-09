@@ -798,6 +798,8 @@ def native_agh_update():
     assert digest(historical_archive)==historical_digest
     assert json.loads(metadata.read_text()).get('updates_enabled',False) is False
     assert '--no-check-update' in unit.read_text() and adguard_state()==user_state
+    restored_core_flags=core_flags()
+    assert restored_core_flags==dict(reality=False,hysteria2=False,xhttp=False)
     private_command('enable-after-restore',['bash',str(ROOT/'x-ui-latest.sh'),'--enable-agh-updates'])
     # The actual API is reached only through the managed nginx admin prefix.
     state=json.loads(metadata.read_text())
@@ -830,7 +832,11 @@ def native_agh_update():
     assert int(run('systemctl','show','AdGuardHome','-p','MainPID','--value'))==pid
     private_command('signed-updated-health',['bash','-c',
         'source /usr/local/lib/3x-ui-pro/managed-adguard.sh; agh_config && agh_unit && agh_health && agh_dns_probe'])
-    installed()
+    # This archive deliberately contains disabled core inbounds. AGH's signed
+    # health gate above checks its real listeners/DNS/DoH; preserve Disable
+    # here. The final Restore consumer phase explicitly enables core roles and
+    # performs the unchanged strict installed() check.
+    assert core_flags()==restored_core_flags
     assert request('status')['version']=='v0.107.80' and adguard_state()==user_state
     negative=directory/'signed-negative';negative.mkdir(mode=0o700)
     for name in ('AdGuardHome','AdGuardHome.sig','AdGuardHome-public.gpg'):
