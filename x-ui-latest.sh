@@ -1966,7 +1966,7 @@ install_backup_tool() {
            $(stat -c '%u:%g:%a' /usr/local/bin/x-ui-backup) == 0:0:755 ]] || return 1
     fi
     temporary=$(mktemp /usr/local/bin/.x-ui-backup.XXXXXX) || return 1
-    if ! curl -fsSL "${GITHUB_RAW}/assets/backup/x-ui-backup.sh" -o "$temporary"; then
+    if ! curl -q -fsSL --connect-timeout 10 --max-time 45 "${GITHUB_RAW}/assets/backup/x-ui-backup.sh" -o "$temporary"; then
         rm -f "$temporary"
         [[ ${1:-} == optional ]] || msg_err "$(ui_text 'Failed to download a valid backup tool.' 'Не удалось загрузить корректную утилиту Backup.')"
         return 69
