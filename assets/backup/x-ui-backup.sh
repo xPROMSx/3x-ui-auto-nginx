@@ -567,6 +567,8 @@ def read(path):
     except OSError as error:
         sys.exit(f'[FAIL] Cannot read {live(path)} in private staging: {error.strerror}')
 def remove(path):
+    if not path.parent.resolve().is_relative_to(root.resolve()):
+        sys.exit(f'[FAIL] Cannot remove {live(path)}: staged parent is a symlink outside private staging. Live state was not changed.')
     try:
         if path.is_dir() and not path.is_symlink(): shutil.rmtree(path)
         elif os.path.lexists(path): path.unlink()
@@ -595,8 +597,13 @@ if not host:
 else:
     hooks = [certs/'renewal-hooks/deploy'/name for name in ('3x-ui-auto-nginx', '3x-ui-auto-nginx-vision')]
     word = re.compile(r'(?<![A-Za-z0-9_.-])' + re.escape(host) + r'(?![A-Za-z0-9_.-])')
-    if os.path.lexists(staged(panelcert)/host) or any(hook.is_file() and word.search(read(hook)) for hook in hooks):
-        print(f'[WARN] TWPM domain {host} is also used by this project; its Certbot lineage stays in the archive.', file=sys.stderr)
+    def mentions(path):
+        try: return word.search(path.read_text(errors='replace'))
+        except OSError: return False
+    others = (pathlib.Path(base)/name for base, _, names in os.walk(ng) for name in names)
+    if (os.path.lexists(staged(panelcert)/host) or any(hook.is_file() and word.search(read(hook)) for hook in hooks) or
+            any(p.is_file() and not p.is_symlink() and p not in files and mentions(p) for p in others)):
+        print(f'[WARN] TWPM domain {host} is also used outside TWPM; its Certbot lineage stays in the archive.', file=sys.stderr)
     else:
         lineage = (certs/'renewal'/(host + '.conf'), certs/'live'/host, certs/'archive'/host)
 removed = [path for path in (*files, *lineage) if remove(path)]

@@ -557,25 +557,44 @@ class PersonalBackup(unittest.TestCase):
         self.assertEqual(archive.read_bytes(),original)
 
     def test_twpm_domain_shared_with_project_keeps_lineage(self):
-        for shared in ('panel-cert','project-hook'):
+        for shared in ('panel-cert','project-hook','other-vhost'):
             with self.subTest(shared=shared):
                 f=PersonalBackup('runTest'); f.setUp()
                 try:
                     f.seed_telemt(True, modern=True)
                     if shared == 'panel-cert':
                         f.write('/root/cert/telegram.example.com/README','project certificate link directory\n')
+                    elif shared == 'other-vhost':
+                        f.write('/etc/nginx/conf.d/administrator.conf','server { server_name telegram.example.com; }\n')
                     else:
                         hook=f.path('/etc/letsencrypt/renewal-hooks/deploy/3x-ui-auto-nginx')
                         hook.write_text(hook.read_text()+'# telegram.example.com\n')
                     result=f.run_tool('backup')
                     self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-                    self.assertIn('TWPM domain telegram.example.com is also used by this project',result.stderr)
+                    self.assertIn('[WARN] TWPM domain telegram.example.com is also used outside TWPM; its Certbot lineage stays in the archive.',result.stderr)
                     with tarfile.open(next(f.path('/var/backups/x-ui').glob('*.tar.gz'))) as bundle:
                         names=bundle.getnames()
                     self.assertFalse(any('telemt-web-manager' in name for name in names))
                     for path in ('/etc/letsencrypt/renewal/telegram.example.com.conf','/etc/letsencrypt/live/telegram.example.com',
                                  '/etc/letsencrypt/archive/telegram.example.com/fullchain1.pem'):
                         self.assertIn(f.member(path),names)
+                finally: f.doCleanups()
+
+    def test_twpm_staged_symlink_parent_never_removes_live_files(self):
+        for linked in ('/etc/nginx/conf.d','/etc/letsencrypt'):
+            with self.subTest(linked=linked):
+                f=PersonalBackup('runTest'); f.setUp()
+                try:
+                    f.seed_telemt(True, modern=True)
+                    live=f.path(linked); outside=f.root/'outside'/live.name
+                    outside.parent.mkdir(); shutil.move(live,outside); live.symlink_to(outside)
+                    tree=lambda: {p:(os.readlink(p) if p.is_symlink() else p.read_bytes()) for p in outside.rglob('*') if p.is_file() or p.is_symlink()}
+                    before=tree()
+                    result=f.run_tool('backup')
+                    self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
+                    self.assertIn('Cannot remove',result.stderr)
+                    self.assertIn('staged parent is a symlink outside private staging. Live state was not changed.',result.stderr)
+                    self.assertTrue(before==tree(),'Backup removed live files through a staged symlink')
                 finally: f.doCleanups()
 
     def test_restore_preserves_old_and_new_reality_proxy_contracts(self):
