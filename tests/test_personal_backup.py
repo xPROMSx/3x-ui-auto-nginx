@@ -685,7 +685,7 @@ class PersonalBackup(unittest.TestCase):
                         marker.write_text(json.dumps(state))
                     else:
                         f.write('/etc/nginx/conf.d/foreign.conf',
-                                'server { listen 11080; location / { proxy_pass http://127.0.0.1:18082; } }\\n')
+                                'server { listen 11080; location / { proxy_pass http://127.0.0.1:18082; } }\n')
                     original=f.telemt_live_state()
                     result=f.run_tool('backup')
                     self.assertNotEqual(result.returncode, 0, result.stdout+result.stderr)
