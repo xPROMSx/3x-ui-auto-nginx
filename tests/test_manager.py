@@ -847,7 +847,7 @@ manager_menu
         old.write_bytes(candidate.read_bytes()+b'\n# older compatible helper\n')
         old.chmod(0o755)
         self.assertNotEqual(old.read_bytes(),candidate.read_bytes())
-        setup=('msg_err() { echo "$*" >&2; }; msg_warn() { echo "$*" >&2; }; '
+        setup=('ui_text() { printf "%s" "$1"; }; msg_err() { echo "$*" >&2; }; msg_warn() { echo "$*" >&2; }; '
                'pin_project_source() { PROJECT_SOURCE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; '
                'PROJECT_REF=$PROJECT_SOURCE_SHA; GITHUB_RAW=https://source.invalid/$PROJECT_SOURCE_SHA; }; '
                'curl() { command cp "$SOURCE_HELPER" "${@: -1}"; };')
@@ -867,7 +867,7 @@ manager_menu
         old.write_text('#!/bin/bash\nexit 0\n');old.chmod(0o755);original=old.read_bytes()
         # Candidate is the actual relocated utility, not a mocked capability string.
         candidate=self.f.script
-        setup='msg_err() { echo "$*" >&2; }; msg_warn() { echo "$*" >&2; }; pin_project_source() { GITHUB_RAW=https://source.invalid/exact; };\n'
+        setup='ui_text() { printf "%s" "$1"; }; msg_err() { echo "$*" >&2; }; msg_warn() { echo "$*" >&2; }; pin_project_source() { GITHUB_RAW=https://source.invalid/exact; };\n'
         def invoke(extra):
             return subprocess.run(['bash','-c',lock+'\n'+helpers+'\n'+setup+extra+'\nprepare_backup_helper'],capture_output=True,text=True)
         failed=invoke('curl() { return 22; };')
