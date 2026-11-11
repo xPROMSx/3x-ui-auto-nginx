@@ -201,14 +201,12 @@ Promote upstream only in a separate reviewed PR: independently confirm all offic
 Fresh installation pins official v0.107.80 and enables native web updates.
 `--enable-agh-updates` is a separate maintenance entry point for recognized
 historical v0.107.79 installations; Installation remains a destructive rebuild.
-The migration refuses implicit `main`, pins both helper hashes from one exact
-release source, preserves the installed binary/configuration and service state,
+The migration refuses implicit `main`, takes both helpers from one exact
+release source (the fixed PROJECT_REF), preserves the installed binary/configuration and service state,
 and uses the shared operation lock. See [the AGH update contract and future
 release command](docs/ADGUARD_UPDATES.md).
 
-When changing either `assets/adguard/managed.sh` or `assets/backup/x-ui-backup.sh`,
-refresh the two SHA-256 payload pins in `enable_agh_updates()`; the regression
-test verifies their agreement with the tree. Do not remove signature validation
+Do not remove signature validation
 or execute an archived helper to make a new version pass Restore. Acceptance
 must distinguish a version notification from an actual upstream `.79 → .80`
 update/re-exec; require the final HEAD Full Fresh and native service results.

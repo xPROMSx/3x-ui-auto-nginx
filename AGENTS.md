@@ -1,6 +1,6 @@
 # AGENTS.md - rules for any coding agent
 
-This is the single shared rules file for this repository. CLAUDE.md only points here.
+This is the single shared rules file for this repository. CLAUDE.md points here and adds only Claude Code specifics (Plan mode).
 Do not edit AGENTS.md or CLAUDE.md unless the owner's task says so.
 
 ## 1. What this project is (threat model)
