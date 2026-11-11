@@ -135,7 +135,7 @@ def main():
         status = status if status in ('success', 'failure', 'cancelled') else 'unknown'
         message = ('DOCS-ONLY: Full Fresh E2E not executed; documentation scope verified.'
                    if docs and os.environ.get('CI_FRESH') == 'true' else
-                   'DOCS-ONLY: UTF-8, PNG integrity, local references and diff whitespace checked.'
+                   'DOCS-ONLY: UTF-8, PNG signature/size, local references and diff whitespace checked.'
                    if docs else 'FULL CI mode; job result: '+status+'.')
         if os.environ.get('CI_DOCS_ONLY') not in ('true','false'):
             message = 'Scope/smoke incomplete: documentation exception NOT verified; job result: '+status+'.'
