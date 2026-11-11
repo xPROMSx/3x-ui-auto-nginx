@@ -90,7 +90,8 @@ class CIScope(unittest.TestCase):
 
     def test_documentation_histories_and_push(self):
         cases = [('README.md', '# Revised\n'), ('docs/SUPPORT.md', '# Donate\n'),
-                 ('assets/support/qr.png', png(b'\0\0\0')), ('README_EN.md', '# English\n')]
+                 ('assets/support/qr.png', png(b'\0\0\0')), ('README_EN.md', '# English\n'),
+                 ('AGENTS.md', '# Agents\n'), ('CLAUDE.md', '# Claude\n'), ('CONTRIBUTING.md', '# Contributing\n')]
         for name, data in cases:
             with self.subTest(name=name):
                 self.git('reset', '--hard', self.base)
@@ -111,7 +112,7 @@ class CIScope(unittest.TestCase):
 
     def test_mixed_and_unknown_files_require_full(self):
         for path in ('x-ui-latest.sh', 'assets/helper.py', 'tests/test_fixture.py',
-                     '.github/workflows/example.yml', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md',
+                     '.github/workflows/example.yml',
                      'SECURITY.md', 'LICENSE', 'unknown.md', 'docs/run.sh', 'docs/data.yaml',
                      'assets/support/logo.svg', 'assets/support/file.bin', 'tests/ci_scope.py'):
             with self.subTest(path=path):
@@ -160,19 +161,20 @@ class CIScope(unittest.TestCase):
         self.assert_mode(self.check('push'), 'docs-only')
 
     def test_smoke_rejects_broken_resources_utf8_and_whitespace(self):
-        for name, content in (('assets/support/qr.png', png()[:-5]),
-                              ('docs/SUPPORT.md', b'\xff'),
-                              ('docs/SUPPORT.md', '[missing](missing.md)\n'),
-                              ('docs/SUPPORT.md', '![bad](../../outside.png)\n'),
-                              ('docs/SUPPORT.md', '# trailing space \n')):
+        cases = [('assets/support/qr.png', b'not a png')]
+        for name in ('docs/SUPPORT.md', 'README.md', 'AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md'):
+            cases += [(name, b'\xff'), (name, '[missing](missing.md)\n'),
+                      (name, '![bad](../../outside.png)\n'), (name, '# trailing space \n')]
+        for name, content in cases:
             with self.subTest(name=name):
                 self.git('reset', '--hard', self.base)
                 self.write(name, content); self.commit()
                 self.assertNotEqual(self.check().returncode, 0)
-        self.git('reset', '--hard', self.base)
-        data = bytearray(png()); data[45] ^= 1
-        self.write('assets/support/qr.png', bytes(data)); self.commit()
-        self.assertNotEqual(self.check().returncode, 0)
+        spec = importlib.util.spec_from_file_location('scope_png', ROOT/'tests/ci_scope.py')
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        module.validate_png(png())
+        for data in (b'', png()[:7], b'GIF89a'+png()[6:], png()+b'\0'*(16*1024*1024)):
+            with self.assertRaises(ValueError): module.validate_png(data)
 
     def test_existing_broken_reference_and_deleted_docs(self):
         self.write('docs/old.md', '[legacy](missing.md)\n'); self.base = self.commit()
