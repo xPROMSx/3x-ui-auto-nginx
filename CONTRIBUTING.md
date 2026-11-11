@@ -4,7 +4,7 @@
 
 `main` is the maintained production line. Create `feat/*`, `fix/*`, `docs/*` or `chore/*` branches and open pull requests against `main`. Upstream is a reference source; do not automatically synchronize it.
 
-Create all new PRs as **Draft**. Codex may mark its own PR **Ready for review** when implementation is complete, the final commit is pushed, necessary local checks pass, and no further changes are planned. Do not wait for long-running GitHub CI first: Full Fresh already starts automatically on every push. Waiting for Full Fresh in the working session is unnecessary; report the exact HEAD and actual **PASS**, **FAIL**, **IN PROGRESS** or **NOT RUN** states at handoff. Switching Draft to Ready does not start a new Full Fresh run. If another commit is needed, push it; no Draft round-trip is required. This permission does not authorize merge, actual tags/releases, Prepare Release dispatch, publication, Settings/Rulesets changes or VPS operations.
+Create all new PRs as **Draft**. The agent may mark its own PR **Ready for review** when implementation is complete, the final commit is pushed, necessary local checks pass, and no further changes are planned. Do not wait for long-running GitHub CI first: Full Fresh already starts automatically on every push. Waiting for Full Fresh in the working session is unnecessary; report the exact HEAD and actual **PASS**, **FAIL**, **IN PROGRESS** or **NOT RUN** states at handoff. Switching Draft to Ready does not start a new Full Fresh run. If another commit is needed, push it; no Draft round-trip is required. This permission does not authorize merge, actual tags/releases, Prepare Release dispatch, publication, Settings/Rulesets changes or VPS operations.
 
 Review product wording with the maintainer in Russian (`README.md`) first, then adapt all seven languages; Russian is the default GitHub landing page (`README.md`), and the full English adaptation is in `README_EN.md`. `README_RU.md` preserves older Russian links. Preserve exact commands, safety warnings and upstream attribution in every full translation. The maintainer has adopted `GPL-3.0-only` for original xPROMSx developments and changes. Follow the partial scope in `LICENSE` and `THIRD_PARTY_NOTICES.md`; do not claim permission to relicense inherited material.
 
@@ -216,10 +216,9 @@ Future upstream format/API changes may require a separately reviewed fix.
 
 ## Public Git metadata
 
-Before committing, set repository-local `git config user.name Proms` and
+Before committing, set repository-local `git config user.name xPROMSx` and
 `git config user.email 102687702+xPROMSx@users.noreply.github.com` (never global).
 Verify both author and committer in `git log --format=fuller <base>..HEAD`.
-The maintainer's public `xPROMSx` alias with the same email is also approved.
 
 The existing XHTTP job checks only commits introduced by a PR: head reachable
 commits excluding everything reachable from the actual event base. Historical
