@@ -439,6 +439,31 @@ class CIScope(unittest.TestCase):
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn('--root-shard requires --suite root', rejected.stderr)
 
+    def test_integration_shards_cover_canonical_suite_once(self):
+        from run_ci import collect, integration_shards, INTEGRATION_SHARD_1, INTEGRATION_SHARD_2
+        from unittest.mock import patch
+        tests = collect()['integration']
+        shards = integration_shards(tests)
+        assigned = [case.id() for shard in shards for case in shard]
+        self.assertCountEqual(assigned, [case.id() for case in tests])
+        self.assertEqual(len(assigned), len(set(assigned)))
+        self.assertTrue(all(shards))
+        self.assertEqual([case.id().rsplit('.', 1)[1] for case in shards[0]], list(INTEGRATION_SHARD_1))
+        self.assertCountEqual([case.id().rsplit('.', 1)[1] for case in shards[1]], INTEGRATION_SHARD_2)
+        with patch('run_ci.INTEGRATION_SHARD_2', INTEGRATION_SHARD_2 + ('test_renamed_or_removed',)):
+            with self.assertRaisesRegex(ValueError, 'missing test: test_renamed_or_removed'):
+                integration_shards(tests)
+        rejected = subprocess.run(
+            ['python3', 'tests/run_ci.py', '--suite', 'nonroot', '--integration-shard', '1'],
+            cwd=ROOT, text=True, capture_output=True)
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn('--integration-shard requires --suite integration', rejected.stderr)
+        workflow = (ROOT/'.github/workflows/stack-xhttp.yml').read_text()
+        for shard in ('1', '2', '3'):
+            self.assertEqual(workflow.count('--suite integration --integration-shard '+shard), 1)
+        self.assertEqual(workflow.count('--suite nonroot'), 1)
+        self.assertNotIn('sudo', workflow.split('(parallel)', 1)[1].split('Whitespace validation', 1)[0])
+
     def test_kvm_preflight_requires_actual_vm_creation(self):
         import importlib.util
         from unittest.mock import patch, mock_open
