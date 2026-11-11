@@ -339,10 +339,11 @@ class CIScope(unittest.TestCase):
         tree=ast.parse((ROOT/'tests/fresh/acceptance.py').read_text())
         function=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='fresh_acceptance')
         positive=['maximum-install','manager-backup','transport-consumers','AWG-payload','tech0-RED-GREEN',
-                  'installed-renewal-hooks','cold-boot','cold-transport-consumers','change-domains','restore-before-domains','native-agh-update']
+                  'installed-renewal-hooks','cold-boot','cold-transport-consumers','change-domains','restore-before-domains']
+        agh=['maximum-install','maximum-install','native-agh-update']
         negative=['mandatory-dependency-negative','DoT-outage-partial-install','DoT-outage-core-consumers']
         with tempfile.TemporaryDirectory() as directory:
-            for group,expected,disks in (('all',positive+negative,3),('positive',positive,1),('negative',negative,2)):
+            for group,disks in (('all',4),('positive',1),('agh',1),('negative',2)):
                 events=[];calls=[];group_root=Path(directory)/group;group_root.mkdir()
                 env=dict(ROOT=group_root,phase='',re=re)
                 def record(kind):events.append((kind,env['phase']))
@@ -354,21 +355,30 @@ class CIScope(unittest.TestCase):
                 env['fresh_acceptance']('a'*40,group)
                 positive_phases=[positive[0],*positive[:6],'installed-renewal-hooks','cold-boot',*positive[6:]]
                 self.assertEqual([phase for kind,phase in events if kind=='phase'],
-                                 (positive_phases if group!='negative' else [])+(negative if group!='positive' else []))
+                                 (positive_phases if group in ('all','positive') else [])+
+                                 (agh if group in ('all','agh') else [])+
+                                 (negative if group in ('all','negative') else []))
                 positive_calls=['positive','checks.installed()','checks.manager_backup()','checks.transports()',
                     'checks.amneziawg()','checks.search_domain_regression()','checks.renewal()',
                     'checks.disabled_cold_boot(prepare=True)','checks.disabled_cold_boot()',
                     'checks.installed(cold=True)','checks.transports()','checks.change_domains()',
-                    'checks.restore_before_domains()','checks.native_agh_update()']
+                    'checks.restore_before_domains()']
+                agh_calls=['positive','checks.installed()','checks.native_agh_update()']
                 negative_calls=['dependency','dot-outage','checks.transports(vision=False)']
-                self.assertEqual(calls,(positive_calls if group!='negative' else [])+
-                                       (negative_calls if group!='positive' else []))
+                self.assertEqual(calls,(positive_calls if group in ('all','positive') else [])+
+                                       (agh_calls if group in ('all','agh') else [])+
+                                       (negative_calls if group in ('all','negative') else []))
+                if group in ('all','agh'):
+                    self.assertEqual(calls.count('checks.native_agh_update()'),1)
+                    self.assertEqual([phase for kind,phase in events if kind=='phase'].count('native-agh-update'),1)
                 self.assertEqual(sum(kind=='disk' for kind,_ in events),disks)
-                if group!='positive':
+                if group=='agh':
+                    self.assertEqual([kind for kind,_ in events],['disk','boot','phase','phase','phase','off'])
+                if group in ('all','negative'):
                     for phase in negative[:2]:
                         boot_index=events.index(('boot',phase))
                         self.assertEqual(events[boot_index-1][0],'disk')
-                if group!='negative':
+                if group in ('all','positive'):
                     cold=events.index(('boot','cold-boot'))
                     self.assertEqual(events[cold-1][0],'off')
                     self.assertNotIn(('disk','cold-boot'),events)
@@ -388,19 +398,21 @@ class CIScope(unittest.TestCase):
         env={};exec(compile(ast.Module(body=[function],type_ignores=[]),'fresh-result','exec'),env)
         states=('success','failure','cancelled','skipped')
         for docs in ('true','false','','unknown'):
-            for scope,positive,negative in itertools.product(states,repeat=3):
-                expected=scope=='success' and ((docs=='true' and positive==negative=='skipped') or
-                                              (docs=='false' and positive==negative=='success'))
-                self.assertEqual(env['fresh_success'](docs,scope,positive,negative),expected,
-                                 (docs,scope,positive,negative))
-        for docs,scope,positive,negative,passed in (('false','success','success','success',True),
-                ('true','success','skipped','skipped',True),('true','failure','skipped','skipped',False),
-                ('false','success','skipped','success',False),('false','success','cancelled','success',False)):
+            for scope,positive,agh,negative in itertools.product(states,repeat=4):
+                expected=scope=='success' and ((docs=='true' and positive==agh==negative=='skipped') or
+                                              (docs=='false' and positive==agh==negative=='success'))
+                self.assertEqual(env['fresh_success'](docs,scope,positive,agh,negative),expected,
+                                 (docs,scope,positive,agh,negative))
+        for docs,scope,positive,agh,negative,passed in (('false','success','success','success','success',True),
+                ('true','success','skipped','skipped','skipped',True),('true','failure','skipped','skipped','skipped',False),
+                ('false','success','skipped','success','success',False),('false','success','cancelled','success','success',False),
+                ('false','success','success','failure','success',False),('false','success','success','skipped','success',False),
+                ('true','success','skipped','success','skipped',False)):
             with tempfile.TemporaryDirectory() as directory:
                 summary=Path(directory)/'summary'
                 result=subprocess.run(['python3','-c',code],text=True,capture_output=True,env={**os.environ,
                     'CI_DOCS_ONLY':docs,'CI_SCOPE_RESULT':scope,'CI_POSITIVE_RESULT':positive,
-                    'CI_NEGATIVE_RESULT':negative,'GITHUB_STEP_SUMMARY':str(summary)})
+                    'CI_AGH_RESULT':agh,'CI_NEGATIVE_RESULT':negative,'GITHUB_STEP_SUMMARY':str(summary)})
                 self.assertEqual(result.returncode==0,passed)
                 self.assertEqual(summary.read_text().strip(),result.stdout.strip())
                 if docs=='true' and passed:
@@ -454,11 +466,12 @@ class CIScope(unittest.TestCase):
     def test_fresh_workflow_wires_independent_groups_and_kvm_budgets(self):
         workflow=(ROOT/'.github/workflows/fresh-acceptance.yml').read_text()
         self.assertEqual(workflow.count('name: Full fresh installer (ubuntu-26.04)'),1)
-        self.assertIn('needs: [scope, positive, negative]',workflow)
+        self.assertIn('needs: [scope, positive, agh, negative]',workflow)
         self.assertIn('if: always()',workflow.split('  fresh:',1)[1])
-        self.assertEqual(workflow.count('timeout-minutes: 60'),2)
-        self.assertEqual(workflow.count("if: needs.scope.outputs.docs_only == 'false'"),2)
-        for group in ('positive','negative'):
+        self.assertEqual(workflow.count('timeout-minutes: 60'),3)
+        self.assertEqual(workflow.count("if: needs.scope.outputs.docs_only == 'false'"),3)
+        self.assertEqual(workflow.count('name: Fresh AGH update scenario (ubuntu-26.04)'),1)
+        for group in ('positive','agh','negative'):
             block=re.split(r'\n  [a-z]+:',workflow.split('  '+group+':',1)[1])[0]
             self.assertIn('needs: scope',block)
             self.assertIn('XUI_FRESH_GROUP: '+group,block)
