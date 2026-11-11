@@ -4,7 +4,7 @@
 
 `main` is the maintained production line. Create `feat/*`, `fix/*`, `docs/*` or `chore/*` branches and open pull requests against `main`. Upstream is a reference source; do not automatically synchronize it.
 
-Create all new PRs as **Draft**. Codex may mark its own PR **Ready for review** when implementation is complete, the final commit is pushed, necessary local checks pass, and no further changes are planned. Do not wait for long-running GitHub CI first: Full Fresh already starts automatically on every push. Waiting for Full Fresh in the working session is unnecessary; report the exact HEAD and actual **PASS**, **FAIL**, **IN PROGRESS** or **NOT RUN** states at handoff. If another commit is needed, push it; no Draft round-trip is required. This permission does not authorize merge, actual tags/releases, Prepare Release dispatch, publication, Settings/Rulesets changes or VPS operations.
+Create all new PRs as **Draft**. Codex may mark its own PR **Ready for review** when implementation is complete, the final commit is pushed, necessary local checks pass, and no further changes are planned. Do not wait for long-running GitHub CI first: Full Fresh already starts automatically on every push. Waiting for Full Fresh in the working session is unnecessary; report the exact HEAD and actual **PASS**, **FAIL**, **IN PROGRESS** or **NOT RUN** states at handoff. Switching Draft to Ready does not start a new Full Fresh run. If another commit is needed, push it; no Draft round-trip is required. This permission does not authorize merge, actual tags/releases, Prepare Release dispatch, publication, Settings/Rulesets changes or VPS operations.
 
 Review product wording with the maintainer in Russian (`README.md`) first, then adapt all seven languages; Russian is the default GitHub landing page (`README.md`), and the full English adaptation is in `README_EN.md`. `README_RU.md` preserves older Russian links. Preserve exact commands, safety warnings and upstream attribution in every full translation. The maintainer has adopted `GPL-3.0-only` for original xPROMSx developments and changes. Follow the partial scope in `LICENSE` and `THIRD_PARTY_NOTICES.md`; do not claim permission to relicense inherited material.
 
@@ -23,7 +23,7 @@ procedure below. All five checks must pass for the current revision before merge
 
 The four ordinary checks retain their unique names and run for pushes to `main`,
 pull requests targeting `main`, and manual `workflow_dispatch`. Full Fresh runs
-on `opened`, `reopened`, `synchronize` and `ready_for_review` for a PR targeting `main`, Draft included. These PR validation workflows
+on `opened`, `reopened` and `synchronize` (every push) for a PR targeting `main`, Draft included; switching Draft to Ready does not start a new run. These PR validation workflows
 have read-only repository permissions and no repository-secret dependency.
 
 Reproduce the full suites on a disposable Ubuntu 24.04 test environment:
@@ -90,8 +90,8 @@ Live VPS acceptance is still required for public DNS, Let's Encrypt, provider ke
 ## Full fresh installation acceptance
 
 `fresh-acceptance.yml` runs `bash tests/fresh/run.sh` (Docker, Python 3, Git and
-passwordless sudo required) when a PR targeting `main` is opened, reopened, updated by a push or marked
-Ready for review (Draft PRs included). It checks out the exact event's PR head SHA with full history.
+passwordless sudo required) when a PR targeting `main` is opened, reopened, or updated by a push
+(Draft PRs included); switching Draft to Ready does not start a new run. It checks out the exact event's PR head SHA with full history.
 There is no branch-push or manual-dispatch trigger. A newer launch cancels an older running Full Fresh job for the same PR.
 
 The unchanged harness boots a minimal disk-based VM
