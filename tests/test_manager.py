@@ -81,8 +81,8 @@ class Manager(unittest.TestCase):
 
     def test_apt_wait_times_out_after_60_minutes_with_minute_progress(self):
         for lang, progress, error in (
-                ('en', 'Waiting for the system update: {} of 60 min. Do not reboot the server.', 'still running after 60 minutes. Restore was not started and nothing was changed.'),
-                ('ru', 'Ожидание конца обновления: {} из 60 мин. Не перезагружайте сервер.', 'спустя 60 минут. Restore не запускался, ничего не изменено.')):
+                ('en', 'Waiting for the system update: {} of 60 min. Do not reboot the server.', 'still running after 60 minutes. Restore was not started and no data was restored.'),
+                ('ru', 'Ожидание конца обновления: {} из 60 мин. Не перезагружайте сервер.', 'спустя 60 минут. Restore не запускался, данные не восстанавливались.')):
             with self.subTest(lang=lang):
                 result = self.apt_wait('B', lang)
                 self.assertEqual(result.returncode, 1, result.stderr)

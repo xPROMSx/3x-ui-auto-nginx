@@ -3569,10 +3569,10 @@ wait_for_apt_idle() {
     local ticks=0 idle=0
     ui_title "$(ui_text 'SERVER IS INSTALLING SYSTEM UPDATES' 'СЕРВЕР УСТАНАВЛИВАЕТ ОБНОВЛЕНИЯ СИСТЕМЫ')"
     msg_warn "$(ui_text 'A fresh server updates itself right after the first start. This can take 10-60 minutes.
-Restore will continue automatically when the update finishes. Nothing has been changed yet.
+Restore will continue automatically when the update finishes. No data has been restored yet.
 DO NOT reboot or power off the server - this can break the system.
 You can safely cancel with Ctrl+C and run Restore later.' 'Свежий сервер сам обновляется сразу после первого запуска. Это может занять от 10 до 60 минут.
-Restore продолжится автоматически, когда обновление закончится. Пока ничего не изменено.
+Restore продолжится автоматически, когда обновление закончится. Данные ещё не восстанавливались.
 НЕ ПЕРЕЗАГРУЖАЙТЕ и не выключайте сервер - это может сломать систему.
 Можно безопасно отменить по Ctrl+C и запустить Restore позже.')"
     # Poll every 5 s; two free checks in a row end the wait (packages install one by one).
@@ -3586,7 +3586,7 @@ Restore продолжится автоматически, когда обнов
         fi
         (( ticks % 12 )) || ui_text 'Waiting for the system update: %d of 60 min. Do not reboot the server.\n' 'Ожидание конца обновления: %d из 60 мин. Не перезагружайте сервер.\n' $((ticks / 12))
     done
-    msg_err "$(ui_text 'The system update is still running after 60 minutes. Restore was not started and nothing was changed. Wait for the update to finish and run Restore again.' 'Обновление системы всё ещё идёт спустя 60 минут. Restore не запускался, ничего не изменено. Дождитесь конца обновления и запустите Restore снова.')"
+    msg_err "$(ui_text 'The system update is still running after 60 minutes. Restore was not started and no data was restored. Wait for the update to finish and run Restore again.' 'Обновление системы всё ещё идёт спустя 60 минут. Restore не запускался, данные не восстанавливались. Дождитесь конца обновления и запустите Restore снова.')"
     return 1
 }
 
