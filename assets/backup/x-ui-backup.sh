@@ -93,8 +93,7 @@ load_adguard_backup_state() {
     if [[ -e /opt/AdGuardHome || -e /etc/systemd/system/AdGuardHome.service ||
           -e /etc/nginx/snippets/adguard.conf || -e /etc/nginx/snippets/x-ui-auto-optional/adguard.conf ||
           -e /usr/local/lib/3x-ui-pro/managed-adguard.sh ]] ||
-       systemctl is-active --quiet AdGuardHome 2>/dev/null || systemctl is-enabled --quiet AdGuardHome 2>/dev/null ||
-       grep -RqE 'location.*(/adg-|/dns-query)' /etc/nginx/sites-available /etc/nginx/snippets 2>/dev/null; then
+       systemctl is-active --quiet AdGuardHome 2>/dev/null || systemctl is-enabled --quiet AdGuardHome 2>/dev/null; then
         [[ -f /usr/local/lib/3x-ui-pro/managed-adguard.sh && ! -L /usr/local/lib/3x-ui-pro/managed-adguard.sh &&
            -f /etc/nginx/snippets/x-ui-auto-optional/adguard.conf && ! -e /etc/nginx/snippets/adguard.conf ]] || die 'Partial AdGuard Home state.'
         . /usr/local/lib/3x-ui-pro/managed-adguard.sh
@@ -154,6 +153,28 @@ host_identity() {
     esac
 }
 
+# apt-get that waits for the apt/dpkg locks (a fresh VPS updates itself for 10-60 minutes).
+# DPkg::Lock::Timeout does not cover the lists lock taken by "apt-get update", so a lock
+# error is retried for up to 60 minutes. LC_ALL=C keeps the searched error text in English.
+apt_wait_run() {
+    local command=$1 log status deadline=$((SECONDS + 3600)) warned=0
+    shift
+    log=$(mktemp) || return 1
+    while :; do
+        status=0
+        LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get "$command" -o DPkg::Lock::Timeout=300 "$@" 2>&1 | tee "$log" || status=$?
+        (( status )) || break
+        grep -Eq 'Could not get lock|Unable to acquire.*lock' "$log" && (( SECONDS < deadline )) || break
+        if (( ! warned )); then
+            warn $'Менеджер пакетов apt занят (на сервере идёт обновление системы). Жду до 60 минут, установка продолжится сама. НЕ перезагружайте и не выключайте сервер: это может сломать систему. Ничего не изменено. Прервать можно по Ctrl+C.\nThe apt package manager is busy (the server is installing system updates). Waiting up to 60 minutes; the operation continues automatically. DO NOT reboot or power off the server: this can break the system. Nothing has been changed yet. You can cancel with Ctrl+C.'
+            warned=1
+        fi
+        sleep 10
+    done
+    rm -f "$log"
+    return "$status"
+}
+
 install_missing_packages() {
     local package status missing=()
     for package in "$@"; do
@@ -163,10 +184,10 @@ install_missing_packages() {
     if (( ${#missing[@]} )); then
         stage "Installing missing dependencies: ${missing[*]}"
         if (( ! APT_UPDATED )); then
-            apt-get update -qq || die 'Cannot update package lists; managed files have not been replaced.'
+            apt_wait_run update -qq || die 'Cannot update package lists; managed files have not been replaced.'
             APT_UPDATED=1
         fi
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}" ||
+        apt_wait_run install -y --no-install-recommends "${missing[@]}" ||
             die 'Dependency installation failed; managed files have not been replaced.'
     fi
 }
@@ -525,9 +546,8 @@ with open(path, 'w') as out:
 PY
 }
 
-preflight_target_telemt() {
-    # Read-only, before even package bootstrap: replacing nginx cannot preserve
-    # a separate Telemt lifecycle. Partial/ambiguous installations also refuse.
+# Read-only. Returns 0 when TWPM/Telemt traces exist, 1 when none, 2 when nginx cannot be inspected.
+telemt_present() {
     local path status
     for path in /etc/telemt /var/lib/telemt /var/lib/telemt-web-manager /var/lib/telemt-web-manager-acme /var/www/telemt-web-manager /usr/local/bin/telemt \
         /etc/systemd/system/telemt.service /etc/systemd/system/telemt.service.d \
@@ -535,19 +555,32 @@ preflight_target_telemt() {
         /etc/nginx/conf.d/telemt-web-manager.conf /etc/nginx/conf.d/telemt-web-manager-acme.conf \
         /etc/nginx/stream-sni.d/telemt-web-manager.conf /etc/nginx/stream-upstreams.d/telemt-web-manager.conf \
         /etc/letsencrypt/renewal-hooks/deploy/telemt-web-manager; do
-        [[ ! -e "$path" && ! -L "$path" ]] || die 'Restore over existing or partial Telemt is not supported; no Telemt state was changed.'
+        [[ ! -e "$path" && ! -L "$path" ]] || return 0
     done
     if systemctl cat telemt.service >/dev/null 2>&1 || systemctl is-active --quiet telemt.service; then
-        die 'Restore over existing or partial Telemt is not supported; no Telemt state was changed.'
+        return 0
     fi
     if [[ -d /etc/nginx ]]; then
         if grep -rqsEi 'twm_frontend|twpm_web_backend|telemt-web-manager|127[.]0[.]0[.]1:7444' /etc/nginx; then
-            die 'Restore over existing or partial Telemt is not supported; no Telemt state was changed.'
+            return 0
         else
             status=$?
-            (( status == 1 )) || die 'Cannot inspect target nginx for Telemt; restore refused.'
+            (( status == 1 )) || return 2
         fi
     fi
+    return 1
+}
+
+preflight_target_telemt() {
+    # Read-only, before even package bootstrap: replacing nginx cannot preserve
+    # a separate Telemt lifecycle. Partial/ambiguous installations also refuse.
+    local status=0
+    telemt_present || status=$?
+    case $status in
+        0) die $'На сервере найден Telegram Web Proxy Manager (TWPM). Восстановление заменяет настройки nginx, и его работа нарушилась бы. Удалите его вручную: в главном меню 3X-UI откройте Telegram Web Proxy Manager, выберите «Удалить Telegram-прокси» и на вопрос про сертификат ответьте y (удалить). Затем повторите восстановление. После восстановления переустановите TWPM. После новой установки TWPM ссылка подключения изменится. На данный момент на сервере ничего не изменено.\nTelegram Web Proxy Manager (TWPM) was found on this server. Restore replaces the nginx configuration and would break it. Remove it manually: in the 3X-UI main menu open Telegram Web Proxy Manager, choose "Uninstall Telegram proxy" and answer y when asked whether to delete the certificate. Then run Restore again. After Restore, install TWPM again. The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.' ;;
+        1) ;;
+        *) die 'Cannot inspect target nginx for Telemt; restore refused.' ;;
+    esac
 }
 
 exclude_staged_telemt() {
@@ -579,9 +612,16 @@ def remove(path):
 ng, certs = staged(nginx), staged(certroot)
 stream = ng/'stream-enabled/stream.conf'
 if stream.is_file() and re.search(r'# telemt-web-manager|twm_frontend', read(stream)):
-    sys.exit(f'[FAIL] {live(stream)} contains old inline Telegram Web Proxy Manager lines. ' +
-             ('Update TWPM to the current version or remove these lines, then run Backup again. Live state was not changed.'
-              if mode == 'backup' else 'Create a new Backup after updating TWPM. Nothing was restored.'))
+    if mode == 'backup':
+        sys.exit('[FAIL] Telegram Web Proxy Manager (TWPM) подключён по старой схеме (старая версия), Backup с ней не поддерживается. '
+                 'Удалите его (в главном меню 3X-UI откройте Telegram Web Proxy Manager, «Удалить Telegram-прокси», на вопрос про сертификат ответьте y), '
+                 'затем установите TWPM заново и повторите Backup. Если это сообщение появится снова, оставьте TWPM удалённым: Backup работает только без него. '
+                 'Ссылка подключения после новой установки изменится. На данный момент на сервере ничего не изменено.\n'
+                 'Telegram Web Proxy Manager (TWPM) is connected using an old layout (old version) that Backup does not support. '
+                 'Remove it (3X-UI main menu, Telegram Web Proxy Manager, "Uninstall Telegram proxy", answer y to the certificate question), '
+                 'then install TWPM again and repeat Backup. If this message appears again, leave TWPM uninstalled: Backup works only without it. '
+                 'The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.')
+    sys.exit(f'[FAIL] {live(stream)} contains old inline Telegram Web Proxy Manager lines. Create a new Backup after updating TWPM. Nothing was restored.')
 vhost = ng/'conf.d/telemt-web-manager.conf'
 files = (vhost, ng/'conf.d/telemt-web-manager-acme.conf', ng/'stream-sni.d/telemt-web-manager.conf',
          ng/'stream-upstreams.d/telemt-web-manager.conf', certs/'renewal-hooks/deploy/telemt-web-manager')
@@ -958,14 +998,21 @@ prepare_mtr_backend() {
     done
 }
 
-regenerate_diagnostics() {
-    local directory=/var/www/diagnostics/testfiles current source
+create_diagnostics_testfiles() {
+    local directory=/var/www/diagnostics/testfiles
     mkdir -p "$directory"
     dd if=/dev/zero of="$directory/test-15k.bin" bs=1024 count=15 status=none
     dd if=/dev/zero of="$directory/test-17k.bin" bs=1024 count=17 status=none
     dd if=/dev/zero of="$directory/test-100m.bin" bs=1048576 count=100 status=none
     dd if=/dev/zero of="$directory/test-1g.bin" bs=1048576 count=1024 status=none
     rm -f "$directory/test-512m.bin"
+    chmod 0755 "$directory"
+    chown -R www-data:www-data "$directory"
+}
+
+regenerate_diagnostics() {
+    local current source
+    create_diagnostics_testfiles
     source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_ipv4"])' "$STAGING/meta.json")
     if current=$(current_ipv4); then
         if [[ -n "$source" && "$source" != "$current" ]]; then
@@ -989,7 +1036,7 @@ PY
     else
         warn 'Cannot detect current IPv4; saved diagnostics display left unchanged.'
     fi
-    chmod 0755 /var/www/diagnostics "$directory"
+    chmod 0755 /var/www/diagnostics
     chown -R www-data:www-data /var/www/diagnostics /var/www/html /var/www/subpage
 }
 
@@ -2184,13 +2231,20 @@ snapshot_restore_target() {
             printf 'absent\n' > "$ROLLBACK_DIR/acme-parent-${path##*/}" || die "Cannot snapshot ACME parent absence: $path"
         fi
     done
-    local -a owned=("${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" /var/www/diagnostics /etc/systemd/system/AdGuardHome.service /var/www/acme/.well-known/acme-challenge)
+    local -a owned=("${RUNTIME_PATHS[@]}" "${TREE_PATHS[@]}" "${EXTRA_PATHS[@]}" /etc/systemd/system/AdGuardHome.service /var/www/acme/.well-known/acme-challenge)
     for path in "${owned[@]}"; do
         if [[ -e "$path" || -L "$path" ]]; then
             mkdir -p "$ROLLBACK_DIR/files$(dirname "$path")" || die "Cannot prepare rollback copy: $path"
             cp -aT --reflink=auto -- "$path" "$ROLLBACK_DIR/files$path" || die "Cannot copy rollback state: $path"
         fi
     done
+    # Diagnostics without testfiles (about 1.1 GiB of zeros): Restore and rollback create them again.
+    if [[ -d /var/www/diagnostics ]]; then
+        mkdir -p "$ROLLBACK_DIR/files/var/www/diagnostics" || die 'Cannot prepare rollback copy: /var/www/diagnostics'
+        find /var/www/diagnostics -mindepth 1 -maxdepth 1 ! -name testfiles \
+            -exec cp -a --reflink=auto -t "$ROLLBACK_DIR/files/var/www/diagnostics" -- {} + ||
+            die 'Cannot copy rollback state: /var/www/diagnostics'
+    fi
     # Clean-host recovery has no previous objects to copy.
     for path in "$DB" /usr/local/x-ui/x-ui /etc/nginx/nginx.conf; do
         [[ ! -e "$path" || -f "$ROLLBACK_DIR/files$path" ]] || die "Missing rollback file: $path"
@@ -2214,6 +2268,12 @@ recover_restore_target() {
                 mkdir -p "$(dirname "$path")" && cp -aT -- "$ROLLBACK_DIR/files$path" "$path" || failed=1
             fi
         done
+        # The snapshot has no testfiles; failing to create them again must not fail the rollback.
+        if [[ -d "$ROLLBACK_DIR/files/var/www/diagnostics" ]]; then
+            create_diagnostics_testfiles
+            [[ $(stat -c %s /var/www/diagnostics/testfiles/test-1g.bin 2>/dev/null) == 1073741824 ]] ||
+                warn $'Файлы для speedtest не созданы заново (например, нет места на диске). Остальное состояние откатано.\nspeedtest files were not recreated (for example, the disk is full). The rest of the previous state was rolled back.'
+        fi
         recover_restore_acme_parents || { warn 'Cannot verify original ACME parent directories; independent contents retained.'; failed=1; }
         recover_restore_firewall || { warn 'Cannot verify original UFW rules/state.'; failed=1; }
         recover_restore_cron || { warn 'Cannot verify original root crontab.'; failed=1; }
@@ -2434,6 +2494,12 @@ main() {
     local BACKUP_JSON=0
     case ${1:-} in
         capabilities) printf '%s\n' 'xui-backup:1 inspect backup-json lock-fd9'; return ;;
+        telemt-check)
+            # Exit 10 when TWPM is found: lets the installer menu show the same refusal in Russian first.
+            local found=0
+            telemt_present || found=$?
+            (( found )) || return 10
+            return 0 ;;
         inspect)
             [[ $# == 2 ]] || die 'Usage: x-ui-backup inspect <archive>'
             command -v python3 >/dev/null && command -v gzip >/dev/null || die 'Inspect requires Python 3 and gzip; no packages were installed.'

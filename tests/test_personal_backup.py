@@ -35,6 +35,24 @@ PARAMS = [
 ]
 
 
+# User-facing refusal texts, Russian first and English second. Kept in one place for the helper and menu tests.
+TWPM_RESTORE_RU = ('На сервере найден Telegram Web Proxy Manager (TWPM). Восстановление заменяет настройки nginx, и его работа нарушилась бы. '
+                   'Удалите его вручную: в главном меню 3X-UI откройте Telegram Web Proxy Manager, выберите «Удалить Telegram-прокси» '
+                   'и на вопрос про сертификат ответьте y (удалить). Затем повторите восстановление. После восстановления переустановите TWPM. '
+                   'После новой установки TWPM ссылка подключения изменится. На данный момент на сервере ничего не изменено.')
+TWPM_RESTORE_EN = ('Telegram Web Proxy Manager (TWPM) was found on this server. Restore replaces the nginx configuration and would break it. '
+                   'Remove it manually: in the 3X-UI main menu open Telegram Web Proxy Manager, choose "Uninstall Telegram proxy" and answer y '
+                   'when asked whether to delete the certificate. Then run Restore again. After Restore, install TWPM again. '
+                   'The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.')
+TWPM_BACKUP_RU = ('Telegram Web Proxy Manager (TWPM) подключён по старой схеме (старая версия), Backup с ней не поддерживается. '
+                  'Удалите его (в главном меню 3X-UI откройте Telegram Web Proxy Manager, «Удалить Telegram-прокси», на вопрос про сертификат ответьте y), '
+                  'затем установите TWPM заново и повторите Backup. Если это сообщение появится снова, оставьте TWPM удалённым: Backup работает только без него. '
+                  'Ссылка подключения после новой установки изменится. На данный момент на сервере ничего не изменено.')
+TWPM_BACKUP_EN = ('Telegram Web Proxy Manager (TWPM) is connected using an old layout (old version) that Backup does not support. '
+                  'Remove it (3X-UI main menu, Telegram Web Proxy Manager, "Uninstall Telegram proxy", answer y to the certificate question), '
+                  'then install TWPM again and repeat Backup. If this message appears again, leave TWPM uninstalled: Backup works only without it. '
+                  'The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.')
+
 def relocated(source, root):
     # Apply a single pass so replacements cannot recursively match themselves.
     return re.sub(r"/(?:proc|opt|etc|root|var|usr/local|usr/bin/x-ui|dev/shm)(?=[/\s\"';,)}]|$)",
@@ -218,8 +236,19 @@ elif name == 'dpkg-query':
 elif name == 'apt-get':
     if os.environ.get('FAIL_APT') and (os.environ['FAIL_APT'] != 'install' or args[0] == 'install'):
         sys.exit(1)
+    counter = root / 'apt-lock-count'
+    held = int(counter.read_text()) if counter.exists() else 0
+    if held < int(os.environ.get('APT_LOCK_FAILURES', '0')):
+        counter.write_text(str(held + 1))
+        # A localized apt does not print the English text the wrapper searches for.
+        print('E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 1 (apt)' if os.environ.get('LC_ALL') == 'C'
+              else 'E: Sperre /var/lib/dpkg/lock-frontend konnte nicht angefordert werden', file=sys.stderr)
+        sys.exit(100)
     if args[0] == 'install':
-        installed.update(arg for arg in args[1:] if not arg.startswith('-'))
+        words = iter(args[1:])
+        for arg in words:
+            if arg == '-o': next(words, None)
+            elif not arg.startswith('-'): installed.add(arg)
         installed_path.write_text('\n'.join(sorted(installed)))
 elif name in ('python3', 'gzip'):
     if name == 'python3' and args == ['-c', 'import configobj, cryptography'] and os.environ.get('FAIL_PYTHON_IMPORT'):
@@ -248,6 +277,8 @@ elif name == 'cp':
         sys.exit(1)
     os.execv(os.environ['REAL_CP'], [os.environ['REAL_CP'], *args])
 elif name == 'dd':
+    if os.environ.get('FAIL_DD_AFTER_FAULT') and (root/'fault-used').exists():
+        sys.exit(1)
     # Real zero data with sparse allocation keeps repetitive fixture tests small.
     os.execv(os.environ['REAL_DD'], [os.environ['REAL_DD'], *args, 'conv=sparse'])
 elif name == 'install':
@@ -543,8 +574,10 @@ class PersonalBackup(unittest.TestCase):
         live=self.telemt_live_state()
         result=self.run_tool('backup')
         self.assertNotEqual(result.returncode,0)
-        self.assertIn('stream-enabled/stream.conf contains old inline Telegram Web Proxy Manager lines',result.stderr)
-        self.assertIn('then run Backup again',result.stderr)
+        self.assertIn(TWPM_BACKUP_RU,result.stderr)
+        self.assertIn(TWPM_BACKUP_EN,result.stderr)
+        self.assertLess(result.stderr.index(TWPM_BACKUP_RU),result.stderr.index(TWPM_BACKUP_EN))
+        self.assertNotIn('Update TWPM',result.stderr)
         self.assertFalse(list(self.path('/var/backups/x-ui').glob('*.tar.gz')))
         self.assertTrue(live==self.telemt_live_state(),'Refusal changed live files')
         archive=self.historical_telemt_archive(); original=archive.read_bytes()
@@ -1464,7 +1497,97 @@ class PersonalBackup(unittest.TestCase):
         result = self.run_tool('restore', archive, MISSING_PACKAGES='sqlite3 mtr-tiny')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         installs = [c for c in self.commands() if c[:2] == ['apt-get', 'install']]
-        self.assertEqual(installs, [['apt-get', 'install', '-y', '--no-install-recommends', 'sqlite3', 'mtr-tiny']])
+        self.assertEqual(installs, [['apt-get', 'install', '-o', 'DPkg::Lock::Timeout=300', '-y', '--no-install-recommends', 'sqlite3', 'mtr-tiny']])
+
+    def test_apt_lock_is_awaited_in_any_locale_before_packages_are_installed(self):
+        # Called directly: main() forces LC_ALL=C and would hide a wrapper that forgot it.
+        (self.root / 'commands').write_text('')
+        script = 'source "$1"; stage() { :; }; sleep() { echo "$1" >> "$FIXTURE_ROOT/sleeps"; }; install_missing_packages sqlite3'
+        result = subprocess.run(['bash', '-c', script, 'fixture', str(self.script)], text=True, capture_output=True,
+                                env={**self.env, 'LC_ALL': 'de_DE.UTF-8', 'MISSING_PACKAGES': 'sqlite3', 'APT_LOCK_FAILURES': '2'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [c for c in self.commands() if c[0] == 'apt-get']
+        # Two refused updates, one successful update, and only then the package installation.
+        self.assertEqual([c[1] for c in calls], ['update', 'update', 'update', 'install'])
+        self.assertTrue(all(['-o', 'DPkg::Lock::Timeout=300'] == c[2:4] for c in calls), calls)
+        self.assertEqual((self.root / 'sleeps').read_text().split(), ['10', '10'])
+        self.assertEqual(result.stderr.count('Менеджер пакетов apt занят'), 1, result.stderr)
+        self.assertEqual(result.stderr.count('The apt package manager is busy'), 1, result.stderr)
+        self.assertLess(result.stderr.index('Менеджер пакетов apt занят'), result.stderr.index('The apt package manager is busy'))
+        self.assertIn('НЕ перезагружайте', result.stderr)
+        self.assertIn('DO NOT reboot', result.stderr)
+
+    def test_apt_lock_error_other_than_a_lock_is_not_retried(self):
+        (self.root / 'commands').write_text('')
+        script = 'source "$1"; stage() { :; }; sleep() { echo "$1" >> "$FIXTURE_ROOT/sleeps"; }; install_missing_packages sqlite3'
+        result = subprocess.run(['bash', '-c', script, 'fixture', str(self.script)], text=True, capture_output=True,
+                                env={**self.env, 'MISSING_PACKAGES': 'sqlite3', 'FAIL_APT': '1'})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / 'sleeps').exists())
+        self.assertEqual(len([c for c in self.commands() if c[0] == 'apt-get']), 1)
+        self.assertIn('Cannot update package lists', result.stderr)
+
+    def test_foreign_nginx_rules_do_not_make_backup_detect_adguard(self):
+        self.write('/etc/nginx/sites-available/foreign.example.com',
+                   'server { location /dns-query { proxy_pass http://127.0.0.1:9; } location ^~ /adg-foreign/ { return 404; } }\n')
+        self.write('/etc/nginx/snippets/foreign.conf', 'location /dns-query { return 404; }\n')
+        archive = self.backup()
+        with tarfile.open(archive) as tar:
+            self.assertIs(json.load(tar.extractfile('meta.json'))['adguard_home'], False)
+
+    def test_restore_refuses_twpm_with_russian_then_english_text_and_changes_nothing(self):
+        archive = self.backup()
+        for marker in ('/var/lib/telemt-web-manager/manifest.json', '/etc/nginx/conf.d/telemt-web-manager.conf'):
+            with self.subTest(marker=marker):
+                self.write(marker, '')
+                (self.root / 'commands').write_text('')
+                self.write('/etc/x-ui/marker', 'unchanged')
+                found = self.run_tool('telemt-check')
+                self.assertEqual(found.returncode, 10, found.stderr)
+                result = self.run_tool('restore', archive)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(TWPM_RESTORE_RU, result.stderr)
+                self.assertIn(TWPM_RESTORE_EN, result.stderr)
+                self.assertLess(result.stderr.index(TWPM_RESTORE_RU), result.stderr.index(TWPM_RESTORE_EN))
+                self.assertEqual(self.path('/etc/x-ui/marker').read_text(), 'unchanged')
+                self.assertFalse(any(c[0] in ('apt-get', 'cp', 'tar', 'gzip') or c[:2] == ['systemctl', 'stop'] for c in self.commands()))
+                shutil.rmtree(self.path(marker).parent) if marker.startswith('/var/lib') else self.path(marker).unlink()
+        clear = self.run_tool('telemt-check')
+        self.assertEqual(clear.returncode, 0, clear.stderr)
+        self.assertEqual(self.run_tool('restore', archive).returncode, 0)
+
+    def test_rollback_snapshot_skips_testfiles_and_recreates_them(self):
+        archive = self.backup()
+        self.write('/etc/x-ui/target-marker', 'previous target')
+        (self.root / 'commands').write_text('')
+        result = self.run_tool('restore', archive, FAIL_HEALTH_SERVICE='mtr-backend', FAIL_ONCE='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue((self.root / 'fault-used').exists(), 'Intended service-health fault was not reached')
+        self.assertIn('Previous managed state/service states restored and checked', result.stderr)
+        copies = [c for c in self.commands() if c[0] == 'cp']
+        self.assertFalse(any('testfiles' in arg for c in copies for arg in c), 'Rollback snapshot copied testfiles')
+        snapshot = [c for c in copies if any('.rollback-' in arg for arg in c)]
+        for name in ('index.html', 'speedtest.js', 'speedtest_worker.js'):
+            self.assertTrue(any(arg.endswith('/var/www/diagnostics/' + name) for c in snapshot for arg in c), name)
+        self.assertEqual(self.path('/etc/x-ui/target-marker').read_text(), 'previous target')
+        self.assertIn('192.0.2.10', self.path('/var/www/diagnostics/index.html').read_text())
+        self.assertEqual(self.path('/var/www/diagnostics/speedtest.js').read_text(), 'fixture-js')
+        self.assertEqual(self.path('/var/www/diagnostics/testfiles/test-1g.bin').stat().st_size, 1024**3)
+        self.assertFalse(self.path('/var/www/diagnostics/testfiles/test-512m.bin').exists())
+        self.assertNotIn('speedtest files were not recreated', result.stderr)
+
+    def test_rollback_only_warns_when_testfiles_cannot_be_recreated(self):
+        archive = self.backup()
+        self.write('/etc/x-ui/target-marker', 'previous target')
+        result = self.run_tool('restore', archive, FAIL_HEALTH_SERVICE='mtr-backend', FAIL_ONCE='1', FAIL_DD_AFTER_FAULT='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Previous managed state/service states restored and checked', result.stderr)
+        self.assertNotIn('Automatic rollback could not be verified', result.stderr)
+        self.assertEqual(self.path('/etc/x-ui/target-marker').read_text(), 'previous target')
+        self.assertEqual(result.stderr.count('speedtest files were not recreated'), 1, result.stderr)
+        self.assertEqual(result.stderr.count('Файлы для speedtest не созданы заново'), 1, result.stderr)
+        self.assertLess(result.stderr.index('Файлы для speedtest'), result.stderr.index('speedtest files were not recreated'))
+        self.assertFalse(self.path('/var/www/diagnostics/testfiles/test-1g.bin').exists())
 
     def test_restore_keeps_installed_mtr_tiny_without_installing_mtr(self):
         archive=self.backup();(self.root/'commands').write_text('')
@@ -1496,7 +1619,7 @@ class PersonalBackup(unittest.TestCase):
         result = self.run_tool('restore', archive, MISSING_PACKAGES=missing)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = self.commands()
-        packages = [package for c in calls if c[:2] == ['apt-get', 'install'] for package in c[4:]]
+        packages = [package for c in calls if c[:2] == ['apt-get', 'install'] for package in c[6:]]
         self.assertCountEqual(packages, missing.split())
         self.assertNotIn('cron', packages)
         self.assertNotIn('python3-certbot-nginx', packages)
@@ -1532,7 +1655,7 @@ class PersonalBackup(unittest.TestCase):
                 else:
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('Restore completed successfully.', result.stdout)
-                    install = calls.index(['apt-get', 'install', '-y', '--no-install-recommends', 'python3', 'gzip', 'tar'])
+                    install = calls.index(['apt-get', 'install', '-o', 'DPkg::Lock::Timeout=300', '-y', '--no-install-recommends', 'python3', 'gzip', 'tar'])
                     gzip_test = next(i for i, c in enumerate(calls) if c[:2] == ['gzip', '-t'])
                     validation = next(i for i, c in enumerate(calls) if c[:3] == ['python3', '-', str(archive)])
                     extraction = next(i for i, c in enumerate(calls) if c[:2] == ['tar', '-xzf'])
