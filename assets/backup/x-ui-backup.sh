@@ -2241,6 +2241,10 @@ snapshot_restore_target() {
     # Diagnostics without testfiles (about 1.1 GiB of zeros): Restore and rollback create them again.
     if [[ -d /var/www/diagnostics ]]; then
         mkdir -p "$ROLLBACK_DIR/files/var/www/diagnostics" || die 'Cannot prepare rollback copy: /var/www/diagnostics'
+        # umask 077 made the snapshot directory 0700 root:root; keep the original owner and mode.
+        chown --reference=/var/www/diagnostics -- "$ROLLBACK_DIR/files/var/www/diagnostics" &&
+            chmod --reference=/var/www/diagnostics -- "$ROLLBACK_DIR/files/var/www/diagnostics" ||
+            die 'Cannot copy rollback state: /var/www/diagnostics'
         find /var/www/diagnostics -mindepth 1 -maxdepth 1 ! -name testfiles \
             -exec cp -a --reflink=auto -t "$ROLLBACK_DIR/files/var/www/diagnostics" -- {} + ||
             die 'Cannot copy rollback state: /var/www/diagnostics'

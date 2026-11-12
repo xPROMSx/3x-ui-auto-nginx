@@ -1559,6 +1559,11 @@ class PersonalBackup(unittest.TestCase):
     def test_rollback_snapshot_skips_testfiles_and_recreates_them(self):
         archive = self.backup()
         self.write('/etc/x-ui/target-marker', 'previous target')
+        diagnostics = self.path('/var/www/diagnostics')
+        if os.geteuid() == 0:
+            os.chown(diagnostics, 12360, 12370)
+        diagnostics.chmod(0o755)
+        before = (diagnostics.stat().st_uid, diagnostics.stat().st_gid, stat.S_IMODE(diagnostics.stat().st_mode))
         (self.root / 'commands').write_text('')
         result = self.run_tool('restore', archive, FAIL_HEALTH_SERVICE='mtr-backend', FAIL_ONCE='1')
         self.assertNotEqual(result.returncode, 0)
@@ -1575,6 +1580,8 @@ class PersonalBackup(unittest.TestCase):
         self.assertEqual(self.path('/var/www/diagnostics/testfiles/test-1g.bin').stat().st_size, 1024**3)
         self.assertFalse(self.path('/var/www/diagnostics/testfiles/test-512m.bin').exists())
         self.assertNotIn('speedtest files were not recreated', result.stderr)
+        after = diagnostics.stat()
+        self.assertEqual((after.st_uid, after.st_gid, stat.S_IMODE(after.st_mode)), before)
 
     def test_rollback_only_warns_when_testfiles_cannot_be_recreated(self):
         archive = self.backup()
