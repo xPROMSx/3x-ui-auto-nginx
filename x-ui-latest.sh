@@ -19,9 +19,24 @@ msg_ok() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then print
 msg_err() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;31m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
 msg_inf() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;36m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
 msg_warn() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;33m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+# 38;5;208 is orange: explanatory text of refusals and warnings.
+msg_note() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[38;5;208m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+ui_note() {
+    if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then
+        printf '\e[38;5;208m'; ui_text "$@"; printf '\e[0m'
+    else ui_text "$@"; fi
+}
 
 ui_rule() {
     printf '%s\n' '------------------------------------------------------------'
+}
+ui_frame() {
+    printf '%s\n' '============================================================'
+}
+# Refusal: red [FAIL] between frames, then the orange explanation (one language, chosen by the caller).
+ui_refuse() {
+    printf '\n'; ui_frame; msg_err '  [FAIL]'; ui_frame
+    msg_note "$1"; ui_frame
 }
 ui_title() {
     printf '\n%s\n' '============================================================'
@@ -3548,7 +3563,7 @@ twpm_blocks_restore() {
     local status=0
     bash /usr/local/bin/x-ui-backup telemt-check || status=$?
     (( status == 10 )) || return 1
-    msg_err "$(ui_text 'Telegram Web Proxy Manager (TWPM) was found on this server. Restore replaces the nginx configuration and would break it. Remove it manually: in the 3X-UI main menu open Telegram Web Proxy Manager, choose "Uninstall Telegram proxy" and answer y when asked whether to delete the certificate. Then run Restore again. After Restore, install TWPM again. The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.' 'На сервере найден Telegram Web Proxy Manager (TWPM). Восстановление заменяет настройки nginx, и его работа нарушилась бы. Удалите его вручную: в главном меню 3X-UI откройте Telegram Web Proxy Manager, выберите «Удалить Telegram-прокси» и на вопрос про сертификат ответьте y (удалить). Затем повторите восстановление. После восстановления переустановите TWPM. После новой установки TWPM ссылка подключения изменится. На данный момент на сервере ничего не изменено.')"
+    ui_refuse "$(ui_text 'Telegram Web Proxy Manager (TWPM) was found on this server. Restore replaces the nginx configuration and would break it. Remove it manually: in the 3X-UI main menu open Telegram Web Proxy Manager, choose "Uninstall Telegram proxy" and answer y when asked whether to delete the certificate. Then run Restore again. After Restore, install TWPM again. The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.' 'На сервере найден Telegram Web Proxy Manager (TWPM). Восстановление заменяет настройки nginx, и его работа нарушилась бы. Удалите его вручную: в главном меню 3X-UI откройте Telegram Web Proxy Manager, выберите «Удалить Telegram-прокси» и на вопрос про сертификат ответьте y (удалить). Затем повторите восстановление. После восстановления переустановите TWPM. После новой установки TWPM ссылка подключения изменится. На данный момент на сервере ничего не изменено.')"
 }
 
 post_restore_security() (
@@ -3650,7 +3665,10 @@ backup_action() (
     ui_text 'Enable UFW with SSH protection after Restore? [y/N] ' 'Включить UFW с защитой доступа по SSH после Restore? [y/N] '
     IFS= read -r answer || exit 0
     [[ "$answer" != y && "$answer" != Y ]] || ufw=y
-    ui_text 'Restore replaces project data on this server: the nginx configuration, the 3x-ui panel and its database, the websites (/var/www/html), project certificates and /root/cert, and AdGuard Home. Any other files in these folders will be deleted. Certificates of other sites are not touched. Trust this archive before continuing.\nType YES to restore: ' 'Восстановление заменит данные проекта на этом сервере: настройки nginx, панель 3x-ui с базой, сайты (/var/www/html), сертификаты проекта и /root/cert, AdGuard Home. Всё остальное в этих папках будет удалено. Сертификаты других сайтов не затрагиваются. Продолжайте только с доверенным архивом.\nДля восстановления введите YES: '
+    printf '\n'; ui_frame
+    ui_note 'Restore replaces project data on this server: the nginx configuration, the 3x-ui panel and its database, the websites (/var/www/html), project certificates and /root/cert, and AdGuard Home. Any other files in these folders will be deleted. Certificates of other sites are not touched. Trust this archive before continuing.\n' 'Восстановление заменит данные проекта на этом сервере: настройки nginx, панель 3x-ui с базой, сайты (/var/www/html), сертификаты проекта и /root/cert, AdGuard Home. Всё остальное в этих папках будет удалено. Сертификаты других сайтов не затрагиваются. Продолжайте только с доверенным архивом.\n'
+    ui_frame
+    ui_note 'Type YES to restore: ' 'Для восстановления введите YES: '
     IFS= read -r answer || exit 0
     [[ "$answer" == YES ]] || { ui_text 'Cancelled.\n' 'Отменено.\n'; exit 0; }
     if [[ "$apt" == y || "$ufw" == y ]]; then

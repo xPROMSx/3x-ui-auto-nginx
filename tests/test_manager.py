@@ -39,10 +39,13 @@ def tty_run(script, answers, timeout=8, env=None):
 
 YES_RU = ('Восстановление заменит данные проекта на этом сервере: настройки nginx, панель 3x-ui с базой, сайты (/var/www/html), '
           'сертификаты проекта и /root/cert, AdGuard Home. Всё остальное в этих папках будет удалено. Сертификаты других сайтов не затрагиваются. '
-          'Продолжайте только с доверенным архивом. Для восстановления введите YES:')
+          'Продолжайте только с доверенным архивом.')
 YES_EN = ('Restore replaces project data on this server: the nginx configuration, the 3x-ui panel and its database, the websites (/var/www/html), '
           'project certificates and /root/cert, and AdGuard Home. Any other files in these folders will be deleted. '
-          'Certificates of other sites are not touched. Trust this archive before continuing. Type YES to restore:')
+          'Certificates of other sites are not touched. Trust this archive before continuing.')
+YES_RU_PROMPT = 'Для восстановления введите YES:'
+YES_EN_PROMPT = 'Type YES to restore:'
+FRAME = '=' * 60
 
 
 class Manager(unittest.TestCase):
@@ -562,7 +565,7 @@ entrypoint
                                'Fail2ban для SSH? [y/N]','Включить UFW с защитой доступа по SSH','введите YES'):
                     self.assertIn(prompt,text)
                 self.assertNotIn('{"format_version":3}',text);self.assertIn('Формат: Backup v3',text)
-                self.assertIn(YES_RU,' '.join(text.replace(str(root),'').split()))  # the fixture relocates paths into its root
+                self.assertIn(f'{YES_RU} {FRAME} {YES_RU_PROMPT}',' '.join(text.replace(str(root),'').split()))  # the fixture relocates paths into its root
                 self.assertEqual(self.f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
                 if not restored and '\x04' not in answers:self.assertIn('Отменено.',text)
                 if flags.get('RESTORE_EXIT'):
@@ -579,14 +582,16 @@ entrypoint
                 (root/'restored').unlink(missing_ok=True)
                 code,text=tty_run(script,(choice+'\n3\n3\n0\n0\n').encode(),env={**self.f.env,'TELEMT_CHECK':'10'})
                 flat=' '.join(text.split())
-                self.assertIn(expected,flat)
+                self.assertIn(f'{FRAME} [FAIL] {FRAME} {expected} {FRAME}',flat)
+                # One language per choice: the other language's text is absent.
+                self.assertNotIn(TWPM_RESTORE_EN if choice=='2' else TWPM_RESTORE_RU,flat)
                 self.assertNotIn(absent,text);self.assertFalse((root/'restored').exists())
                 self.assertEqual(self.f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
         # Any other helper status (for example an old helper without the command) continues to the archive question.
         code,text=tty_run(script,b'1\n3\n3\n0\n0\n',env={**self.f.env,'TELEMT_CHECK':'1'})
         self.assertIn('Archive number',text);self.assertNotIn('Telegram Web Proxy Manager (TWPM) was found',text)
         code,text=tty_run(script,b'1\n3\n3\n/archive.tar.gz\nn\nn\nyes\n0\n0\n',env=self.f.env)
-        self.assertIn(YES_EN,' '.join(text.replace(str(root),'').split()));self.assertFalse((root/'restored').exists())
+        self.assertIn(f'{YES_EN} {FRAME} {YES_EN_PROMPT}',' '.join(text.replace(str(root),'').split()));self.assertFalse((root/'restored').exists())
 
     def test_post_restore_security_trust_cleanup_status_lock_and_partial_result(self):
         from test_personal_backup import relocated

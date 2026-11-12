@@ -34,6 +34,17 @@ stage() { STAGE=$*; printf '\n==> %s\n' "$*"; }
 ok()    { printf '[OK] %s\n' "$*"; }
 warn()  { printf '[WARN] %s\n' "$*" >&2; }
 die()   { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
+RULE='============================================================'
+# Colour only on a terminal, the same rule as msg_* in x-ui-latest.sh: paint FD ANSI-CODE TEXT. 38;5;208 is orange.
+paint() {
+    if [[ -t $1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[%sm%s\e[0m' "$2" "$3"; else printf '%s' "$3"; fi
+}
+# Refusal block: red [FAIL] between rules, then the orange text, Russian and English separated by an empty line.
+refusal_block() {
+    { printf '\n%s\n  ' "$RULE"; paint 2 '1;31' '[FAIL]'; printf '\n%s\n' "$RULE"
+      paint 2 '38;5;208' "$1"; printf '\n\n'; paint 2 '38;5;208' "$2"; printf '\n%s\n' "$RULE"; } >&2
+}
+die_block() { refusal_block "$@"; exit 1; }
 require_root() { [[ $EUID -eq 0 ]] || die 'Run x-ui-backup as root.'; }
 
 cleanup() {
@@ -154,25 +165,42 @@ host_identity() {
 }
 
 # apt-get that waits for the apt/dpkg locks (a fresh VPS updates itself for 10-60 minutes).
-# DPkg::Lock::Timeout does not cover the lists lock taken by "apt-get update", so a lock
-# error is retried for up to 60 minutes. LC_ALL=C keeps the searched error text in English.
+# Without DPkg::Lock::Timeout every lock (lists, dpkg frontend, dpkg) fails at once with
+# "Could not get lock" in LC_ALL=C, so one 10 s retry loop covers all of them and the user sees
+# one block instead of apt's raw errors. The output of an attempt is shown only when it ends the wait.
 apt_wait_run() {
-    local command=$1 log status deadline=$((SECONDS + 3600)) warned=0
+    local command=$1 log status waits=0
     shift
     log=$(mktemp) || return 1
     while :; do
         status=0
-        LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get "$command" -o DPkg::Lock::Timeout=300 "$@" 2>&1 | tee "$log" || status=$?
-        (( status )) || break
-        grep -Eq 'Could not get lock|Unable to acquire.*lock' "$log" && (( SECONDS < deadline )) || break
-        if (( ! warned )); then
-            warn $'Менеджер пакетов apt занят (на сервере идёт обновление системы). Жду до 60 минут, установка продолжится сама. НЕ перезагружайте и не выключайте сервер: это может сломать систему. Ничего не изменено. Прервать можно по Ctrl+C.\nThe apt package manager is busy (the server is installing system updates). Waiting up to 60 minutes; the operation continues automatically. DO NOT reboot or power off the server: this can break the system. Nothing has been changed yet. You can cancel with Ctrl+C.'
-            warned=1
-        fi
+        LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get "$command" "$@" > "$log" 2>&1 || status=$?
+        (( status )) && grep -Eq 'Could not get lock|Unable to acquire.*lock' "$log" && (( waits < 360 )) || break
+        (( waits )) || apt_wait_notice
+        (( ++waits % 6 )) || printf 'Ожидание конца обновления: %d из 60 мин. Не перезагружайте сервер.\nWaiting for the system update: %d of 60 min. Do not reboot the server.\n' $((waits / 6)) $((waits / 6))
         sleep 10
     done
-    rm -f "$log"
+    cat "$log"; rm -f "$log"
+    if (( waits && ! status )); then
+        paint 1 '1;32' $'[OK] Обновление системы завершено. Продолжаю Restore.\n[OK] System update finished. Continuing Restore.'; printf '\n'
+    fi
     return "$status"
+}
+
+apt_wait_notice() {
+    printf '\n%s\n' "$RULE"
+    paint 1 '1;36' $'  СЕРВЕР УСТАНАВЛИВАЕТ ОБНОВЛЕНИЯ СИСТЕМЫ\n  SERVER IS INSTALLING SYSTEM UPDATES'
+    printf '\n%s\n\n' "$RULE"
+    paint 1 '1;33' $'Свежий сервер сам обновляется сразу после первого запуска. Это может занять от 10 до 60 минут.
+Restore продолжится автоматически, когда обновление закончится. Данные ещё не восстанавливались.
+НЕ ПЕРЕЗАГРУЖАЙТЕ и не выключайте сервер - это может сломать систему.
+Можно безопасно отменить по Ctrl+C и запустить Restore позже.
+
+A fresh server updates itself right after the first start. This can take 10-60 minutes.
+Restore will continue automatically when the update finishes. No data has been restored yet.
+DO NOT reboot or power off the server - this can break the system.
+You can safely cancel with Ctrl+C and run Restore later.'
+    printf '\n'
 }
 
 install_missing_packages() {
@@ -577,7 +605,7 @@ preflight_target_telemt() {
     local status=0
     telemt_present || status=$?
     case $status in
-        0) die $'На сервере найден Telegram Web Proxy Manager (TWPM). Восстановление заменяет настройки nginx, и его работа нарушилась бы. Удалите его вручную: в главном меню 3X-UI откройте Telegram Web Proxy Manager, выберите «Удалить Telegram-прокси» и на вопрос про сертификат ответьте y (удалить). Затем повторите восстановление. После восстановления переустановите TWPM. После новой установки TWPM ссылка подключения изменится. На данный момент на сервере ничего не изменено.\nTelegram Web Proxy Manager (TWPM) was found on this server. Restore replaces the nginx configuration and would break it. Remove it manually: in the 3X-UI main menu open Telegram Web Proxy Manager, choose "Uninstall Telegram proxy" and answer y when asked whether to delete the certificate. Then run Restore again. After Restore, install TWPM again. The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.' ;;
+        0) die_block $'На сервере найден Telegram Web Proxy Manager (TWPM). Восстановление заменяет настройки nginx, и его работа нарушилась бы. Удалите его вручную: в главном меню 3X-UI откройте Telegram Web Proxy Manager, выберите «Удалить Telegram-прокси» и на вопрос про сертификат ответьте y (удалить). Затем повторите восстановление. После восстановления переустановите TWPM. После новой установки TWPM ссылка подключения изменится. На данный момент на сервере ничего не изменено.' $'Telegram Web Proxy Manager (TWPM) was found on this server. Restore replaces the nginx configuration and would break it. Remove it manually: in the 3X-UI main menu open Telegram Web Proxy Manager, choose "Uninstall Telegram proxy" and answer y when asked whether to delete the certificate. Then run Restore again. After Restore, install TWPM again. The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.' ;;
         1) ;;
         *) die 'Cannot inspect target nginx for Telemt; restore refused.' ;;
     esac
@@ -586,7 +614,8 @@ preflight_target_telemt() {
 exclude_staged_telemt() {
     # TWPM is foreign software: exclude its files by name and its Certbot
     # lineage by the vhost server_name. Never compare its generated bytes.
-    python3 - "$STAGING/files" /etc/nginx /etc/letsencrypt /root/cert "${1:-restore}" <<'PYTELEMT'
+    local status=0
+    python3 - "$STAGING/files" /etc/nginx /etc/letsencrypt /root/cert "${1:-restore}" <<'PYTELEMT' || status=$?
 import os, pathlib, re, shutil, sys
 root, nginx, certroot, panelcert, mode = sys.argv[1:]
 root = pathlib.Path(root)
@@ -613,14 +642,7 @@ ng, certs = staged(nginx), staged(certroot)
 stream = ng/'stream-enabled/stream.conf'
 if stream.is_file() and re.search(r'# telemt-web-manager|twm_frontend', read(stream)):
     if mode == 'backup':
-        sys.exit('[FAIL] Telegram Web Proxy Manager (TWPM) подключён по старой схеме (старая версия), Backup с ней не поддерживается. '
-                 'Удалите его (в главном меню 3X-UI откройте Telegram Web Proxy Manager, «Удалить Telegram-прокси», на вопрос про сертификат ответьте y), '
-                 'затем установите TWPM заново и повторите Backup. Если это сообщение появится снова, оставьте TWPM удалённым: Backup работает только без него. '
-                 'Ссылка подключения после новой установки изменится. На данный момент на сервере ничего не изменено.\n'
-                 'Telegram Web Proxy Manager (TWPM) is connected using an old layout (old version) that Backup does not support. '
-                 'Remove it (3X-UI main menu, Telegram Web Proxy Manager, "Uninstall Telegram proxy", answer y to the certificate question), '
-                 'then install TWPM again and repeat Backup. If this message appears again, leave TWPM uninstalled: Backup works only without it. '
-                 'The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.')
+        sys.exit(11)  # the bash side prints the refusal block
     sys.exit(f'[FAIL] {live(stream)} contains old inline Telegram Web Proxy Manager lines. Create a new Backup after updating TWPM. Nothing was restored.')
 vhost = ng/'conf.d/telemt-web-manager.conf'
 files = (vhost, ng/'conf.d/telemt-web-manager-acme.conf', ng/'stream-sni.d/telemt-web-manager.conf',
@@ -650,6 +672,9 @@ removed = [path for path in (*files, *lineage) if remove(path)]
 if removed:
     print('[OK] Telemt integration excluded from private staging')
 PYTELEMT
+    # Exit code 11: Backup of the old TWPM layout. The caller's ERR trap prints the failing stage after the block.
+    (( status != 11 )) || refusal_block $'Telegram Web Proxy Manager (TWPM) подключён по старой схеме (старая версия), Backup с ней не поддерживается. Удалите его (в главном меню 3X-UI откройте Telegram Web Proxy Manager, «Удалить Telegram-прокси», на вопрос про сертификат ответьте y), затем установите TWPM заново и повторите Backup. Если это сообщение появится снова, оставьте TWPM удалённым: Backup работает только без него. Ссылка подключения после новой установки изменится. На данный момент на сервере ничего не изменено.' $'Telegram Web Proxy Manager (TWPM) is connected using an old layout (old version) that Backup does not support. Remove it (3X-UI main menu, Telegram Web Proxy Manager, "Uninstall Telegram proxy", answer y to the certificate question), then install TWPM again and repeat Backup. If this message appears again, leave TWPM uninstalled: Backup works only without it. The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.'
+    return "$status"
 }
 
 cmd_backup() {
@@ -2529,7 +2554,7 @@ main() {
     fi
     export LC_ALL=C
     trap cleanup EXIT
-    trap 'printf "[FAIL] Operation failed during: %s\n" "$STAGE" >&2; exit 1' ERR
+    trap 'printf "\n" >&2; paint 2 "1;31" "[FAIL]" >&2; printf " Operation failed during: %s\n" "$STAGE" >&2; exit 1' ERR
     trap 'exit 130' INT
     trap 'exit 143' TERM
     case ${1:-} in

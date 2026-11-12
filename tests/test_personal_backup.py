@@ -52,6 +52,12 @@ TWPM_BACKUP_EN = ('Telegram Web Proxy Manager (TWPM) is connected using an old l
                   'Remove it (3X-UI main menu, Telegram Web Proxy Manager, "Uninstall Telegram proxy", answer y to the certificate question), '
                   'then install TWPM again and repeat Backup. If this message appears again, leave TWPM uninstalled: Backup works only without it. '
                   'The connection link will change after TWPM is installed again. Nothing has been changed on the server so far.')
+RULE = '=' * 60
+# The refusal block without colours (stderr is not a terminal): red [FAIL] label, Russian, an empty line, English.
+def refusal(russian, english):
+    return f'\n{RULE}\n  [FAIL]\n{RULE}\n{russian}\n\n{english}\n{RULE}\n'
+REFUSE_RESTORE = refusal(TWPM_RESTORE_RU, TWPM_RESTORE_EN)
+REFUSE_BACKUP = refusal(TWPM_BACKUP_RU, TWPM_BACKUP_EN)
 
 def relocated(source, root):
     # Apply a single pass so replacements cannot recursively match themselves.
@@ -241,8 +247,15 @@ elif name == 'apt-get':
     if held < int(os.environ.get('APT_LOCK_FAILURES', '0')):
         counter.write_text(str(held + 1))
         # A localized apt does not print the English text the wrapper searches for.
-        print('E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 1 (apt)' if os.environ.get('LC_ALL') == 'C'
-              else 'E: Sperre /var/lib/dpkg/lock-frontend konnte nicht angefordert werden', file=sys.stderr)
+        # The English lines are the real LC_ALL=C text of apt: "update" holds the lists lock, "install" the dpkg frontend lock.
+        if os.environ.get('LC_ALL') != 'C':
+            print('E: Sperre /var/lib/dpkg/lock-frontend konnte nicht angefordert werden', file=sys.stderr)
+        elif args[0] == 'update':
+            print('E: Could not get lock /var/lib/apt/lists/lock. It is held by process 28214 (python3)\n'
+                  'E: Unable to lock directory /var/lib/apt/lists/', file=sys.stderr)
+        else:
+            print('E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 1 (apt)\n'
+                  'E: Unable to acquire the dpkg frontend lock (/var/lib/dpkg/lock-frontend), is another process using it?', file=sys.stderr)
         sys.exit(100)
     if args[0] == 'install':
         words = iter(args[1:])
@@ -574,6 +587,9 @@ class PersonalBackup(unittest.TestCase):
         live=self.telemt_live_state()
         result=self.run_tool('backup')
         self.assertNotEqual(result.returncode,0)
+        self.assertIn(REFUSE_BACKUP,result.stderr)
+        # The failing stage follows the block after an empty line.
+        self.assertRegex(result.stderr,re.escape(RULE)+r'\n\n\[FAIL\] Operation failed during: ')
         self.assertIn(TWPM_BACKUP_RU,result.stderr)
         self.assertIn(TWPM_BACKUP_EN,result.stderr)
         self.assertLess(result.stderr.index(TWPM_BACKUP_RU),result.stderr.index(TWPM_BACKUP_EN))
@@ -767,7 +783,7 @@ class PersonalBackup(unittest.TestCase):
                 (self.root/'commands').write_text('')
                 result=self.run_tool('restore',archive,MISSING_PACKAGES='python3 gzip tar',FAIL_APT='1')
                 self.assertNotEqual(result.returncode,0)
-                self.assertIn(TWPM_RESTORE_RU,result.stderr);self.assertIn(TWPM_RESTORE_EN,result.stderr)
+                self.assertIn(REFUSE_RESTORE,result.stderr)
                 self.assertFalse(any(c[0] in ('apt-get','cp','tar','gzip') or c[:2]==['systemctl','stop'] for c in self.commands()))
                 self.assertFalse(list(self.path('/var/backups/x-ui').glob('.rollback-*')))
                 after=(path.lstat().st_mode,os.readlink(path) if path.is_symlink() else
@@ -841,7 +857,7 @@ class PersonalBackup(unittest.TestCase):
                 (self.root/'commands').write_text('')
                 result = self.run_tool('restore', archive, MISSING_PACKAGES='python3 gzip tar', FAIL_APT='1')
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn(TWPM_RESTORE_RU, result.stderr); self.assertIn(TWPM_RESTORE_EN, result.stderr)
+                self.assertIn(REFUSE_RESTORE, result.stderr)
                 self.assertFalse(any(c[0] in ('apt-get','cp','tar','gzip') or c[:2] == ['systemctl','stop'] for c in self.commands()))
                 self.assertFalse(list(self.path('/var/backups/x-ui').glob('.rollback-*')))
                 self.assertEqual(self.path(path).read_text(), 'twm_frontend private Telemt state')
@@ -853,7 +869,7 @@ class PersonalBackup(unittest.TestCase):
         (self.root/'commands').write_text('')
         result = self.run_tool('restore', archive)
         self.assertNotEqual(result.returncode,0)
-        self.assertIn(TWPM_RESTORE_RU,result.stderr);self.assertIn(TWPM_RESTORE_EN,result.stderr)
+        self.assertIn(REFUSE_RESTORE,result.stderr)
         self.assertEqual(json.loads((self.root/'services.json').read_text()),services)
         self.assertFalse(any(c[:2] == ['systemctl','stop'] for c in self.commands()))
 
@@ -1497,7 +1513,7 @@ class PersonalBackup(unittest.TestCase):
         result = self.run_tool('restore', archive, MISSING_PACKAGES='sqlite3 mtr-tiny')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         installs = [c for c in self.commands() if c[:2] == ['apt-get', 'install']]
-        self.assertEqual(installs, [['apt-get', 'install', '-o', 'DPkg::Lock::Timeout=300', '-y', '--no-install-recommends', 'sqlite3', 'mtr-tiny']])
+        self.assertEqual(installs, [['apt-get', 'install', '-y', '--no-install-recommends', 'sqlite3', 'mtr-tiny']])
 
     def test_apt_lock_is_awaited_in_any_locale_before_packages_are_installed(self):
         # Called directly: main() forces LC_ALL=C and would hide a wrapper that forgot it.
@@ -1509,13 +1525,53 @@ class PersonalBackup(unittest.TestCase):
         calls = [c for c in self.commands() if c[0] == 'apt-get']
         # Two refused updates, one successful update, and only then the package installation.
         self.assertEqual([c[1] for c in calls], ['update', 'update', 'update', 'install'])
-        self.assertTrue(all(['-o', 'DPkg::Lock::Timeout=300'] == c[2:4] for c in calls), calls)
+        # apt-get is not given its own silent 5-minute lock wait: the retry loop and its block do the waiting.
+        self.assertFalse(any('DPkg::Lock::Timeout=300' in c for c in calls), calls)
         self.assertEqual((self.root / 'sleeps').read_text().split(), ['10', '10'])
-        self.assertEqual(result.stderr.count('Менеджер пакетов apt занят'), 1, result.stderr)
-        self.assertEqual(result.stderr.count('The apt package manager is busy'), 1, result.stderr)
-        self.assertLess(result.stderr.index('Менеджер пакетов apt занят'), result.stderr.index('The apt package manager is busy'))
-        self.assertIn('НЕ перезагружайте', result.stderr)
-        self.assertIn('DO NOT reboot', result.stderr)
+        self.assertEqual(result.stdout.count('СЕРВЕР УСТАНАВЛИВАЕТ ОБНОВЛЕНИЯ СИСТЕМЫ'), 1, result.stdout)
+        self.assertEqual(result.stdout.count('SERVER IS INSTALLING SYSTEM UPDATES'), 1, result.stdout)
+        self.assertLess(result.stdout.index('СЕРВЕР УСТАНАВЛИВАЕТ'), result.stdout.index('SERVER IS INSTALLING'))
+        self.assertIn('НЕ ПЕРЕЗАГРУЖАЙТЕ', result.stdout)
+        self.assertIn('DO NOT reboot', result.stdout)
+
+    def test_apt_wait_shows_one_block_minute_progress_and_ok_without_raw_apt_lock_lines(self):
+        def wait(failures):
+            (self.root / 'commands').write_text(''); (self.root / 'apt-lock-count').unlink(missing_ok=True)
+            (self.root / 'sleeps').unlink(missing_ok=True); (self.root / 'installed-packages').unlink(missing_ok=True)
+            script = 'source "$1"; stage() { :; }; sleep() { echo "$1" >> "$FIXTURE_ROOT/sleeps"; }; install_missing_packages sqlite3'
+            return subprocess.run(['bash', '-c', script, 'fixture', str(self.script)], text=True, capture_output=True,
+                                  env={**self.env, 'LC_ALL': 'C', 'NO_COLOR': '1', 'MISSING_PACKAGES': 'sqlite3',
+                                       'APT_LOCK_FAILURES': str(failures)})
+        # 13 refused "apt-get update" attempts = 13 sleeps of 10 s: two full minutes of progress.
+        result = wait(13); everything = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, everything)
+        for raw in ('Could not get lock', 'Unable to lock directory', 'Unable to acquire', 'held by process'):
+            self.assertNotIn(raw, everything)
+        for text in ('СЕРВЕР УСТАНАВЛИВАЕТ ОБНОВЛЕНИЯ СИСТЕМЫ', 'SERVER IS INSTALLING SYSTEM UPDATES',
+                     'НЕ ПЕРЕЗАГРУЖАЙТЕ', 'DO NOT reboot'):
+            self.assertEqual(everything.count(text), 1, (text, everything))
+        self.assertEqual(everything.count('Ctrl+C'), 2, everything)  # once in Russian, once in English
+        for minute in (1, 2):
+            self.assertEqual(everything.count(f'Ожидание конца обновления: {minute} из 60 мин.'), 1, everything)
+            self.assertEqual(everything.count(f'Waiting for the system update: {minute} of 60 min.'), 1, everything)
+        self.assertNotIn('из 60 мин.', everything.split('Ожидание конца обновления: 2 из 60 мин.')[1])
+        # Russian before English, and [OK] comes last, once per language.
+        self.assertLess(everything.index('СЕРВЕР УСТАНАВЛИВАЕТ'), everything.index('SERVER IS INSTALLING'))
+        self.assertLess(everything.index('[OK] Обновление системы завершено'), everything.index('[OK] System update finished'))
+        self.assertEqual(everything.count('[OK] Обновление системы завершено'), 1)
+        self.assertTrue(everything.rstrip().endswith('[OK] System update finished. Continuing Restore.'), everything)
+        calls = [c for c in self.commands() if c[0] == 'apt-get']
+        self.assertEqual([c[1] for c in calls], ['update'] * 14 + ['install'])
+        self.assertFalse(any('DPkg::Lock::Timeout=300' in c for c in calls), calls)
+        self.assertEqual((self.root / 'sleeps').read_text().split(), ['10'] * 13)
+        # Still locked after 60 minutes: the last apt output is shown once, then the operation fails.
+        result = wait(1000); everything = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(len((self.root / 'sleeps').read_text().split()), 360)
+        self.assertEqual(everything.count('Could not get lock'), 1, everything)
+        self.assertEqual(everything.count('Ожидание конца обновления: 60 из 60 мин.'), 1)
+        self.assertNotIn('[OK] System update finished', everything)
+        self.assertIn('Cannot update package lists', everything)
 
     def test_apt_lock_error_other_than_a_lock_is_not_retried(self):
         (self.root / 'commands').write_text('')
@@ -1546,8 +1602,7 @@ class PersonalBackup(unittest.TestCase):
                 self.assertEqual(found.returncode, 10, found.stderr)
                 result = self.run_tool('restore', archive)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn(TWPM_RESTORE_RU, result.stderr)
-                self.assertIn(TWPM_RESTORE_EN, result.stderr)
+                self.assertIn(REFUSE_RESTORE, result.stderr)
                 self.assertLess(result.stderr.index(TWPM_RESTORE_RU), result.stderr.index(TWPM_RESTORE_EN))
                 self.assertEqual(self.path('/etc/x-ui/marker').read_text(), 'unchanged')
                 self.assertFalse(any(c[0] in ('apt-get', 'cp', 'tar', 'gzip') or c[:2] == ['systemctl', 'stop'] for c in self.commands()))
@@ -1626,7 +1681,7 @@ class PersonalBackup(unittest.TestCase):
         result = self.run_tool('restore', archive, MISSING_PACKAGES=missing)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = self.commands()
-        packages = [package for c in calls if c[:2] == ['apt-get', 'install'] for package in c[6:]]
+        packages = [package for c in calls if c[:2] == ['apt-get', 'install'] for package in c[4:]]
         self.assertCountEqual(packages, missing.split())
         self.assertNotIn('cron', packages)
         self.assertNotIn('python3-certbot-nginx', packages)
@@ -1662,7 +1717,7 @@ class PersonalBackup(unittest.TestCase):
                 else:
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn('Restore completed successfully.', result.stdout)
-                    install = calls.index(['apt-get', 'install', '-o', 'DPkg::Lock::Timeout=300', '-y', '--no-install-recommends', 'python3', 'gzip', 'tar'])
+                    install = calls.index(['apt-get', 'install', '-y', '--no-install-recommends', 'python3', 'gzip', 'tar'])
                     gzip_test = next(i for i, c in enumerate(calls) if c[:2] == ['gzip', '-t'])
                     validation = next(i for i, c in enumerate(calls) if c[:3] == ['python3', '-', str(archive)])
                     extraction = next(i for i, c in enumerate(calls) if c[:2] == ['tar', '-xzf'])
