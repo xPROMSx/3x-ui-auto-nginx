@@ -767,7 +767,7 @@ class PersonalBackup(unittest.TestCase):
                 (self.root/'commands').write_text('')
                 result=self.run_tool('restore',archive,MISSING_PACKAGES='python3 gzip tar',FAIL_APT='1')
                 self.assertNotEqual(result.returncode,0)
-                self.assertIn('existing or partial Telemt',result.stderr)
+                self.assertIn(TWPM_RESTORE_RU,result.stderr);self.assertIn(TWPM_RESTORE_EN,result.stderr)
                 self.assertFalse(any(c[0] in ('apt-get','cp','tar','gzip') or c[:2]==['systemctl','stop'] for c in self.commands()))
                 self.assertFalse(list(self.path('/var/backups/x-ui').glob('.rollback-*')))
                 after=(path.lstat().st_mode,os.readlink(path) if path.is_symlink() else
@@ -841,7 +841,7 @@ class PersonalBackup(unittest.TestCase):
                 (self.root/'commands').write_text('')
                 result = self.run_tool('restore', archive, MISSING_PACKAGES='python3 gzip tar', FAIL_APT='1')
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn('Telemt', result.stderr)
+                self.assertIn(TWPM_RESTORE_RU, result.stderr); self.assertIn(TWPM_RESTORE_EN, result.stderr)
                 self.assertFalse(any(c[0] in ('apt-get','cp','tar','gzip') or c[:2] == ['systemctl','stop'] for c in self.commands()))
                 self.assertFalse(list(self.path('/var/backups/x-ui').glob('.rollback-*')))
                 self.assertEqual(self.path(path).read_text(), 'twm_frontend private Telemt state')
@@ -853,7 +853,7 @@ class PersonalBackup(unittest.TestCase):
         (self.root/'commands').write_text('')
         result = self.run_tool('restore', archive)
         self.assertNotEqual(result.returncode,0)
-        self.assertIn('Telemt',result.stderr)
+        self.assertIn(TWPM_RESTORE_RU,result.stderr);self.assertIn(TWPM_RESTORE_EN,result.stderr)
         self.assertEqual(json.loads((self.root/'services.json').read_text()),services)
         self.assertFalse(any(c[:2] == ['systemctl','stop'] for c in self.commands()))
 

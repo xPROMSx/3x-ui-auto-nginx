@@ -562,7 +562,7 @@ entrypoint
                                'Fail2ban для SSH? [y/N]','Включить UFW с защитой доступа по SSH','введите YES'):
                     self.assertIn(prompt,text)
                 self.assertNotIn('{"format_version":3}',text);self.assertIn('Формат: Backup v3',text)
-                self.assertIn(YES_RU,' '.join(text.split()))
+                self.assertIn(YES_RU,' '.join(text.replace(str(root),'').split()))  # the fixture relocates paths into its root
                 self.assertEqual(self.f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
                 if not restored and '\x04' not in answers:self.assertIn('Отменено.',text)
                 if flags.get('RESTORE_EXIT'):
@@ -586,7 +586,7 @@ entrypoint
         code,text=tty_run(script,b'1\n3\n3\n0\n0\n',env={**self.f.env,'TELEMT_CHECK':'1'})
         self.assertIn('Archive number',text);self.assertNotIn('Telegram Web Proxy Manager (TWPM) was found',text)
         code,text=tty_run(script,b'1\n3\n3\n/archive.tar.gz\nn\nn\nyes\n0\n0\n',env=self.f.env)
-        self.assertIn(YES_EN,' '.join(text.split()));self.assertFalse((root/'restored').exists())
+        self.assertIn(YES_EN,' '.join(text.replace(str(root),'').split()));self.assertFalse((root/'restored').exists())
 
     def test_post_restore_security_trust_cleanup_status_lock_and_partial_result(self):
         from test_personal_backup import relocated
