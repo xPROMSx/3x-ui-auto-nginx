@@ -546,7 +546,7 @@ curl() {
                     self.assertEqual(f.p(f.module.STREAM).read_text().replace('new-panel.example',f.panel).replace('new-cover.example',f.reality),stream)
 
     def test_telemt_conflicts_and_unknown_routes_refuse_before_backup(self):
-        for fault in ('panel-conflict','reality-conflict','unknown','mixed','include-position','commented-includes'):
+        for fault in ('panel-conflict','reality-conflict','unknown','mixed','include-position'):
             with self.subTest(fault=fault):
                 f=self.fixture();f.telemt(True);before=f.state()
                 stream=f.p(f.module.STREAM)
@@ -556,11 +556,6 @@ curl() {
                 elif fault=='include-position':
                     directive='    include /etc/nginx/stream-sni.d/*.conf;\n'
                     stream.write_text(stream.read_text().replace(directive,'')+'\n'+directive)
-                elif fault=='commented-includes':
-                    text=stream.read_text()
-                    for directory in ('stream-sni.d','stream-upstreams.d'):
-                        text=text.replace('include /etc/nginx/'+directory+'/*.conf;','# include /etc/nginx/'+directory+'/*.conf;')
-                    stream.write_text(text)
                 with self.assertRaises(f.module.Refusal):
                     f.change('telegram.example' if fault=='panel-conflict' else 'new.example',
                              'telegram.example' if fault=='reality-conflict' else None)
@@ -712,6 +707,47 @@ curl() {
         f,_=setup();f.p('/etc/nginx/stream-sni.d/other.conf').unlink()
         f.write('/etc/nginx/stream-sni.d/deploy-clash.conf','    '+f.panel+' foreign_up;\n')
         with self.assertRaises(f.module.Refusal):f.operation.discover()
+
+    def test_foreign_stream_files_with_loose_permissions_do_not_block(self):
+        f=self.fixture()
+        sni=f.p('/etc/nginx/stream-sni.d')
+        f.write('/etc/nginx/stream-sni.d/other.conf','    other.example foreign_up;\n',0o664)
+        f.write('/etc/nginx/stream-upstreams.d/other.conf','upstream foreign_up { server 127.0.0.1:7555; }\n',0o664)
+        (sni/'broken.conf').mkdir()  # matches *.conf but cannot be read as text: skipped
+        sni.chmod(0o750)
+        owned={path:f.p(path).read_bytes() for path in ('/etc/nginx/stream-sni.d/other.conf','/etc/nginx/stream-upstreams.d/other.conf')}
+        self.assertEqual(f.operation.discover()['telemt']['domains'],['other.example'])
+        f.change('new-panel.example','new-cover.example')
+        self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Foreign stream include files changed')
+        self.assertEqual(f.operation.discover()['domains']['panel'],'new-panel.example')
+
+    def test_foreign_sni_file_without_stream_include_does_not_block_but_its_name_does(self):
+        def setup():
+            f=self.fixture();stream=f.p(f.module.STREAM).read_text()
+            for directory in ('stream-sni.d','stream-upstreams.d'):
+                stream=stream.replace('    include /etc/nginx/'+directory+'/*.conf;\n','').replace('include /etc/nginx/'+directory+'/*.conf;\n','')
+            self.assertNotIn('include /etc/nginx/stream-',stream)
+            f.write(f.module.STREAM,stream)
+            f.write('/etc/nginx/stream-sni.d/other.conf','    other.example foreign_up;\n',0o664)
+            return f
+        f=setup()
+        f.change('new-panel.example','new-cover.example')
+        self.assertEqual(f.operation.discover()['domains']['panel'],'new-panel.example')
+        for panel,reality in (('other.example',None),(None,'other.example')):
+            f=setup();before=f.state()
+            with self.assertRaises(f.module.Refusal):f.change(panel or 'new-panel.example',reality)
+            self.assertTrue(f.state()==before,'Refusal changed SQLite')
+            self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] or args[0]=='certbot' for _,args in f.calls))
+            self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+
+    def test_twpm_sni_file_without_conf_d_include_does_not_block(self):
+        f=self.fixture();owned=f.telemt(True)
+        main=f.p('/etc/nginx/nginx.conf');text=main.read_text()
+        self.assertIn('include /etc/nginx/conf.d/*.conf;',text)
+        main.write_text(text.replace(' include /etc/nginx/conf.d/*.conf;',''))
+        f.change('new-panel.example','new-cover.example')
+        self.assertEqual(f.operation.discover()['telemt']['domains'],['telegram.example'])
+        self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'TWPM files changed')
 
     def test_old_and_new_empty_stream_contracts_keep_reality_xver(self):
         for historical in (False,True):

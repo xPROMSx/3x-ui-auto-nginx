@@ -45,7 +45,6 @@ AGH = '/opt/AdGuardHome/managed.json'
 CORE = ('reality', 'ws', 'grpc', 'xhttp', 'hysteria2')
 SNI_INCLUDE = '/etc/nginx/stream-sni.d/*.conf'
 UPSTREAM_INCLUDE = '/etc/nginx/stream-upstreams.d/*.conf'
-TWPM_SNI = '/etc/nginx/stream-sni.d/telemt-web-manager.conf'
 
 
 class Refusal(ValueError):
@@ -415,25 +414,18 @@ class Operation:
         require('# telemt-web-manager' not in stream and 'twm_frontend' not in stream,
                 'stream.conf содержит старые inline-строки Telegram Web Proxy Manager. Обновите TWPM до текущей версии '
                 'или удалите эти строки, затем повторите. Данные не менялись.')
-        files = {}
         for directory in ('/etc/nginx/stream-sni.d', '/etc/nginx/stream-upstreams.d'):
-            path = self.path(directory)
             self.parents(directory+'/x.conf')
-            files[directory] = []
-            if os.path.lexists(path):
-                require(stat.S_ISDIR(path.lstat().st_mode) and path.stat().st_uid == path.stat().st_gid == 0 and
-                        stat.S_IMODE(path.stat().st_mode) == 0o755, 'Unsafe nginx stream include directory.')
-                files[directory] = sorted('/'+str(p.relative_to(self.root)) for p in path.glob('*.conf'))
-        context['telemt'] = None
-        if any(files.values()):
-            hosts = []
-            for name in files['/etc/nginx/stream-sni.d']:
-                hosts += re.findall(r'^\s*([a-z0-9.-]+)\s+[^\s;]+\s*;', re.sub(r'(?m)#.*$', '', self.read(name)), re.M)
-            require(not set(hosts) & set(context['domains'].values()), 'A stream SNI include file conflicts with a managed 3X-UI domain.')
-            if os.path.lexists(self.path(TWPM_SNI)):
-                main = re.sub(r'(?m)#.*$', '', self.read('/etc/nginx/nginx.conf'))
-                require(main.count('include /etc/nginx/conf.d/*.conf;') == 1, 'Telemt vhosts are not included through the known HTTP contract.')
-            context['telemt'] = dict(domains=hosts, sni=bool(files['/etc/nginx/stream-sni.d']))
+        hosts = []; found = False
+        for path in sorted(self.path('/etc/nginx/stream-sni.d').glob('*.conf')):
+            found = True
+            try:
+                text = path.read_text()
+            except (OSError, ValueError):
+                continue  # Foreign file nginx may include; never a reason to refuse.
+            hosts += re.findall(r'^\s*([a-z0-9.-]+)\s+[^\s;]+\s*;', re.sub(r'(?m)#.*$', '', text), re.M)
+        require(not set(hosts) & set(context['domains'].values()), 'A stream SNI include file conflicts with a managed 3X-UI domain.')
+        context['telemt'] = dict(domains=hosts) if found else None
         return stream
 
     def validate_files(self, context):
@@ -455,8 +447,6 @@ class Operation:
             row = context['rows'][context['inbound_roles']['vision']]
             expected += 'upstream vision { server 127.0.0.1:'+str(row['port'])+'; }'
         layouts = (('', ''), ('include '+SNI_INCLUDE+';', 'include '+UPSTREAM_INCLUDE+';'))
-        if context['telemt'] is not None:
-            layouts = layouts[1:]  # Files alone never prove an active include route.
         if context['hysteria_cover']:
             require(context['streams'][context['inbound_roles']['reality']]['realitySettings'].get('xver') == 1, 'Backup upstream requires REALITY PROXY v1.')
             expected = expected.replace('upstream xray { server 127.0.0.1:8443; }', 'upstream xray { server 127.0.0.1:8443 max_fails=0; server 127.0.0.1:9443 backup; }')
@@ -810,7 +800,7 @@ class Operation:
         require(panel != old['reality'] and reality != old['panel'], 'Panel/REALITY role exchange is unsupported; choose distinct new domains.')
         require((panel, reality) != (old['panel'], old['reality']), 'Domains are unchanged; no operation is necessary.')
         telemt = context['telemt']
-        if telemt is not None and telemt['sni'] and not telemt['domains']:
+        if telemt is not None and not telemt['domains']:
             print('WARN: no domain names found in /etc/nginx/stream-sni.d/*.conf; domain conflict check skipped.', file=sys.stderr)
         require(not telemt or not {panel, reality} & set(telemt['domains']),
                 'New domain conflicts with a stream SNI include route; no data changed.')
