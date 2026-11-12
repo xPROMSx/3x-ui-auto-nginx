@@ -45,7 +45,7 @@ AGH = '/opt/AdGuardHome/managed.json'
 CORE = ('reality', 'ws', 'grpc', 'xhttp', 'hysteria2')
 SNI_INCLUDE = '/etc/nginx/stream-sni.d/*.conf'
 UPSTREAM_INCLUDE = '/etc/nginx/stream-upstreams.d/*.conf'
-TELEMT_INCLUDES = ('/etc/nginx/stream-sni.d/telemt-web-manager.conf', '/etc/nginx/stream-upstreams.d/telemt-web-manager.conf')
+TWPM_SNI = '/etc/nginx/stream-sni.d/telemt-web-manager.conf'
 
 
 class Refusal(ValueError):
@@ -406,31 +406,34 @@ class Operation:
         return context
 
     def stream_integration(self, context, stream):
-        """Read TWPM SNI names for the domain conflict check only.
+        """Read SNI names from the stream include files for the domain conflict check only.
 
-        TWPM files are foreign: recognized by name, never compared or guarded.
+        The include files are foreign (TWPM or the administrator's own): only *.conf
+        files are read, names are matched exactly, nothing is compared or guarded.
         The complete stream still has to match our bounded template.
         """
         require('# telemt-web-manager' not in stream and 'twm_frontend' not in stream,
                 'stream.conf содержит старые inline-строки Telegram Web Proxy Manager. Обновите TWPM до текущей версии '
                 'или удалите эти строки, затем повторите. Данные не менялись.')
-        entries = []
+        files = {}
         for directory in ('/etc/nginx/stream-sni.d', '/etc/nginx/stream-upstreams.d'):
             path = self.path(directory)
-            self.parents(directory+'/telemt-web-manager.conf')
+            self.parents(directory+'/x.conf')
+            files[directory] = []
             if os.path.lexists(path):
                 require(stat.S_ISDIR(path.lstat().st_mode) and path.stat().st_uid == path.stat().st_gid == 0 and
                         stat.S_IMODE(path.stat().st_mode) == 0o755, 'Unsafe nginx stream include directory.')
-                entries += [str(p.relative_to(self.root)) for p in path.iterdir()]
-        require(set(entries) <= {name.lstrip('/') for name in TELEMT_INCLUDES}, 'Unknown additional nginx stream include files.')
+                files[directory] = sorted('/'+str(p.relative_to(self.root)) for p in path.glob('*.conf'))
         context['telemt'] = None
-        if entries:
-            sni = self.read(TELEMT_INCLUDES[0]) if os.path.lexists(self.path(TELEMT_INCLUDES[0])) else ''
-            hosts = re.findall(r'^\s*([a-z0-9.-]+)\s+twm_frontend\s*;', re.sub(r'(?m)#.*$', '', sni), re.M)
-            require(not set(hosts) & set(context['domains'].values()), 'Telemt SNI conflicts with a managed 3X-UI domain.')
-            main = re.sub(r'(?m)#.*$', '', self.read('/etc/nginx/nginx.conf'))
-            require(main.count('include /etc/nginx/conf.d/*.conf;') == 1, 'Telemt vhosts are not included through the known HTTP contract.')
-            context['telemt'] = dict(domains=hosts)
+        if any(files.values()):
+            hosts = []
+            for name in files['/etc/nginx/stream-sni.d']:
+                hosts += re.findall(r'^\s*([a-z0-9.-]+)\s+[^\s;]+\s*;', re.sub(r'(?m)#.*$', '', self.read(name)), re.M)
+            require(not set(hosts) & set(context['domains'].values()), 'A stream SNI include file conflicts with a managed 3X-UI domain.')
+            if os.path.lexists(self.path(TWPM_SNI)):
+                main = re.sub(r'(?m)#.*$', '', self.read('/etc/nginx/nginx.conf'))
+                require(main.count('include /etc/nginx/conf.d/*.conf;') == 1, 'Telemt vhosts are not included through the known HTTP contract.')
+            context['telemt'] = dict(domains=hosts, sni=bool(files['/etc/nginx/stream-sni.d']))
         return stream
 
     def validate_files(self, context):
@@ -807,10 +810,10 @@ class Operation:
         require(panel != old['reality'] and reality != old['panel'], 'Panel/REALITY role exchange is unsupported; choose distinct new domains.')
         require((panel, reality) != (old['panel'], old['reality']), 'Domains are unchanged; no operation is necessary.')
         telemt = context['telemt']
-        if telemt is not None and not telemt['domains']:
-            print('WARN: Telegram Web Proxy Manager domain not found in '+TELEMT_INCLUDES[0]+'; domain conflict check skipped.', file=sys.stderr)
+        if telemt is not None and telemt['sni'] and not telemt['domains']:
+            print('WARN: no domain names found in /etc/nginx/stream-sni.d/*.conf; domain conflict check skipped.', file=sys.stderr)
         require(not telemt or not {panel, reality} & set(telemt['domains']),
-                'New domain conflicts with the Telemt SNI route; no data changed.')
+                'New domain conflicts with a stream SNI include route; no data changed.')
         history = (context['manifest'] or {}).get('retained_domains', {})
         require(isinstance(history, dict), 'Invalid retained domain ownership metadata.')
         effective = self.run('nginx', '-T').decode()
@@ -818,10 +821,12 @@ class Operation:
             for names in re.findall(r'\bserver_name\s+([^;]+);', re.sub(r'(?m)#.*$', '', text)):
                 for name in names.split():
                     name = name.strip('"\'')
+                    if name.startswith('~') or '$' in name:
+                        continue
                     for target, previous in ((panel, old['panel']), (reality, old['reality'])):
                         if target == previous or (file in ('/etc/nginx/sites-enabled/80.conf','/etc/nginx/sites-available/80.conf') and target in history):
                             continue
-                        require(not name.startswith('~') and '$' not in name and name != target and not
+                        require(name != target and not
                                 (name.startswith('*.') and target.endswith(name[1:])) and not
                                 (name.startswith('.') and (target == name[1:] or target.endswith(name))),
                                 'New domain conflicts with an existing nginx server name; no data changed.')
@@ -1101,6 +1106,8 @@ class Operation:
             allowed |= {'/etc/nginx/sites-available/'+domain, '/etc/nginx/sites-enabled/'+domain}
         allowed |= {'/root/cert/'+new['panel'], '/root/cert/'+new['panel']+'/fullchain.pem', '/root/cert/'+new['panel']+'/privkey.pem'}
         require(len(record['files']) <= 24 and len({r['path'] for r in record['files']}) == len(record['files']), 'Invalid bounded recovery file list.')
+        lineages = record.get('new_lineages', [])
+        require(isinstance(lineages, list) and len(lineages) <= 2 and all(map(hostname, lineages)), 'Invalid new certificate lineage list in recovery journal.')
         for item in record['files']:
             require(item['path'] in allowed and item['before']['kind'] in ('absent', 'file', 'link', 'directory') and
                     item['after']['kind'] in ('absent', 'file', 'link', 'directory'), 'Invalid path/type in recovery journal.')
@@ -1159,6 +1166,15 @@ class Operation:
         self.run('nginx', '-t')
         self.run('systemctl', 'reload', 'nginx')
         self.run('systemctl', 'start', 'x-ui')
+        for name in record.get('new_lineages', []):
+            hostname(name)
+            require(name in record['new']['domains'].values() and name not in record['old']['domains'].values(),
+                    'Certificate lineage in the recovery journal is not a new domain; recovery material retained.')
+            paths = ['/etc/letsencrypt/'+folder+'/'+name+suffix for folder, suffix in (('live', ''), ('archive', ''), ('renewal', '.conf'))]
+            if os.path.lexists(self.path(paths[2])):
+                self.run('certbot', 'delete', '--cert-name', name, '--non-interactive')
+            require(not any(os.path.lexists(self.path(path)) for path in paths),
+                    'Certificate lineage of the new domain could not be removed; recovery material retained.')
         self.run('systemctl', 'start', 'certbot.timer')
         self.healthy(record['old'])
         require(self.service_states(record['old']) == record['services'], 'Original service states could not be verified.')
@@ -1214,8 +1230,13 @@ class Operation:
             edits = database_edits(db, context, panel, reality)
         files, marker = self.file_plan(context, panel, reality, source)
         new = self.summary(context); new['domains'] = marker['domains']
+        # Only lineages this operation creates may be removed by a rollback.
+        new_lineages = [name for name, previous in ((panel, context['domains']['panel']), (reality, context['domains']['reality']))
+                        if name != previous and not any(os.path.lexists(self.path(path)) for path in
+                            ('/etc/letsencrypt/live/'+name, '/etc/letsencrypt/archive/'+name, '/etc/letsencrypt/renewal/'+name+'.conf'))]
         record = dict(format=1, phase='prepared', version=version, old=self.summary(context), new=new, files=files,
-                      database=edits, backup=str(archive), guards=self.guards(context), services=services)
+                      database=edits, backup=str(archive), guards=self.guards(context), services=services,
+                      new_lineages=new_lineages)
         self.journal(record)
         committed = False
         try:

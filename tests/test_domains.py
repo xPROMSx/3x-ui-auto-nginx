@@ -239,7 +239,7 @@ class DomainFixture:
             def run(self, *args, **kwargs):
                 args = list(map(str,args)); fixture.calls.append((self.stage,args))
                 key = ('backup' if args[:3] == ['bash','fixture-backup','backup'] else
-                       'issue-'+args[args.index('--cert-name')+1] if args[0] == 'certbot' else
+                       ('delete-' if args[1] == 'delete' else 'issue-')+args[args.index('--cert-name')+1] if args[0] == 'certbot' else
                        self.stage+':'+':'.join(args[:3]))
                 if fixture.fault and not fixture.fault_used and (fixture.fault == key or fixture.fault == self.stage):
                     fixture.fault_used = True
@@ -250,7 +250,12 @@ class DomainFixture:
                 if args[0].endswith('/usr/local/x-ui/x-ui'):
                     return (fixture.version+'\n').encode()
                 if args[0] == 'certbot':
-                    fixture.cert(args[args.index('--cert-name')+1]); return b''
+                    name = args[args.index('--cert-name')+1]
+                    if args[1] == 'delete':
+                        for folder in ('live','archive'): shutil.rmtree(fixture.p('/etc/letsencrypt/'+folder+'/'+name),ignore_errors=True)
+                        fixture.p('/etc/letsencrypt/renewal/'+name+'.conf').unlink()
+                    elif not fixture.p('/etc/letsencrypt/renewal/'+name+'.conf').exists(): fixture.cert(name)  # certbot keeps a valid lineage
+                    return b''
                 if args[0] == 'systemctl':
                     if args[1] == 'show':
                         if 'UnitFileState' in args:
@@ -629,8 +634,84 @@ curl() {
         self.assertEqual(f.operation.discover()['telemt']['domains'],[])
         error=io.StringIO()
         with contextlib.redirect_stderr(error):f.change('new-panel.example')
-        self.assertIn('WARN: Telegram Web Proxy Manager domain not found in '+sni,error.getvalue())
+        self.assertIn('WARN: no domain names found in /etc/nginx/stream-sni.d/*.conf; domain conflict check skipped.',error.getvalue())
         self.assertEqual(f.operation.discover()['domains']['panel'],'new-panel.example')
+
+    def test_rollback_removes_new_lineages_and_retry_succeeds(self):
+        f=self.fixture();before=f.state();f.fault='verifying new stack'
+        with self.assertRaises(subprocess.CalledProcessError):f.change('new-panel.example','new-cover.example')
+        self.assertTrue(f.fault_used,'Requested failure point was not exercised')
+        self.assertTrue(f.state()==before,'Rollback changed SQLite')
+        for name in ('new-panel.example','new-cover.example'):
+            self.assertEqual(lineages(f,name),[])
+            self.assertTrue(any(args[:2]==['certbot','delete'] and name in args for _,args in f.calls),'Lineage was not deleted by certbot')
+        for name in (f.panel,f.reality):self.assertEqual(len(lineages(f,name)),3,'Original lineage must stay')
+        self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+        f.change('new-panel.example','new-cover.example')
+        self.assertEqual(f.operation.discover()['domains']['panel'],'new-panel.example')
+
+    def test_rollback_keeps_certificate_that_existed_before_the_operation(self):
+        f=self.fixture();f.cert('new-panel.example')
+        marker=json.loads(f.p(f.module.MANIFEST).read_text())
+        marker['retained_domains']={'new-panel.example':hashlib.sha256(f.p('/etc/letsencrypt/renewal/new-panel.example.conf').read_bytes()).hexdigest()}
+        f.write(f.module.MANIFEST,json.dumps(marker),0o600)
+        f.fault='verifying new stack'
+        with self.assertRaises(subprocess.CalledProcessError):f.change('new-panel.example','new-cover.example')
+        self.assertTrue(f.fault_used,'Requested failure point was not exercised')
+        self.assertEqual(len(lineages(f,'new-panel.example')),3,'Certificate from before the operation was deleted')
+        self.assertEqual(lineages(f,'new-cover.example'),[])
+        deleted=[args[args.index('--cert-name')+1] for _,args in f.calls if args[:2]==['certbot','delete']]
+        self.assertEqual(deleted,['new-cover.example'])
+
+    def test_recovery_journal_lineage_list_is_validated(self):
+        for value in (['new-panel.example','new-cover.example','third.example'],['bad.example/'],'new-panel.example'):
+            with self.subTest(value=value):
+                f=self.fixture();f.fault='verifying new stack'
+                with patch.object(f.operation,'recover',side_effect=OSError('fixture')),self.assertRaises(f.module.Refusal):
+                    f.change('new-panel.example','new-cover.example')
+                record=json.loads(f.p(f.module.STATE+'/journal.json').read_text())
+                self.assertEqual(record['new_lineages'],['new-panel.example','new-cover.example'])
+                record['new_lineages']=value;f.operation.journal(record)
+                with self.assertRaises(f.module.Refusal):f.operation.recover()
+                self.assertTrue(f.p(f.module.STATE+'/journal.json').exists())
+                self.assertFalse(any(args[:2]==['certbot','delete'] for _,args in f.calls))
+        f=self.fixture();f.fault='verifying new stack'
+        with patch.object(f.operation,'recover',side_effect=OSError('fixture')),self.assertRaises(f.module.Refusal):
+            f.change('new-panel.example','new-cover.example')
+        record=json.loads(f.p(f.module.STATE+'/journal.json').read_text())
+        record['new_lineages']=['deploy.example'];f.operation.journal(record)
+        with self.assertRaises(f.module.Refusal):f.operation.recover()
+        self.assertEqual(len(lineages(f,f.panel)),3,'Existing lineage must never be deleted')
+
+    def test_regex_server_name_in_foreign_nginx_config_does_not_block(self):
+        f=self.fixture()
+        f.write('/etc/nginx/sites-available/foreign.conf',
+                'server { server_name ~^(www\\.)?other\\.example$ "~^api[0-9]+\\.example$" $ssl_server_name; }\n')
+        f.p('/etc/nginx/sites-enabled/foreign.conf').symlink_to('/etc/nginx/sites-available/foreign.conf')
+        f.change('new-panel.example','new-cover.example')
+        self.assertEqual(f.operation.discover()['domains']['panel'],'new-panel.example')
+
+    def test_foreign_stream_include_files_do_not_block_but_their_names_do(self):
+        def setup():
+            f=self.fixture()
+            f.write('/etc/nginx/stream-sni.d/other.conf','    other.example foreign_up; # not ours\n')
+            f.write('/etc/nginx/stream-upstreams.d/other.conf','upstream foreign_up {\n    server 127.0.0.1:7555;\n}\n')
+            f.write('/etc/nginx/stream-sni.d/ignored.txt','    ignored.example foreign_up;\n')
+            return f,{path:f.p(path).read_bytes() for path in ('/etc/nginx/stream-sni.d/other.conf',
+                      '/etc/nginx/stream-upstreams.d/other.conf','/etc/nginx/stream-sni.d/ignored.txt')}
+        f,owned=setup()
+        self.assertEqual(f.operation.discover()['telemt']['domains'],['other.example'])
+        f.change('ignored.example','new-cover.example')
+        self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Foreign stream include files changed')
+        for panel,reality in (('other.example',None),(None,'other.example')):
+            f,_=setup();before=f.state()
+            with self.assertRaises(f.module.Refusal):f.change(panel or 'new-panel.example',reality)
+            self.assertTrue(f.state()==before,'Refusal changed SQLite')
+            self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] or args[0]=='certbot' for _,args in f.calls))
+            self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+        f,_=setup();f.p('/etc/nginx/stream-sni.d/other.conf').unlink()
+        f.write('/etc/nginx/stream-sni.d/deploy-clash.conf','    '+f.panel+' foreign_up;\n')
+        with self.assertRaises(f.module.Refusal):f.operation.discover()
 
     def test_old_and_new_empty_stream_contracts_keep_reality_xver(self):
         for historical in (False,True):
@@ -916,7 +997,7 @@ curl() {
                 self.assertEqual(f.operation.guards(f.operation.discover()),old)
                 self.assertTrue(all(v=='active' for v in f.services.values()))
                 self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
-                if failure=='issue-new-cover.example':self.assertTrue(f.p('/etc/letsencrypt/live/new-panel.example').is_dir())
+                if failure=='issue-new-cover.example':self.assertEqual(lineages(f,'new-panel.example'),[])
         f=self.fixture();before=f.state();run=f.operation.run
         def failed_backup(*args,**kwargs):
             if list(args[:3])==['bash','fixture-backup','backup']:
@@ -1293,6 +1374,12 @@ curl() {
         self.assertEqual(f.operation.discover()['domains']['panel'],'new-panel.example')
         with patch.object(f.operation,'finish',side_effect=original):self.assertTrue(f.operation.recover())
         self.assertEqual(f.operation.discover()['domains']['panel'],'new-panel.example')
+
+
+def lineages(f, name):
+    """Certificate lineage paths of a domain that still exist in the fixture."""
+    return [path for path in ('/etc/letsencrypt/live/'+name,'/etc/letsencrypt/archive/'+name,'/etc/letsencrypt/renewal/'+name+'.conf')
+            if os.path.lexists(f.p(path))]
 
 
 def socket_error():
