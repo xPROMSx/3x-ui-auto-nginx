@@ -2908,9 +2908,15 @@ show_results() {
         warp_core_note=$(ui_text 'Core health is not verified.' 'Работа основного стека не подтверждена.')
     fi
     case "${WARP_RESULT:-not_requested}" in
-        configured) msg_ok "$(ui_text ' [✓] Cloudflare WARP        Configured: Russian sites and selected domains use WARP (3 rules)' ' [✓] Cloudflare WARP        Настроен: российские сайты и выбранные домены идут через WARP (3 правила)')" ;;
-        failed) msg_warn "$(ui_text ' [!] Cloudflare WARP        Not configured; rules not enabled. %s Continue in 3X-UI: Xray, Outbounds, WARP.' ' [!] Cloudflare WARP        Не настроен, правила не включены. %s Продолжите настройку в панели 3X-UI: Xray, Outbounds, WARP.' "$warp_core_note")" ;;
-        failed_rolled_back) msg_warn "$(ui_text ' [!] Cloudflare WARP        Not configured; rules not enabled. %s Xray configuration restored and verified. Continue in 3X-UI: Xray, Outbounds, WARP.' ' [!] Cloudflare WARP        Не настроен, правила не включены. %s Конфигурация Xray возвращена и проверена. Продолжите настройку в панели 3X-UI: Xray, Outbounds, WARP.' "$warp_core_note")" ;;
+        configured)
+            if [[ "${CORE_RESULT:-configured}" == failed_unverified ]]; then
+                msg_warn "$(ui_text ' [!] Cloudflare WARP        Configured, but core health is not verified: check Xray in the panel.' ' [!] Cloudflare WARP        Настроен, но работа основного стека не подтверждена: проверьте Xray в панели.')"
+            else
+                msg_ok "$(ui_text ' [✓] Cloudflare WARP        Configured: Russian sites and selected domains use WARP (3 rules)' ' [✓] Cloudflare WARP        Настроен: российские сайты и выбранные домены идут через WARP (3 правила)')"
+            fi
+            ;;
+        failed) msg_warn "$(ui_text ' [!] Cloudflare WARP        Not configured; rules not enabled. %s' ' [!] Cloudflare WARP        Не настроен, правила не включены. %s' "$warp_core_note")" ;;
+        failed_rolled_back) msg_warn "$(ui_text ' [!] Cloudflare WARP        Not configured; rules not enabled. %s Xray configuration restored and verified.' ' [!] Cloudflare WARP        Не настроен, правила не включены. %s Конфигурация Xray возвращена и проверена.' "$warp_core_note")" ;;
         failed_unverified) msg_err "$(ui_text ' [!] Cloudflare WARP        Configuration rollback not verified: check Xray in the panel.' ' [!] Cloudflare WARP        Откат конфигурации не подтверждён: проверьте Xray в панели.')" ;;
     esac
     local component state
@@ -3006,7 +3012,7 @@ show_results() {
     [[ ${UI_INTERACTIVE:-0} != 1 ]] || ui_section "$(ui_text 'OTHER INFORMATION' 'ПРОЧАЯ ИНФОРМАЦИЯ')"
     case "${WARP_RESULT:-not_requested}" in
         failed|failed_rolled_back)
-            msg_warn "$(ui_text ' Continue WARP setup in 3X-UI: Xray, Outbounds, WARP.' ' Продолжите настройку WARP в панели 3X-UI: Xray, Outbounds, WARP.')" ;;
+            msg_warn "$(ui_text ' WARP is not configured: Russian websites still see your VPS IP. If you need it, add WARP in the 3X-UI panel (Xray, Outbounds, WARP) and send the sites you need to it in Routing.' ' WARP не настроен: российские сайты по-прежнему видят IP вашего VPS. Если он нужен, добавьте WARP в панели 3X-UI (Xray, Outbounds, WARP) и направьте на него нужные сайты в разделе Routing.')" ;;
         failed_unverified)
             msg_err "$(ui_text ' Check Xray: Outbounds: warp-masque; Routing: WARP - RU, WARP - RU2, WARP - RU3. To restore the template, open the basic Xray template, choose Reset to Default, confirm, then Save and check that Xray is running.' ' Проверьте Xray: Outbounds: warp-masque; Routing: WARP - RU, WARP - RU2, WARP - RU3. Для возврата шаблона откройте базовый шаблон Xray, выберите «Восстановить настройки по умолчанию», подтвердите, затем нажмите «Сохранить» и проверьте работу Xray.')" ;;
     esac

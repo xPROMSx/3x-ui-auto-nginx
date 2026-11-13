@@ -371,10 +371,40 @@ timedatectl() { printf UTC; }
                 if state=='configured': self.assertIn('[✓]', rows[0]); self.assertIn('3 ',rows[0])
                 if state.startswith('failed'):
                     self.assertIn('[!]',rows[0]); self.assertIn('Outbounds',result.stdout)
+                if state in ('failed','failed_rolled_back'):
+                    hint=(' WARP не настроен: российские сайты по-прежнему видят IP вашего VPS. Если он нужен, добавьте WARP в панели 3X-UI (Xray, Outbounds, WARP) и направьте на него нужные сайты в разделе Routing.'
+                          if language=='ru' else ' WARP is not configured: Russian websites still see your VPS IP. If you need it, add WARP in the 3X-UI panel (Xray, Outbounds, WARP) and send the sites you need to it in Routing.')
+                    self.assertIn(hint,result.stdout)
+                    self.assertNotIn('Продолжите настройку' if language=='ru' else 'Continue',result.stdout)
                 if state=='failed_unverified':
                     self.assertIn('WARP - RU3',result.stdout)
                     self.assertIn('Сохранить' if language=='ru' else 'Save',result.stdout)
                     self.assertIn('Работа после отката не подтверждена' if language=='ru' else 'Post-rollback health not verified',result.stdout)
+
+    def test_configured_summary_warns_when_core_health_is_unverified(self):
+        for language in ('ru','en'):
+            for core in ('configured','failed_unverified'):
+                script = """msg_ok() { echo "OK:$*"; }; msg_warn() { echo "WARN:$*"; }
+msg_err() { echo "ERROR:$*"; }; msg_inf() { echo "$*"; }
+ufw() { echo 'Status: inactive'; }; timedatectl() { echo UTC; }
+"""+function('show_results')+'\nshow_results 1'
+                result=subprocess.run(['bash','-eu','-c',script],capture_output=True,text=True,
+                    env={**os.environ,'UI_LANG':language,'WARP_RESULT':'configured','CORE_RESULT':core,
+                         'UI_INTERACTIVE':'0','domain':'fixture.test','reality_domain':'other.test',
+                         'panel_path':'panel','config_username':'fixture-user','config_password':'fixture-password'})
+                self.assertEqual(result.returncode,0,result.stderr)
+                rows=[line for line in result.stdout.splitlines() if 'Cloudflare WARP' in line]
+                self.assertEqual(len(rows),1)
+                if core=='failed_unverified':
+                    text=('Настроен, но работа основного стека не подтверждена: проверьте Xray в панели.'
+                          if language=='ru' else 'Configured, but core health is not verified: check Xray in the panel.')
+                    self.assertEqual(rows[0],'WARN: [!] Cloudflare WARP        '+text)
+                    self.assertNotIn('идут через WARP',result.stdout)
+                    self.assertNotIn('use WARP (3 rules)',result.stdout)
+                else:
+                    text=('Настроен: российские сайты и выбранные домены идут через WARP (3 правила)'
+                          if language=='ru' else 'Configured: Russian sites and selected domains use WARP (3 rules)')
+                    self.assertEqual(rows[0],'OK: [✓] Cloudflare WARP        '+text)
 
     def test_summary_does_not_claim_core_works_after_failed_final_gate(self):
         for language in ('ru','en'):
