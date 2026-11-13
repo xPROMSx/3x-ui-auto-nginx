@@ -376,6 +376,22 @@ timedatectl() { printf UTC; }
                     self.assertIn('Сохранить' if language=='ru' else 'Save',result.stdout)
                     self.assertIn('Работа после отката не подтверждена' if language=='ru' else 'Post-rollback health not verified',result.stdout)
 
+    def test_summary_does_not_claim_core_works_after_failed_final_gate(self):
+        for language in ('ru','en'):
+            for state in ('failed','failed_rolled_back'):
+                script = '''msg_ok() { echo "$*"; }; msg_warn() { echo "$*"; }
+msg_err() { echo "$*"; }; msg_inf() { echo "$*"; }
+ufw() { echo 'Status: inactive'; }; timedatectl() { echo UTC; }
+'''+function('show_results')+'\nshow_results 1'
+                result=subprocess.run(['bash','-eu','-c',script],capture_output=True,text=True,
+                    env={**os.environ,'UI_LANG':language,'WARP_RESULT':state,'CORE_RESULT':'failed_unverified',
+                         'UI_INTERACTIVE':'0','domain':'fixture.test','reality_domain':'other.test',
+                         'panel_path':'panel','config_username':'fixture-user','config_password':'fixture-password'})
+                self.assertEqual(result.returncode,0,result.stderr)
+                row=next(s for s in result.stdout.splitlines() if 'Cloudflare WARP' in s)
+                self.assertNotIn('Основной стек работает' if language=='ru' else 'The core stack works',row)
+                self.assertIn('не подтверждена' if language=='ru' else 'not verified',row)
+
     def test_cli_budgets_private_session_cleanup_and_safe_errors(self):
         warp=helper('warp')
         with tempfile.TemporaryDirectory() as d:

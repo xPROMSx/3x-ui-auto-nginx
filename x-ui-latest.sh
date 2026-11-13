@@ -2902,10 +2902,15 @@ show_results() {
         configured) msg_ok "$(ui_text ' [✓] AmneziaWG              Configured (UDP/8443)' ' [✓] AmneziaWG              Настроен (UDP/8443)')" ;;
         failed) msg_warn "$(ui_text ' [!] AmneziaWG              Not configured' ' [!] AmneziaWG              Не настроен')" ;;
     esac
+    local warp_core_note
+    warp_core_note=$(ui_text 'The core stack works.' 'Основной стек работает.')
+    if [[ "${CORE_RESULT:-configured}" == failed_unverified ]]; then
+        warp_core_note=$(ui_text 'Core health is not verified.' 'Работа основного стека не подтверждена.')
+    fi
     case "${WARP_RESULT:-not_requested}" in
         configured) msg_ok "$(ui_text ' [✓] Cloudflare WARP        Configured: Russian sites and selected domains use WARP (3 rules)' ' [✓] Cloudflare WARP        Настроен: российские сайты и выбранные домены идут через WARP (3 правила)')" ;;
-        failed) msg_warn "$(ui_text ' [!] Cloudflare WARP        Not configured; rules not enabled. The core stack works. Continue in 3X-UI: Xray, Outbounds, WARP.' ' [!] Cloudflare WARP        Не настроен, правила не включены. Основной стек работает. Продолжите настройку в панели 3X-UI: Xray, Outbounds, WARP.')" ;;
-        failed_rolled_back) msg_warn "$(ui_text ' [!] Cloudflare WARP        Not configured; rules not enabled. The core stack works. Xray configuration restored and verified. Continue in 3X-UI: Xray, Outbounds, WARP.' ' [!] Cloudflare WARP        Не настроен, правила не включены. Основной стек работает. Конфигурация Xray возвращена и проверена. Продолжите настройку в панели 3X-UI: Xray, Outbounds, WARP.')" ;;
+        failed) msg_warn "$(ui_text ' [!] Cloudflare WARP        Not configured; rules not enabled. %s Continue in 3X-UI: Xray, Outbounds, WARP.' ' [!] Cloudflare WARP        Не настроен, правила не включены. %s Продолжите настройку в панели 3X-UI: Xray, Outbounds, WARP.' "$warp_core_note")" ;;
+        failed_rolled_back) msg_warn "$(ui_text ' [!] Cloudflare WARP        Not configured; rules not enabled. %s Xray configuration restored and verified. Continue in 3X-UI: Xray, Outbounds, WARP.' ' [!] Cloudflare WARP        Не настроен, правила не включены. %s Конфигурация Xray возвращена и проверена. Продолжите настройку в панели 3X-UI: Xray, Outbounds, WARP.' "$warp_core_note")" ;;
         failed_unverified) msg_err "$(ui_text ' [!] Cloudflare WARP        Configuration rollback not verified: check Xray in the panel.' ' [!] Cloudflare WARP        Откат конфигурации не подтверждён: проверьте Xray в панели.')" ;;
     esac
     local component state
