@@ -107,6 +107,7 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 
 ---
 
+<a id="2--домен-vless-reality"></a>
 <a id="2--vless-reality-domain"></a>
 
 <a id="2-️-vless-reality-domain"></a>
@@ -472,6 +473,7 @@ SSH, настройки ОС и базовый firewall остаются отв�
 
 Если при открытии панели **3x-ui** в **Chrome, Edge или Brave** на Windows 11 вместо флагов стран отображаются буквенные коды (`FI`, `DE`, `US`), воспользуйтесь нашим небольшим проектом [**Flag Emojis Windows Installer**](https://github.com/xPROMSx/flag-emojis-windows-installer). Он помогает вернуть отображение флагов, сохраняет оригинальный шрифт Windows и имеет возможность отката.
 
+<a id="-поддержать-разработку"></a>
 <a id="-support-development"></a>
 <a id="support-development"></a>
 
