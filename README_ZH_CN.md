@@ -236,6 +236,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 ---
 
+<a id="7--adguard-home--dns-over-https"></a>
 <a id="6--adguard-home--dns-over-https"></a>
 
 ### 8. 🛡️ AdGuard Home + DNS-over-HTTPS
@@ -283,6 +284,8 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 ---
 
 <a id="7--自动创建客户端和订阅"></a>
+
+<a id="8--自动创建客户端和订阅"></a>
 
 ### 9. 👤 自动创建客户端和订阅
 
