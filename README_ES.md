@@ -236,6 +236,7 @@ Después de instalar, comprueba `warp-masque` en **Xray → Outbounds** y las tr
 
 ---
 
+<a id="7--adguard-home--dns-over-https"></a>
 <a id="6--adguard-home--dns-over-https"></a>
 
 ### 8. 🛡️ AdGuard Home + DNS-over-HTTPS
@@ -283,6 +284,8 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 ---
 
 <a id="7--creación-automática-del-cliente-y-la-suscripción"></a>
+
+<a id="8--creación-automática-del-cliente-y-la-suscripción"></a>
 
 ### 9. 👤 Creación automática del cliente y la suscripción
 
