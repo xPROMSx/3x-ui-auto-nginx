@@ -236,6 +236,7 @@ After installation, check **Xray → Outbounds** for `warp-masque` and **Xray �
 
 ---
 
+<a id="7--adguard-home--dns-over-https"></a>
 <a id="6--adguard-home--dns-over-https"></a>
 
 ### 8. 🛡️ AdGuard Home + DNS-over-HTTPS
@@ -283,6 +284,8 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 ---
 
 <a id="7--automatic-client-and-subscription"></a>
+
+<a id="8--automatic-client-and-subscription"></a>
 
 ### 9. 👤 Automatic client and subscription
 
