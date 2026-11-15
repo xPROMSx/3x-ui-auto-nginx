@@ -236,6 +236,7 @@ Kurulumdan sonra 3X-UI panelinde **Xray → Outbounds** bölümünde `warp-masqu
 
 ---
 
+<a id="7--adguard-home--dns-over-https"></a>
 <a id="6--adguard-home--dns-over-https"></a>
 
 ### 8. 🛡️ AdGuard Home + DNS-over-HTTPS
@@ -283,6 +284,8 @@ sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "
 ---
 
 <a id="7--otomatik-istemci-ve-abonelik-oluşturma"></a>
+
+<a id="8--otomatik-istemci-ve-abonelik-oluşturma"></a>
 
 ### 9. 👤 Otomatik istemci ve abonelik oluşturma
 
