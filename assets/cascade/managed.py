@@ -255,7 +255,9 @@ def read_entry_template(panel):
 
 
 def save_entry_template(panel, template, test_url):
-    panel.request('panel/api/xray/update', dict(xraySetting=json.dumps(template), outboundTestUrl=test_url),
+    wire = copy.deepcopy(template)
+    wire['outbounds'] = normalized(wire['outbounds'])
+    panel.request('panel/api/xray/update', dict(xraySetting=json.dumps(wire), outboundTestUrl=test_url),
                   method='POST', form=True)
 
 
@@ -355,8 +357,13 @@ def entry_readback_matches(current, original, outbound):
 def foreign_reference(template):
     if any(not owned_rule(r) and r.get('outboundTag') == ENTRY_TAG for r in template['routing']['rules']):
         return True
-    return any(b.get('fallbackTag') == ENTRY_TAG or any(ENTRY_TAG.startswith(s) for s in b.get('selector', []))
-               for b in template['routing'].get('balancers', []))
+    for balancer in template['routing'].get('balancers', []):
+        selectors = balancer.get('selector', [])
+        if isinstance(selectors, str):
+            selectors = selectors.split(',')  # Xray conf.StringList accepts both wire shapes.
+        if balancer.get('fallbackTag') == ENTRY_TAG or any(ENTRY_TAG.startswith(s) for s in selectors):
+            return True
+    return False
 
 
 def remove_entry_elements(template, *, keep_outbound=False):

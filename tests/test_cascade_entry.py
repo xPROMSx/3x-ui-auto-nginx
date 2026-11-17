@@ -279,6 +279,15 @@ class CascadeEntry(unittest.TestCase):
         self.assertEqual(self.run_entry('entry-connect', panel), dict(state='connected'))
         self.assertEqual(panel.saves, 1)
 
+    def test_string_settings_are_saved_as_native_xray_objects(self):
+        panel = FakePanel(strings=True)
+        self.assertEqual(self.run_entry('entry-connect', panel), dict(state='connected'))
+        saved = next(json.loads(body['xraySetting']) for path, body, _ in panel.calls if path.endswith('/update'))
+        self.assertEqual(saved['outbounds'][0]['settings'], {})
+        self.assertEqual(saved['outbounds'][-1], outbound())
+        self.assertEqual(self.run_entry('entry-disable', panel), dict(state='removed'))
+        self.assertEqual(panel.template, ORIGINAL)
+
     def test_readback_detects_own_field_rule_order_and_foreign_list_changes(self):
         def own(p): p.template['outbounds'][-1]['settings']['port'] = 444
         def order(p): p.template['routing']['rules'][-3:] = list(reversed(p.template['routing']['rules'][-3:]))
@@ -432,6 +441,16 @@ class CascadeEntry(unittest.TestCase):
         self.assertEqual(panel.template['outbounds'][-1]['tag'], 'cascade-exit-admin')
         self.assertEqual(panel.template['routing']['rules'][1], foreign)
         self.assertIn('balancers', panel.template['routing'])
+
+    def test_balancer_string_selectors_use_comma_separated_prefixes(self):
+        for selector, expected in (('direct', 'removed'), ('case', 'removed'),
+                                   ('cascade', 'foreign_reference'), ('direct,cascade-exit', 'foreign_reference'),
+                                   ('', 'foreign_reference')):
+            with self.subTest(selector=selector):
+                panel = FakePanel(active=True)
+                panel.template['routing']['balancers'] = [dict(tag='admin', selector=selector)]
+                self.assertEqual(self.run_entry('entry-disable', panel), dict(state=expected))
+                self.assertEqual(panel.saves, 1 if expected == 'removed' else 0)
 
     def test_disable_save_error_reports_actual_state_even_if_applied(self):
         for fault, reason in (('save-rejected', 'save_failed_actual_active'),
