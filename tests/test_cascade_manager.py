@@ -42,6 +42,11 @@ class CascadeManager(unittest.TestCase):
             self.assertIn('AmneziaWG', result.stdout)
             self.assertIn('bittorrent', result.stdout)
             self.assertNotIn('—', result.stdout)
+            brief=self.shell('cascade_result=$(cat); cascade_custom_warning brief',
+                             json.dumps(dict(custom_rules=[2, 7])), language)
+            self.assertEqual(brief.returncode,0,brief.stderr)
+            self.assertIn('2, 7',brief.stdout)
+            self.assertLess(len(brief.stdout), len(result.stdout))
 
     def test_result_texts_cover_states_reasons_and_private_errors(self):
         cases = {
