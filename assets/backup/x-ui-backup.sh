@@ -560,8 +560,11 @@ current_ipv4() {
 
 # The existing nginx tree is portable except for neighbors of our DoT fragment.
 copy_nginx_without_dot_dir() {
+    # Match cp -a for local rollback snapshots, including permission metadata.
+    local -a attributes=(--acls --xattrs '--xattrs-include=*' --selinux)
     mkdir -p -- "$2" &&
-        tar -C "$1" --anchored --exclude='./stream-dot.d' -cf - . | tar -C "$2" -xpf -
+        tar -C "$1" "${attributes[@]}" --anchored --exclude='./stream-dot.d' -cf - . |
+        tar -C "$2" "${attributes[@]}" -xpf -
 }
 
 copy_nginx_tree() {

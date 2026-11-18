@@ -282,6 +282,7 @@ enable_agh_updates
         foreign = dot.with_name('foreign.conf')
         foreign.write_text('# administrator\n')
         before_main, inode = main.read_bytes(), foreign.stat().st_ino
+        os.setxattr(main, 'user.fixture', b'rollback metadata')
         rules = [f.path('/etc/ufw/'+name) for name in ('user.rules', 'user6.rules')]
         for path in rules:
             path.write_text('original administrator rule\n')
@@ -294,6 +295,7 @@ enable_agh_updates
         self.assertIn('Previous managed state/service states restored and checked', result.stderr)
         self.assertEqual([path.read_bytes() for path in rules], original)
         self.assertEqual(main.read_bytes(), before_main)
+        self.assertEqual(os.getxattr(main, 'user.fixture'), b'rollback metadata')
         self.assertFalse(dot.exists())
         self.assertEqual((foreign.read_text(), foreign.stat().st_ino), ('# administrator\n', inode))
 
