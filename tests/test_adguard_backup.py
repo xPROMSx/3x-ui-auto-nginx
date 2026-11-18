@@ -76,8 +76,9 @@ class AdGuardBackup(unittest.TestCase):
         from unittest.mock import patch
         from test_adguard import AdGuardInstaller, MOCK, INSTALLER, FIXTURE_BINARY_SHA
         fixture = AdGuardInstaller('runTest')
-        # Real root ownership checks, including every ancestor, in private /run.
-        with patch('tempfile.tempdir', '/run'):
+        # Keep real ownership checks and execute the fixture binary on a mount
+        # that permits execution. Hosted runners can mount /run with noexec.
+        with patch('tempfile.tempdir', '/opt'):
             fixture.setUp()
         self.addCleanup(fixture.doCleanups)
         root = fixture.root
