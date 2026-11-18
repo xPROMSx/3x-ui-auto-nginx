@@ -1982,6 +1982,8 @@ finally:
                 runtime=runtime.replace('https://deploy.example/subscription/fixture?provider=1',url+'?provider=1')
                 runtime=re.sub(r'https://(?:www.gstatic.com|cp.cloudflare.com)/generate_204',
                                f'http://127.0.0.1:{self.origin.server_port}/health',runtime)
+                # Export the post-override mapping via the name, as in the generated-template test.
+                runtime=runtime.replace('    health-check:',"        - '.name = tostring'\n    health-check:",1)
                 runtime+=f'\nexternal-controller: 127.0.0.1:{controller}\nbind-address: 127.0.0.1\nrules:\n  - MATCH,DIRECT\nhosts:\n  deploy.example: 127.0.0.1\n'
                 runtime+='tls:\n  custom-certifactes:\n    - '+json.dumps(self.cert.read_text())+'\n'
             else: runtime=json.dumps(config)
@@ -1998,6 +2000,12 @@ finally:
                 self.assertEqual(len(proxies),5,'Provider did not import all supported nodes')
                 self.assertEqual(len({p['name'] for p in proxies}),5)
                 self.assertEqual(sorted(p['type'].lower() for p in proxies),['hysteria2','trojan','vless','vless','vless'])
+                if full_profile is not None:
+                    reality = [p['name'] for p in proxies
+                               if p['type'].lower() == 'vless' and re.search(r'^reality-opts:',p['name'],re.M)]
+                    self.assertEqual(len(reality),1,'Expected one VLESS REALITY node in the full profile')
+                    self.assertTrue(re.search(r'^client-fingerprint: chrome$',reality[0],re.M),
+                                    'Mihomo did not apply the Chrome fingerprint to the REALITY node')
             stop(process)
         raw_by_json=[]
         for json_enabled in (True,False):
