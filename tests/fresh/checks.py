@@ -579,7 +579,7 @@ def manager_backup():
                           env={**os.environ,**json.loads((ROOT/'environment.json').read_text()),
                                'TERM':'dumb','NO_COLOR':'1'})
     os.close(slave); output=bytearray();deadline=time.monotonic()+120
-    os.write(master,b'1\n3\n1\n2\n0\n0\n')
+    os.write(master,b'1\n6\n3\n1\n2\n0\n0\n')
     try:
         while time.monotonic()<deadline:
             if select.select([master],[],[],.2)[0]:
@@ -600,13 +600,19 @@ def manager_backup():
     assert len(created)==1
     archive=next(iter(created));assert archive.is_file() and archive.stat().st_mode&0o777==0o600
     assert 'BACKUP CREATED' in text and archive.name in text and re.search(r'(KiB|MiB|GiB)',text)
-    assert text.count('1. Installation')==2, 'Create/list escaped their Backup submenu'
+    assert text.count('1. Installation')==3, 'Details did not return to menu or Create/List escaped their submenu'
+    identity=json.loads(Path('/etc/x-ui/initial-client.json').read_text())['identity']
+    assert re.search(r'^    Active:\s+1\r?$', text, re.M), 'Details did not count the live x-ui subscription'
+    assert identity['subId'] not in text, 'Details printed a private subscription identifier'
+    metadata=json.loads(Path('/opt/AdGuardHome/managed.json').read_text())
+    assert ('https://'+metadata['domain']+'/'+metadata['doh_path']) in text, 'Details did not show live AGH DoH'
     inspected=json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',str(archive)))
     assert inspected['format_version']==3 and inspected['adguard_home'] is True
     for unit,value in before.items():assert run('systemctl','is-active',unit)==value
     assert adguard_state()==agh,'Backup changed AGH upstream/rewrite settings'
     # The next consumer phase verifies that the resumed official Xray still transfers data.
     return {'actual_menu_backup_and_list':True,'service_states_preserved':True,'managed_state':True,
+            'details_live_subscription_count_and_private_ids':True,
             'AGH_upstreams_and_nonempty_rewrite_preserved':True}
 
 
