@@ -452,7 +452,7 @@ class Operation:
                     re.findall(r'location (?:=|\^~) (\S+) \{', route) == [cdn['path'], cdn['path']+'/'],
                     'XHTTP CDN nginx route differs from its managed snapshot.')
         domains = context['domains']; panel, reality, vision = (domains[k] for k in ('panel', 'reality', 'vision'))
-        stream = self.stream_integration(context, self.read(STREAM))
+        router_stream = self.stream_integration(context, self.read(STREAM))
         expected = ('map_hash_bucket_size 272;map $ssl_preread_server_name $sni_name {hostnames;' +
                     (vision+' vision;' if vision else '') + reality+' xray;'+panel+' www;SNI_INCLUDEdefault xray;}' +
                     'upstream xray { server 127.0.0.1:8443; }upstream www { server 127.0.0.1:7443; }' +
@@ -472,7 +472,7 @@ class Operation:
         variants = [expected.replace('SNI_INCLUDE', sni).replace('UPSTREAM_INCLUDE', upstream).replace('IPV6', ipv6)
                     for sni, upstream in layouts
                     for ipv6 in ('', 'listen [::]:443;')]
-        require(normalize(stream) in list(map(normalize, variants)),
+        require(normalize(router_stream) in list(map(normalize, variants)),
                 'Unknown nginx stream layout; Vision and other routes were preserved.')
         require(list(self.path('/etc/nginx/stream-enabled').iterdir()) == [self.path(STREAM)], 'Unknown additional nginx stream files.')
         shared = self.read('/etc/nginx/snippets/includes.conf')
@@ -545,7 +545,7 @@ class Operation:
                 '/etc/nginx/nginx.conf has an unrecognized stream include. Restore the project stream line and retry.')
         if has_dot:
             port = json.loads(self.read(AGH)).get('dns_port') if context['features']['adguard'] else None
-            ipv6 = 'y' if re.search(r'(?m)^[ \t]*listen[ \t]+\[::\]:443;', stream) else 'n'
+            ipv6 = 'y' if re.search(r'(?m)^[ \t]*listen[ \t]+\[::\]:443;', router_stream) else 'n'
             fragment = self.object(DOT)
             require(type(port) is int and fragment['kind'] == 'file' and
                     base64.b64decode(fragment['data']) == self.check('render-dot', panel, port, ipv6).encode(),

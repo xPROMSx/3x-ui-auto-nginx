@@ -318,7 +318,7 @@ enable_agh_updates
                 self.assertNotIn(['ufw', 'allow', '853/tcp'], f.commands())
                 self.assertTrue(all(path.read_text().startswith(existing) for path in rules))
                 warning = result.stdout.strip().splitlines()[-1]
-                self.assertIn('Private DNS' if action == 'limit' else 'blocked', warning)
+                self.assertIn('Private DNS' if action == 'limit' else 'firewall rule blocks 853/tcp', warning)
                 self.assertIn(f'ufw delete {action} 853/tcp', warning)
                 self.assertIn('ufw allow 853/tcp', warning)
 
