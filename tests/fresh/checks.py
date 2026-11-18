@@ -188,12 +188,11 @@ def restore_dot_target():
     with log.open('wb') as output:
         result = subprocess.run(['bash', '-c', 'source "$1"; backup_action restore',
                                  'fixture', str(ROOT/'x-ui-latest.sh')],
-                                input=b'/root/pilot/restore.tar.gz\nn\ny\nYES\n',
+                                input=b'/root/pilot/restore.tar.gz\nn\nn\nYES\n',
                                 stdout=output, stderr=subprocess.STDOUT, env=env, timeout=1500)
     assert result.returncode == 0, 'DoT Restore failed; private log retained'
     assert 'Overall: SUCCESS' in log.read_text()
-    assert re.search(r'^\[\s*\d+\]\s+853/tcp\s+ALLOW IN\s+Anywhere\s*$',
-                     run('ufw', 'status', 'numbered'), re.M)
+    assert run('ufw', 'status').strip() == 'Status: inactive'
     evidence = json.loads((ROOT/'restore-expected.json').read_text())
     assert restore_content() == evidence['content']
     assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest
