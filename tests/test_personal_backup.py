@@ -1974,7 +1974,7 @@ class PersonalBackup(unittest.TestCase):
                        ','.join('?' for _ in columns)+')', [record[column] for column in columns])
 
     def test_backup_inspect_restore_installer_layout_without_ws_grpc(self):
-        from test_personal_xhttp import SHARED, render, seed
+        from test_personal_xhttp import MAIN, SHARED, render, seed
 
         self.seed_hysteria_cover()
         variables = dict(domain='example.com', reality_domain='reality.example.com', sub_port='10003', INSTALL_WS_GRPC='n')
@@ -1982,12 +1982,17 @@ class PersonalBackup(unittest.TestCase):
         self.assertEqual(set(rows), {'reality', 'xhttp', 'hysteria2'})
         shared = relocated(render(SHARED, **variables), self.root)
         self.write('/etc/nginx/snippets/includes.conf', shared)
+        self.write('/etc/nginx/sites-available/example.com', relocated(render(MAIN, **variables), self.root))
+        nginx = self.path('/etc/nginx/nginx.conf')
+        nginx.write_text(nginx.read_text().replace('server { listen', 'server { set $hack 0; set $serve_clash_yaml 0; listen', 1))
         path = self.path('/etc/x-ui/x-ui.db')
         with sqlite3.connect(path) as db:
             db.execute('DELETE FROM hosts')
             db.execute('DELETE FROM inbounds')
             for table, records in (('inbounds', rows.values()), ('hosts', hosts)):
                 for row in records:
+                    if table == 'inbounds':
+                        row = {**row, 'port': int(row['port']), 'enable': int(row['enable'])}
                     keys = tuple(row)
                     db.execute('INSERT INTO '+table+' ('+','.join(keys)+') VALUES ('+','.join('?' for _ in keys)+')',
                                [relocated(value, self.root) if isinstance(value, str) else value for value in row.values()])

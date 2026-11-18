@@ -1200,7 +1200,6 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
                     stop(panel)
                     stop(nginx)
                     self.release_subscription_socket()
-        self.passed.append('Initial client / both installer layouts / enabled empty WS+gRPC loopback listeners')
 
     def test_vision_and_initial_client_official_api(self):
         from test_integrated_features import helper
