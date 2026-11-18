@@ -2717,7 +2717,9 @@ PY
     chown -R root:root /opt/AdGuardHome && chmod 0700 /opt/AdGuardHome || return 1
     AGH_PASSWORD=$(gen_random_string 32) || return 1
     AGH_PATH="adg-$(gen_random_string 12)" || return 1
-    [[ "$AGH_PASSWORD" =~ ^[A-Za-z0-9]{32}$ && "$AGH_PATH" =~ ^adg-[A-Za-z0-9]{12}$ ]] || return 1
+    AGH_DOH_PATH="dns-$(gen_random_string 12)" || return 1
+    [[ "$AGH_PASSWORD" =~ ^[A-Za-z0-9]{32}$ && "$AGH_PATH" =~ ^adg-[A-Za-z0-9]{12}$ &&
+       "$AGH_DOH_PATH" =~ ^dns-[A-Za-z0-9]{12}$ ]] || return 1
     local hash ports
     hash=$(printf '%s\n' "$AGH_PASSWORD" | htpasswd -niB -C 12 admin) || return 1
     hash=${hash#admin:}
@@ -2788,11 +2790,12 @@ schema_version: 34
 EOFAGH
     [[ $? == 0 ]] || return 1
     chmod 0600 /opt/AdGuardHome/AdGuardHome.yaml || return 1
-    python3 - /opt/AdGuardHome/managed.json "$domain" "$AGH_PATH" "$AGH_WEB_PORT" "$AGH_DNS_PORT" "$AGH_ARCH" <<'PY'
+    python3 - /opt/AdGuardHome/managed.json "$domain" "$AGH_PATH" "$AGH_DOH_PATH" "$AGH_WEB_PORT" "$AGH_DNS_PORT" "$AGH_ARCH" <<'PY'
 import json, sys
-file, domain, path, web, dns, arch = sys.argv[1:]
+file, domain, path, doh_path, web, dns, arch = sys.argv[1:]
 with open(file, 'w') as out:
-    json.dump(dict(version='v0.107.80', updates_enabled=True, domain=domain, path=path, web_port=int(web), dns_port=int(dns), arch=arch), out)
+    json.dump(dict(version='v0.107.80', updates_enabled=True, domain=domain, path=path,
+                   doh_path=doh_path, web_port=int(web), dns_port=int(dns), arch=arch), out)
 PY
     [[ $? == 0 ]] || return 1
     chmod 0600 /opt/AdGuardHome/managed.json || return 1
@@ -3003,9 +3006,12 @@ show_results() {
         msg_inf " AdGuard Home:"
         msg_inf " https://${domain}/${AGH_PATH}/"
         if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
-            ui_values ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' ' Логин: admin\n Пароль: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
+            ui_values ' Login: admin\n Password: %s\n' ' Логин: admin\n Пароль: %s\n' "$AGH_PASSWORD"
+            printf ' DoH: '
+            ui_note '%s' '%s' "https://${domain}/${AGH_DOH_PATH:-dns-query}"
+            printf '\n\n'
         else
-            ui_text ' Login: admin\n Password: %s\n DoH: https://%s/dns-query\n\n' ' Логин: admin\n Пароль: %s\n DoH: https://%s/dns-query\n\n' "$AGH_PASSWORD" "$domain"
+            ui_text ' Login: admin\n Password: %s\n DoH: https://%s/%s\n\n' ' Логин: admin\n Пароль: %s\n DoH: https://%s/%s\n\n' "$AGH_PASSWORD" "$domain" "${AGH_DOH_PATH:-dns-query}"
         fi
         AGH_PASSWORD=''
     elif [[ "${AGH_RESULT:-not_requested}" == failed_rolled_back ]]; then
@@ -4509,7 +4515,7 @@ PY
     }
     local snippet
     snippet=$(cat "$AGH_SNIPPET") || exit 1
-    [[ "$snippet" == "$(agh_snippet)" || "$snippet" == "$(agh_snippet legacy)" ]] || exit 1
+    [[ "$snippet" == "$(agh_snippet)" || ( $AGH_DOH_PATH == dns-query && "$snippet" == "$(agh_snippet legacy)" ) ]] || exit 1
     [[ "$AGH_ARCH" == "$(dpkg --print-architecture)" ]] || exit 1
     if (( was_active )); then agh_health && agh_dns_probe || exit 1; fi
     if [[ -e "${targets[4]}" || -L "${targets[4]}" ]]; then

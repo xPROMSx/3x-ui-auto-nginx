@@ -173,7 +173,7 @@ enable_agh_updates
         # Private trusted fixture digest; actual sha256sum remains unstubbed.
         self.fixture.script.write_text(self.fixture.script.read_text().replace(OFFICIAL_AMD64_SHA, LEGACY_FIXTURE_BINARY_SHA))
 
-    def install_fixture(self, active=True, legacy=False):
+    def install_fixture(self, active=True, legacy=False, doh_path=None):
         f=self.fixture
         f.write('/opt/AdGuardHome/AdGuardHome',BINARY,0o755)
         f.write('/opt/AdGuardHome/AdGuardHome.yaml', '''http:
@@ -194,7 +194,11 @@ tls:
   enabled: false
 schema_version: 34
 ''',0o600)
-        f.write('/opt/AdGuardHome/managed.json',json.dumps(dict(version='v0.107.79',arch='amd64',domain='example.com',path='adg-ABCDEFGHIJKL',web_port=18081,dns_port=18082)),0o600)
+        metadata = dict(version='v0.107.79', arch='amd64', domain='example.com', path='adg-ABCDEFGHIJKL',
+                        web_port=18081, dns_port=18082)
+        if doh_path is not None:
+            metadata['doh_path'] = doh_path
+        f.write('/opt/AdGuardHome/managed.json', json.dumps(metadata), 0o600)
         f.write('/opt/AdGuardHome/data/querylog.json','persistent query state')
         start=HELPER.index('agh_snippet() {')
         end=HELPER.index('\nEOFNG\n}',start)+len('\nEOFNG\n}')
@@ -206,7 +210,8 @@ schema_version: 34
         f.write('/usr/local/lib/3x-ui-pro/managed-adguard.sh',relocate(helper,self.root).replace(OFFICIAL_AMD64_SHA, LEGACY_FIXTURE_BINARY_SHA),0o600)
         # Generate the exact snippet from the same managed helper.
         import subprocess
-        r=subprocess.run(['bash','-c','source "$1"; AGH_WEB_PORT=18081; AGH_PATH=adg-ABCDEFGHIJKL; agh_snippet','fixture',str(f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh'))],capture_output=True,text=True)
+        r=subprocess.run(['bash','-c','source "$1"; AGH_WEB_PORT=18081; AGH_PATH=adg-ABCDEFGHIJKL; AGH_DOH_PATH=$2; agh_snippet',
+                          'fixture',str(f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh')),doh_path or ''],capture_output=True,text=True)
         self.assertEqual(r.returncode,0,r.stderr)
         f.write('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf',r.stdout,0o600)
         f.write('/etc/systemd/system/AdGuardHome.service',f'ExecStart={self.root}/opt/AdGuardHome/AdGuardHome -c {self.root}/opt/AdGuardHome/AdGuardHome.yaml -w {self.root}/opt/AdGuardHome -s run --no-check-update\n')
@@ -216,15 +221,18 @@ schema_version: 34
     def test_legacy_and_clientid_archives_restore_without_upgrading_state(self):
         import hashlib
         f=self.fixture
-        for legacy in (False,True):
-            with self.subTest(legacy=legacy):
-                self.install_fixture(legacy=legacy)
+        for legacy, doh_path in ((True, None), (False, None), (False, 'dns-AbCdEf123456')):
+            with self.subTest(legacy=legacy, doh_path=doh_path):
+                self.install_fixture(legacy=legacy, doh_path=doh_path)
                 snippet=f.path('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf')
+                metadata=f.path('/opt/AdGuardHome/managed.json')
                 saved={path:path.read_bytes() for path in (snippet,
+                    metadata,
                     f.path('/opt/AdGuardHome/AdGuardHome.yaml'),
                     f.path('/usr/local/lib/3x-ui-pro/managed-adguard.sh'))}
                 if not legacy:self.assertIn(b'location ~',saved[snippet])
                 archive=f.backup();digest=hashlib.sha256(archive.read_bytes()).digest()
+                self.assertIn(f'location = /{doh_path or "dns-query"} {{'.encode(), saved[snippet])
                 for _ in range(2):
                     result=f.run_tool('restore',archive)
                     self.assertEqual(result.returncode,0,result.stdout+result.stderr)
@@ -396,7 +404,8 @@ schema_version: 34
         self.trace_mutation_boundaries()
         metadata = json.loads(f.path('/opt/AdGuardHome/managed.json').read_text())
         for key, value in (('version', 'v0.107.78'), ('arch', 'arm64'), ('arch', 'invalid'),
-                           ('domain', 'bad..example.com'), ('path', 'adg-bad'),
+                           ('domain', 'bad..example.com'), ('path', 'adg-bad'), ('doh_path', 'dns-query'),
+                           ('doh_path', 'dns-AbCdEf123456'),
                            ('web_port', 443), ('dns_port', metadata['web_port'])):
             with self.subTest(key=key, value=value):
                 self.assert_staged_rejection_preserves_target(archive, {

@@ -250,7 +250,7 @@ def installed(cold=False):
     context=ssl.create_default_context()
     for method in ('GET','POST'):
         def doh_query():
-            url='https://panel.example.test/dns-query'
+            url='https://'+metadata['domain']+'/'+metadata.get('doh_path', 'dns-query')
             if method=='GET':url+='?dns='+base64.urlsafe_b64encode(packet).decode().rstrip('=')
             request=urllib.request.Request(url,data=packet if method=='POST' else None,headers={'Content-Type':'application/dns-message'})
             with urllib.request.urlopen(request,context=context,timeout=15) as response:
@@ -630,7 +630,12 @@ def change_domains(single=False, panel_target='panel-next.example.test'):
             return {table:[dict(row) for row in db.execute('SELECT * FROM '+table+' ORDER BY rowid')]
                     for table in ('users','clients','client_inbounds','inbounds','hosts','settings')}
     original_hashes=hashes();agh=adguard_state();before=database();result={}
-    (ROOT/'before-domains-files.json').write_text(json.dumps(dict(files=original_hashes,adguard=agh)))
+    agh_metadata=Path('/opt/AdGuardHome/managed.json')
+    agh_snippet=Path('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf')
+    original_metadata=json.loads(agh_metadata.read_text())
+    original_snippet=hashlib.sha256(agh_snippet.read_bytes()).hexdigest()
+    (ROOT/'before-domains-files.json').write_text(json.dumps(dict(files=original_hashes,adguard=agh,
+                                    agh_metadata=original_metadata,agh_snippet=original_snippet)))
     panel,reality='panel.example.test','reality.example.test'
     core_enable(False)
     before=database()
@@ -713,7 +718,8 @@ def change_domains(single=False, panel_target='panel-next.example.test'):
         assert marker['domains']==dict(panel=new_panel,reality=new_reality,vision='vision.example.test')
         assert marker['inbound_roles']==roles and not Path('/var/lib/3x-ui-auto-nginx/change-domains/journal.json').exists()
         assert hashes()==original_hashes and adguard_state()==agh,'Vision, binaries, SSH/firewall or AGH state changed'
-        assert json.loads(Path('/opt/AdGuardHome/managed.json').read_text())['domain']==new_panel
+        assert json.loads(agh_metadata.read_text())==dict(original_metadata,domain=new_panel)
+        assert hashlib.sha256(agh_snippet.read_bytes()).hexdigest()==original_snippet
         if choice=='1':core_enable(True,panel_domain=new_panel)
         transports(panel_domain=new_panel,positive_only=True)
         panel,reality=new_panel,new_reality;before=database();result['domains_'+choice]=True
@@ -759,7 +765,12 @@ def native_agh_update():
     assert digest(agh/'AdGuardHome')=='7e247573e63ce771a5925d16ca4ca9344e6e888673244289dc302f0fdfdfbf4e'
     (agh/'AdGuardHome-public.gpg').unlink()
     state=json.loads(metadata.read_text());state['version']='v0.107.79';state.pop('updates_enabled',None)
+    state.pop('doh_path')
     metadata.write_text(json.dumps(state)+'\n')
+    snippet=run('bash','-c','source "$1"; AGH_PATH=$2 AGH_WEB_PORT=$3 agh_snippet',
+                'historical',str(directory/'managed-adguard.sh'),state['path'],str(state['web_port']))
+    Path('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf').write_text(snippet)
+    run('nginx','-t');run('systemctl','reload','nginx')
     unit=Path('/etc/systemd/system/AdGuardHome.service')
     lines=unit.read_text().splitlines(keepends=True)
     for index,line in enumerate(lines):
@@ -917,7 +928,8 @@ def restore_before_domains():
     evidence=json.loads((ROOT/'before-domains-files.json').read_text())
     assert all(hashlib.sha256(Path(name).read_bytes()).hexdigest()==value for name,value in evidence['files'].items())
     assert adguard_state()==evidence['adguard']
-    assert json.loads(Path('/opt/AdGuardHome/managed.json').read_text())['domain']=='panel.example.test'
+    assert json.loads(Path('/opt/AdGuardHome/managed.json').read_text())==evidence['agh_metadata']
+    assert hashlib.sha256(Path('/etc/nginx/snippets/x-ui-auto-optional/adguard.conf').read_bytes()).hexdigest()==evidence['agh_snippet']
     assert hashlib.sha256(archive.read_bytes()).hexdigest()==digest
     assert core_flags()==dict(reality=False,hysteria2=False,xhttp=False)
     core_enable(True)
