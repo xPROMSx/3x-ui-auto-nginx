@@ -183,6 +183,11 @@ def dot_verified(domain, query):
 
 def restore_dot_target():
     assert not any(Path(path).exists() for path in ('/etc/x-ui', '/usr/local/x-ui', '/opt/AdGuardHome'))
+    # Let dpkg configure Certbot on the clean target before setting its ACME server.
+    fixture = Path('/etc/letsencrypt/cli.ini')
+    pebble_config = fixture.read_text()
+    assert pebble_config == 'server = https://10.0.2.2:14000/dir\n'
+    fixture.unlink()
     env = restore_trust()
     log = ROOT/'dot-restore.private.log'
     with log.open('wb') as output:
@@ -190,8 +195,19 @@ def restore_dot_target():
                                  'fixture', str(ROOT/'x-ui-latest.sh')],
                                 input=b'/root/pilot/restore.tar.gz\nn\nn\nYES\n',
                                 stdout=output, stderr=subprocess.STDOUT, env=env, timeout=1500)
+    text = log.read_text(errors='replace')
+    if result.returncode:
+        stages = {'Restore preflight': 'preflight',
+                  'Установка нужных программ / Installing required packages': 'packages',
+                  'Проверка архива / Checking the archive': 'archive',
+                  'Stopping services and restoring managed state': 'replace',
+                  'Restoring saved service states': 'startup'}
+        seen = re.findall(r'^==> (.+)$', text, re.M)
+        print('DoT Restore failure stage: '+stages.get(seen[-1], 'unknown') if seen
+              else 'DoT Restore failure stage: manager', flush=True)
     assert result.returncode == 0, 'DoT Restore failed; private log retained'
-    assert 'Overall: SUCCESS' in log.read_text()
+    assert 'Overall: SUCCESS' in text
+    fixture.write_text(pebble_config)
     assert run('ufw', 'status').strip() == 'Status: inactive'
     evidence = json.loads((ROOT/'restore-expected.json').read_text())
     assert restore_content() == evidence['content']

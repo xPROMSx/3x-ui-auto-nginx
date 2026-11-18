@@ -114,6 +114,10 @@ def invoke(expression, result_name, timeout=180, tty=False):
         report[phase+'_dns_probes'] = probes
     if result.returncode:
         failure_location(result.stdout+result.stderr)
+        if phase == 'dot-clean-target':
+            failure = re.search(rb'^DoT Restore failure stage: (manager|preflight|packages|archive|replace|startup|unknown)\r?$', result.stdout, re.M)
+            if failure:
+                report['dot_restore_failure_stage'] = failure[1].decode()
         if phase in ('change-domains', 'dot-change-panel', 'native-agh-update'):
             private = ssh('cat /root/pilot/domains-[123].private.log', 15)
             if private.returncode == 0:
