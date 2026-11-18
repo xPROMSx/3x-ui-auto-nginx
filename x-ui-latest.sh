@@ -239,6 +239,23 @@ clean_previous_install() {
     rm -rf /etc/nginx/sites-enabled/* || return 1
     rm -rf /etc/nginx/sites-available/* || return 1
     rm -rf /etc/nginx/stream-enabled/* || return 1
+
+    local dot_dir=/etc/nginx/stream-dot.d nginx_conf=/etc/nginx/nginx.conf
+    local dot_file="$dot_dir/adguard-dot.conf" had_dot=n restored_config
+    local router_include='include /etc/nginx/stream-enabled/*.conf;'
+    local dot_include='include /etc/nginx/stream-dot.d/*.conf;'
+    local stream_with_dot="stream { $router_include $dot_include }"
+
+    if [[ -f $dot_file || -L $dot_file ]]; then had_dot=y; fi
+    rm -f "$dot_file" || true
+    rmdir "$dot_dir" 2>/dev/null || true
+    # Keep trailing newlines when capturing awk's output for the in-place write.
+    if grep -Fxq -- "$stream_with_dot" "$nginx_conf" 2>/dev/null &&
+        restored_config=$(awk -v old="$stream_with_dot" -v new="stream { $router_include }" \
+            '$0 == old { $0 = new } { print }' "$nginx_conf" && printf '.'); then
+        printf '%s' "${restored_config%.}" > "$nginx_conf" || true
+    fi
+    if [[ $had_dot == y ]]; then ufw delete allow 853/tcp || true; fi
 }
 
 # ─── Port / path generators ──────────────────────────────────────────────────
