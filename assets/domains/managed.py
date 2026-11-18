@@ -47,6 +47,7 @@ HYSTERIA_MASQUERADE = dict(type='proxy', url='unix:/run/3x-ui-hysteria-cover.soc
 CLASH = '/var/www/subpage/clash.yaml.tpl'
 DIAGNOSTICS = '/var/www/diagnostics/index.html'
 AGH = '/opt/AdGuardHome/managed.json'
+DOT = '/etc/nginx/stream-dot.d/adguard-dot.conf'
 CORE = ('reality', 'ws', 'grpc', 'xhttp', 'hysteria2')
 SNI_INCLUDE = '/etc/nginx/stream-sni.d/*.conf'
 UPSTREAM_INCLUDE = '/etc/nginx/stream-upstreams.d/*.conf'
@@ -534,8 +535,22 @@ class Operation:
         for file in ('fullchain.pem', 'privkey.pem'):
             self.read('/root/cert/'+panel+'/'+file, '/etc/letsencrypt/live/'+panel+'/'+file)
         main = self.read('/etc/nginx/nginx.conf')
-        require(main.count('stream { include /etc/nginx/stream-enabled/*.conf; }') == 1 and
-                'include /etc/nginx/sites-enabled/*;' in main, 'Unknown main nginx include layout.')
+        stream_include = 'stream { include /etc/nginx/stream-enabled/*.conf;'
+        standard = stream_include + ' }'
+        expanded = stream_include + ' include /etc/nginx/stream-dot.d/*.conf; }'
+        lines = main.splitlines()
+        has_dot = os.path.lexists(self.path(DOT))
+        require(lines.count(standard) + lines.count(expanded) == 1 and
+                (not has_dot or expanded in lines) and 'include /etc/nginx/sites-enabled/*;' in main,
+                '/etc/nginx/nginx.conf has an unrecognized stream include. Restore the project stream line and retry.')
+        if has_dot:
+            port = json.loads(self.read(AGH)).get('dns_port') if context['features']['adguard'] else None
+            ipv6 = 'y' if re.search(r'(?m)^[ \t]*listen[ \t]+\[::\]:443;', stream) else 'n'
+            fragment = self.object(DOT)
+            require(type(port) is int and fragment['kind'] == 'file' and
+                    base64.b64decode(fragment['data']) == self.check('render-dot', panel, port, ipv6).encode(),
+                    DOT+' differs from the default DoT configuration. Restore the default contents and retry.')
+            context['adguard_dot'] = (port, ipv6)
         self.read('/etc/nginx/sites-enabled/80.conf', '/etc/nginx/sites-available/80.conf')
         names = self.http_names(self.read(HTTP))
         # HTTP-01 preparation temporarily includes both original and proposed names.
@@ -916,6 +931,8 @@ class Operation:
             add(CLASH, edit(template, r'^(    url: )'+re.escape(url)+r'$', lambda m: m[1]+'https://'+panel+context['settings']['subPath']+'${SUB_ID}?provider=1'))
             html = self.read(DIAGNOSTICS)
             add(DIAGNOSTICS, edit(html, re.escape('<span class="mono">'+old['panel']+'</span>'), lambda m: '<span class="mono">'+panel+'</span>'))
+            if 'adguard_dot' in context:
+                add(DOT, self.check('render-dot', panel, *context['adguard_dot']))
             if context['features']['adguard']:
                 agh = json.loads(self.read(AGH)); agh['domain'] = panel
                 add(AGH, json.dumps(agh, ensure_ascii=True)+'\n')
@@ -1108,7 +1125,7 @@ class Operation:
 
     def conflict_check(self, record):
         domains = record['old']['domains']; new = record['new']['domains']
-        allowed = {STREAM, HTTP, HOOK, CLASH, DIAGNOSTICS, AGH, MANIFEST, HYSTERIA}
+        allowed = {STREAM, HTTP, HOOK, CLASH, DIAGNOSTICS, AGH, MANIFEST, HYSTERIA, DOT}
         for domain in {domains['panel'], domains['reality'], new['panel'], new['reality']}:
             hostname(domain)
             allowed |= {'/etc/nginx/sites-available/'+domain, '/etc/nginx/sites-enabled/'+domain}

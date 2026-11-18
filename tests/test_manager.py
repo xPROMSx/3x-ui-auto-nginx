@@ -694,7 +694,8 @@ include /etc/nginx/snippets/x-ui-auto-optional/*.conf;
         helper.write_bytes((ROOT/'assets/adguard/managed.sh').read_bytes())
         snippet = root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf'
         metadata = dict(domain='panel.example', path='adg-AbCdEf123456', web_port=18081)
-        for doh, variant in (('dns-query','legacy'),('dns-query',''),('dns-AbCdEf123456','')):
+        for doh, variant in (('dns-query','legacy'), ('dns-query','pre-ip-headers'),
+                             ('dns-AbCdEf123456','pre-ip-headers'), ('dns-AbCdEf123456','')):
             with self.subTest(doh=doh, variant=variant):
                 (agh/'managed.json').write_text(json.dumps(metadata if doh == 'dns-query' else dict(metadata,doh_path=doh)))
                 snippet.write_bytes(subprocess.check_output(['bash','-c',
