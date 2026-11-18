@@ -999,9 +999,9 @@ curl() {
         main = f.p('/etc/nginx/nginx.conf')
         main.write_text(main.read_text().replace('stream-enabled/*.conf; }',
                                                  'stream-enabled/*.conf; include /etc/nginx/stream-dot.d/*.conf; }'))
-        stream = f.p(f.module.STREAM)
-        text = re.sub(r'^.*listen \[::\]:443;.*\n', '', stream.read_text(), flags=re.M)
-        stream.write_text(text.replace('listen 443;', 'listen 443;\n    listen [::]:443;') if ipv6 else text)
+        if not ipv6:
+            stream = f.p(f.module.STREAM)
+            stream.write_text(re.sub(r'(?m)^[ \t]*listen[ \t]+\[::\]:443;[ \t]*\n', '', stream.read_text()))
         fragment = '/etc/nginx/stream-dot.d/adguard-dot.conf'
         f.write(fragment, rendered_dot(f.panel, 'y' if ipv6 else 'n'))
         f.write('/etc/nginx/stream-dot.d/foreign.conf', '# administrator configuration\n')
