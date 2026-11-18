@@ -1,5 +1,6 @@
 """Installed-stack, Backup UI and actual subscription consumer checks in the guest."""
 import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -30,7 +31,6 @@ def run(*args):
 
 def restore_content():
     """Private content digests, never credentials or database rows in reports."""
-    import hashlib
     with sqlite3.connect('/etc/x-ui/x-ui.db') as db:
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         content = {name: db.execute('SELECT * FROM '+name+' ORDER BY rowid').fetchall()
