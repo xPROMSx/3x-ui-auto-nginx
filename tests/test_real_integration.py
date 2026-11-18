@@ -1962,11 +1962,12 @@ finally:
             return normalized
         def provider_runtime(url,request_headers,label,full_profile=None):
             controller=port(self.allocated_ports)
+            mixed=port(self.allocated_ports)
             # UI defaults preserved; only its external health URL is a loopback fixture.
             provider={'type':'http','url':url,'interval':43200,'override':{'udp':True},
                       'header':request_headers,'health-check':{'enable':True,
                       'url':f'http://127.0.0.1:{self.origin.server_port}/health','interval':300,'expected-status':204}}
-            config={'external-controller':f'127.0.0.1:{controller}','log-level':'info',
+            config={'external-controller':f'127.0.0.1:{controller}','mixed-port':mixed,'log-level':'info',
                     'hosts':{'deploy.example':'127.0.0.1'},'tls':{'custom-certifactes':[self.cert.read_text()]},
                     'proxy-providers':{'subscription_1':provider},
                     'proxy-groups':[{'name':'PROXY','type':'select','use':['subscription_1']}],
@@ -1978,7 +1979,7 @@ finally:
                 # are offline fixtures, as in test_real_mihomo_generated_template.
                 for section in ('dns','rule-providers','rules'):
                     runtime=re.sub(r'^'+section+r':.*?(?=^[A-Za-z][^\n]*:|\Z)','',runtime,flags=re.M|re.S)
-                runtime=runtime.replace('mixed-port: 10000',f'mixed-port: {port(self.allocated_ports)}').replace('allow-lan: true','allow-lan: false')
+                runtime=runtime.replace('mixed-port: 10000',f'mixed-port: {mixed}').replace('allow-lan: true','allow-lan: false')
                 runtime=runtime.replace('https://deploy.example/subscription/fixture?provider=1',url+'?provider=1')
                 runtime=re.sub(r'https://(?:www.gstatic.com|cp.cloudflare.com)/generate_204',
                                f'http://127.0.0.1:{self.origin.server_port}/health',runtime)
@@ -1990,6 +1991,8 @@ finally:
             path=self.root/(label+'.yaml');path.write_text(runtime)
             process=self.launch([self.mihomo,'-d',self.root/label,'-f',path],label)
             self.ready(process,('127.0.0.1',controller))
+            # Mihomo registers providers after the controller starts but before the mixed port opens.
+            self.ready(process,('127.0.0.1',mixed))
             for refresh in range(2):
                 status,body=fetch('/providers/proxies/'+provider_name,controller=controller,method='PUT')
                 reason='missing proxies field' if b'file must have a `proxies` field' in body else 'provider refresh rejected'
