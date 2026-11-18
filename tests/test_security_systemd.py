@@ -88,6 +88,52 @@ def nightly_after_cold_boot():
 
 
 class SecuritySystemd(unittest.TestCase):
+    def test_real_nginx_adguard_dot_configuration(self):
+        from certificate_fixtures import function, relocate
+        from test_installer_compatibility import http_name_certificate
+        from test_personal_xhttp import render
+
+        domain = 'panel.example'
+        for ipv6 in (False, True):
+            with self.subTest(ipv6=ipv6), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                nginx = root/'etc/nginx'
+                for name in ('stream-enabled', 'stream-sni.d', 'stream-upstreams.d'):
+                    (nginx/name).mkdir(mode=0o755, parents=True)
+                live = root/'etc/letsencrypt/live'/domain
+                live.mkdir(parents=True)
+                http_name_certificate(live)
+                (live/'cert.pem').rename(live/'fullchain.pem')
+                (live/'key.pem').rename(live/'privkey.pem')
+                router = render('cat > /etc/nginx/stream-enabled/stream.conf', domain=domain,
+                                reality_domain='cover.example', ipv6_listen='listen [::]:443;' if ipv6 else '')
+                (nginx/'stream-enabled/stream.conf').write_text(relocate(router, root))
+                config = nginx/'nginx.conf'
+                config.write_text('load_module /usr/lib/nginx/modules/ngx_stream_module.so;\n'
+                                  f'pid {root}/nginx.pid;\nerror_log stderr;\nevents {{}}\n'
+                                  f'stream {{ include {nginx}/stream-enabled/*.conf; }}\n')
+                stage = root/'stage'
+                stage.mkdir()
+                source = '\n'.join(relocate(function(name), root)
+                                   for name in ('render_adguard_dot', 'configure_adguard_dot'))
+                result = subprocess.run(['bash', '-eu', '-c', source + '''
+msg_err() { printf '%s\n' "$*" >&2; }
+agh_config() { AGH_DNS_PORT=15453; }
+domain=$1
+AGH_TEMP=$2
+configure_adguard_dot
+''', 'fixture', domain, str(stage)], capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                dot_dir = nginx/'stream-dot.d'
+                dot_file = dot_dir/'adguard-dot.conf'
+                for path, mode in ((dot_dir, 0o755), (dot_file, 0o644)):
+                    self.assertFalse(path.is_symlink())
+                    info = path.stat()
+                    self.assertEqual((info.st_uid, info.st_gid, info.st_mode & 0o777), (0, 0, mode))
+                result = subprocess.run(['/usr/sbin/nginx', '-e', 'stderr', '-p', str(root)+'/',
+                                         '-c', str(config), '-t'], capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_base_os_post_upgrade_ssh_health(self):
         if (Path('/proc/1/comm').read_text().strip() != 'systemd' or
                 not Path('/opt/xui-ci/apt/xui-ci-upgrade-1.deb').is_file()):

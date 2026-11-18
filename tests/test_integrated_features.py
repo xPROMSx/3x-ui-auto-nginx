@@ -144,7 +144,8 @@ printf 'RESULT:%s:%s:%s\n' "$core_port" "$xhttp_cdn_port" "$xhttp_cdn_path"
 
     def test_minimal_ufw_preserves_active_and_refuses_ambiguous_ssh_or_firewall(self):
         import hashlib
-        for scenario in ('active', 'service', 'socket', 'missing', 'foreign', 'deny', 'custom-before', 'nft', 'legacy', 'enable-fails'):
+        for scenario in ('active', 'service', 'socket', 'missing', 'foreign', 'deny', 'custom-before', 'nft',
+                         'legacy', 'enable-fails', 'dot-open', 'dot-closed', 'dot-unconfigured'):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory:
                 security = helper('security'); root = Path(directory); calls = []; active = scenario == 'active'
                 for name in ('etc/ufw', 'usr/share/ufw', 'etc/default', 'usr/sbin', 'proc/123'):
@@ -155,6 +156,13 @@ printf 'RESULT:%s:%s:%s\n' "$core_port" "$xhttp_cdn_port" "$xhttp_cdn_path"
                     for folder in ('etc/ufw','usr/share/ufw'): (root/folder/name).write_text('stock\n')
                 for name in ('user.rules','user6.rules'): (root/'etc/ufw'/name).write_text('*filter\nCOMMIT\n')
                 (root/'etc/ufw/ufw.conf').write_text('ENABLED=no\nLOGLEVEL=low\n')
+                if scenario in ('dot-open', 'dot-closed'):
+                    dot = root/'etc/nginx/stream-dot.d/adguard-dot.conf'
+                    dot.parent.mkdir(parents=True)
+                    dot.touch()
+                if scenario in ('dot-open', 'dot-unconfigured'):
+                    for name, chain in (('user.rules', 'ufw'), ('user6.rules', 'ufw6')):
+                        (root/'etc/ufw'/name).write_text(f'-A {chain}-user-input -p tcp --dport 853 -j ACCEPT\n')
                 conffiles = ''
                 for name in ('etc/default/ufw','etc/ufw/sysctl.conf'):
                     (root/name).write_text('stock\n')
@@ -186,8 +194,10 @@ printf 'RESULT:%s:%s:%s\n' "$core_port" "$xhttp_cdn_port" "$xhttp_cdn_path"
                     return ''
                 with patch.object(security,'command',side_effect=command), patch.dict(os.environ, {'SSH_CONNECTION':''}):
                     result = security.enable_ufw(root)
-                expected = 'preserved' if scenario == 'active' else 'configured' if scenario in ('service','socket') else 'failed_unverified' if scenario == 'enable-fails' else 'failed'
+                expected = 'preserved' if scenario == 'active' else 'configured' if scenario in (
+                    'service', 'socket', 'dot-open', 'dot-closed') else 'failed_unverified' if scenario == 'enable-fails' else 'failed'
                 self.assertEqual(result['status'], expected, result)
+                self.assertFalse(any(call[0] == 'ufw' and '853/tcp' in call for call in calls))
                 if scenario == 'active': self.assertEqual(calls, [('ufw','status')])
                 elif expected == 'failed': self.assertNotIn(('ufw','--force','enable'), calls)
                 else:
@@ -867,6 +877,30 @@ sysctl() {
                 self.assertIn('RESULT=' + expected, result.stdout)
                 if variable=='INSTALL_VISION' and expected=='n':
                     self.assertNotIn('Enter the domain for VLESS Vision',result.stdout)
+
+    def test_adguard_dot_prompt_defaults_and_order(self):
+        main = function('main')
+        first, last = main.index('    select_adguard'), main.index('    select_client')
+        sequence = main[first:main.index('\n', last)]
+        source = 'source "$1"\nuname() { echo x86_64; }\nINSTALL_AGH_DOT=n\n' + sequence
+        source += '\nprintf "\\nRESULT:%s:%s\\n" "$INSTALL_AGH_DOT" "$CREATE_CLIENT"'
+        prompt = 'Enable DNS-over-TLS (DoT) for your devices? [y/N]: '
+        client = 'Create a client in 3X-UI'
+        for answers, expected, count in (
+            ('n\ny\n', 'n:y', 0), ('y\n', 'n:n', 1), ('y\n\ny\n', 'n:y', 1),
+            ('y\nn\ny\n', 'n:y', 1), ('y\nN\ny\n', 'n:y', 1), ('y\ny\nn\n', 'y:n', 1),
+            ('y\nbad\nY\nn\n', 'y:n', 2),
+        ):
+            with self.subTest(answers=answers):
+                result = subprocess.run(['bash', '-eu', '-c', source, 'fixture', str(ROOT/'x-ui-latest.sh')],
+                                        input=answers, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('RESULT:'+expected, result.stdout)
+                self.assertEqual(result.stdout.count(prompt), count, result.stdout)
+                if count:
+                    self.assertLess(result.stdout.index('It opens port 853'), result.stdout.index(prompt))
+                    self.assertLess(result.stdout.rindex(prompt), result.stdout.index(client))
+                self.assertEqual('Please enter y or n.' in result.stdout, count == 2)
 
     def test_all_choices_and_preflights_before_destruction(self):
         text = function('main')
