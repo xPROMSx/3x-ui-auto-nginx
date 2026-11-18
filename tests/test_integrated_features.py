@@ -634,7 +634,7 @@ sysctl() {
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
                'select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns')
         base='\n'.join(n+'() { echo '+n+'; };' for n in names)
-        base+='\nmsg_err() { echo "$*" >&2; }; msg_warn() { :; }; cleanup_adguard() { echo CLEANUP; exit 19; };\n'
+        base+='\nINSTALL_AGH=n; msg_err() { echo "$*" >&2; }; msg_warn() { :; }; cleanup_adguard() { echo CLEANUP; exit 19; };\n'
         for failure in ('preflight_base_os','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','prepare_base_os','prepare_system_dns'):
             result=subprocess.run(['bash','-eu','-c',base+function('main')+'\n'+failure+'() { return 1; }; main'],capture_output=True,text=True)
             self.assertEqual(result.returncode,1,result.stderr)
@@ -689,7 +689,7 @@ sysctl() {
                 stubs='\n'.join(name+'() { :; }' for name in names)
                 stubs+='\nselect_security() { INSTALL_SECURITY='+('n' if case=='declined' else 'y')+'; }; msg_err() { echo "$*" >&2; }; msg_warn() { :; };\n'
                 stubs+='curl() { cp "$FIXTURE_HELPER" "${@: -1}"; }; cleanup_adguard() { echo CLEANUP; exit 19; }; clean_previous_install() { echo DESTRUCTION; };\n'
-                script=stubs+function('preflight_integrated_features')+'\n'+function('main')+'\nINSTALL_VISION=n; CREATE_CLIENT=n; main'
+                script=stubs+function('preflight_integrated_features')+'\n'+function('main')+'\nINSTALL_VISION=n; INSTALL_AGH=n; CREATE_CLIENT=n; main'
                 env={**os.environ,'PANEL_STAGE':str(stage),'GITHUB_RAW':'https://fixture.invalid','FIXTURE_HELPER':str(root/'helper.py')}
                 before={str(p.relative_to(root)):os.readlink(p) if p.is_symlink() else p.read_bytes() for p in (root/'etc').rglob('*') if p.is_file() or p.is_symlink()}
                 result=subprocess.run(['bash','-eu','-c',script],env=env,capture_output=True,text=True)
@@ -1393,7 +1393,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
         # Security, Vision, AWG, AGH, Client; exact required six combinations.
         scenarios=('nnnnn','ynnny','nynny','ynnyy','nyyny','yyyyy')
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
-               'select_adguard','select_client','preflight_panel_release','make_port','preflight_amneziawg','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features',
+               'select_adguard','select_dot','select_client','preflight_panel_release','make_port','preflight_amneziawg','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features',
                'cleanup_adguard','clean_previous_install','install_packages','setup_firewall','get_server_ip','setup_acme_http',
                'get_ssl_certs','install_panel','configure_nginx','configure_xui_db','install_clash_sub','install_fake_site',
                'install_diagnostics','tune_system','install_backup_tool','setup_certificate_renewal','check_installation','show_results','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state')
