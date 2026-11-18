@@ -44,7 +44,7 @@ EOFNG
 }'''
 
 class AdGuardBackup(unittest.TestCase):
-    def enablement_fixture(self, active=True, legacy=False):
+    def enablement_fixture(self, active=True, legacy=False, random_doh=False):
         import re, subprocess
         from unittest.mock import patch
         from test_adguard import AdGuardInstaller, MOCK, INSTALLER, FIXTURE_BINARY_SHA
@@ -64,14 +64,16 @@ class AdGuardBackup(unittest.TestCase):
         (agh/'AdGuardHome-public.gpg').unlink()
         meta = json.loads((agh/'managed.json').read_text())
         meta.update(version='v0.107.79', updates_enabled=False)
+        if not random_doh:
+            meta.pop('doh_path')
         (agh/'managed.json').write_text(json.dumps(meta))
         unit = root/'etc/systemd/system/AdGuardHome.service'
         unit.write_text(unit.read_text().replace(' -s run', ' --no-check-update -s run'))
         fixture.helper.write_text(fixture.helper.read_text().replace(FIXTURE_BINARY_SHA, LEGACY_FIXTURE_BINARY_SHA) + '\nagh_dns_probe() { echo native-dns-probe >> \"$CALLS\"; }\n')
-        if legacy:
-            result=fixture.run_shell((), 'source "$HELPER_FIXTURE"; agh_config >/dev/null; agh_snippet legacy')
-            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
-            (root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').write_text(result.stdout)
+        variant = ' legacy' if legacy else ''
+        result = fixture.run_shell((), 'source "$HELPER_FIXTURE"; agh_config >/dev/null; agh_snippet'+variant)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        (root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf').write_text(result.stdout)
         if not active: (root/'active').unlink()
         (root/'release-backup').write_bytes((Path(__file__).resolve().parents[1]/'assets/backup/x-ui-backup.sh').read_bytes())
         body = re.search(r'^enable_agh_updates\(\) \(\n.*?^\)', INSTALLER, re.M|re.S)[0]
@@ -111,9 +113,10 @@ enable_agh_updates
         return fixture, run
 
     def test_enablement_preserves_legacy_version_data_and_service_state(self):
-        for active,legacy in ((True,False),(False,False),(True,True)):
-            with self.subTest(active=active,legacy=legacy):
-                fixture, run = self.enablement_fixture(active,legacy)
+        for active, legacy, random_doh in ((True,False,False), (False,False,False),
+                                            (True,True,False), (True,False,True)):
+            with self.subTest(active=active,legacy=legacy,random_doh=random_doh):
+                fixture, run = self.enablement_fixture(active,legacy,random_doh)
                 root = fixture.root; agh = root/'opt/AdGuardHome'
                 before = {name:(agh/name).read_bytes() for name in ('AdGuardHome','AdGuardHome.yaml')}
                 snippet=root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf'
@@ -126,6 +129,7 @@ enable_agh_updates
                     self.assertEqual((root/'active').exists(),active)
                     meta = json.loads((agh/'managed.json').read_text())
                     self.assertEqual(meta['version'],'v0.107.79'); self.assertIs(meta['updates_enabled'],True)
+                    self.assertEqual(meta.get('doh_path'), 'dns-'+'A'*12 if random_doh else None)
                     self.assertNotIn('--no-check-update',(root/'etc/systemd/system/AdGuardHome.service').read_text())
                     self.assertFalse(list(root.glob('stage.*')), result.stdout+result.stderr)
 
