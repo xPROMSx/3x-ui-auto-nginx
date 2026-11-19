@@ -272,24 +272,25 @@ _panel_initial_config() { :; }
         from unittest.mock import patch
 
         url = 'https://api.github.com/repos/example/project/releases/latest'
-        for token in ('', 'synthetic-canary-secret'):
-            with self.subTest(auth=bool(token)), patch.dict(os.environ, {'GITHUB_TOKEN': token}), \
+        secret = 'synthetic-canary-secret'
+        for github_token, gh_token, expected in (('', '', ''), (secret, 'unused', secret), ('', secret, secret)):
+            with self.subTest(auth=bool(expected)), \
+                    patch.dict(os.environ, {'GITHUB_TOKEN': github_token, 'GH_TOKEN': gh_token}), \
                     patch.object(upstream_canary.urllib.request, 'urlopen', return_value=io.BytesIO(b'{"ok":true}')) as opening:
                 self.assertEqual(upstream_canary.fetch_json(url), {'ok': True})
                 request = opening.call_args.args[0]
-                self.assertEqual(request.get_header('Authorization'), 'Bearer '+token if token else None)
+                self.assertEqual(request.get_header('Authorization'), 'Bearer '+expected if expected else None)
                 redirected = HTTPRedirectHandler().redirect_request(
                     request, None, 302, 'Found', {}, 'https://example.invalid/')
                 self.assertIsNone(redirected.get_header('Authorization'))
-                if token:
-                    self.assertNotIn(token, repr(request))
+                self.assertNotIn(secret, repr(request))
 
-        with patch.dict(os.environ, {'GITHUB_TOKEN': token}), patch.object(upstream_canary.time, 'sleep'), \
+        with patch.dict(os.environ, {'GITHUB_TOKEN': secret}), patch.object(upstream_canary.time, 'sleep'), \
                 patch.object(upstream_canary.urllib.request, 'urlopen',
-                             side_effect=HTTPError(url, 403, token, {}, None)) as opening:
+                             side_effect=HTTPError(url, 403, secret, {}, None)) as opening:
             with self.assertRaisesRegex(RuntimeError, r'GitHub release API request failed \(HTTP 403\)') as result:
                 upstream_canary.fetch_json(url)
-            self.assertNotIn(token, str(result.exception))
+            self.assertNotIn(secret, str(result.exception))
             self.assertTrue(result.exception.__suppress_context__)
             self.assertEqual(opening.call_count, 3)
 

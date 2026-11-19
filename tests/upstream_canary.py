@@ -16,7 +16,7 @@ from release_contract import ROOT, candidate, stable_version, verify
 
 def fetch_json(url):
     headers = {'Accept':'application/vnd.github+json', 'User-Agent':'3x-ui-auto-nginx-canary'}
-    token = os.environ.get('GITHUB_TOKEN')
+    token = os.environ.get('GITHUB_TOKEN') or os.environ.get('GH_TOKEN')
     request = urllib.request.Request(url, headers=headers)
     if token:
         request.add_unredirected_header('Authorization', 'Bearer '+token)

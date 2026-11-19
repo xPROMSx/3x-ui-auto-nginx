@@ -174,7 +174,7 @@ The installer bootstraps only release-preflight dependencies, then verifies the 
 A small Actions cache stores only the tested result, keyed by version, digest and test-implementation fingerprint. Unchanged daily candidates reuse the latest tested PASS/FAIL report; preparation/download failures are reported but not cached as tested; changed artifacts/code, manual runs and rerun attempts execute the tests again. Each fresh result gets a unique cache key. Cache eviction causes a fresh run, not a skip. Reports/logs are retained as artifacts for 30 days.
 
 The hosted probe uses GitHub's built-in read-only token for release metadata.
-Local probes can use `GITHUB_TOKEN` or the public API anonymously.
+Local probes use `GITHUB_TOKEN`, fall back to `GH_TOKEN`, and use the public API anonymously if both are unset.
 
 For an explicit local candidate run (non-root, integration dependencies installed):
 
