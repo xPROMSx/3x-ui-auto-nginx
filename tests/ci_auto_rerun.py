@@ -5,11 +5,12 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import urllib.request
+
+FAILED_CONCLUSIONS = ('failure', 'timed_out')
 
 
 def skip_reason(run, repository):
-    if run['conclusion'] != 'failure':
+    if run['conclusion'] not in FAILED_CONCLUSIONS:
         return 'conclusion is '+str(run['conclusion'])
     if run['run_attempt'] != 1:
         return 'only attempt 1 is eligible'
@@ -43,12 +44,7 @@ def gh(*args):
 
 
 def current_pull(repository, number):
-    # This repository is public. Anonymous GET keeps pull-requests permission
-    # out of the workflow token and cannot send it to a redirect destination.
-    url = f'https://api.github.com/repos/{repository}/pulls/{int(number)}'
-    request = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json'})
-    with urllib.request.urlopen(request, timeout=20) as response:
-        return json.load(response)
+    return json.loads(gh('api', f'repos/{repository}/pulls/{int(number)}'))
 
 
 def process(run, repository, summary):
@@ -59,15 +55,21 @@ def process(run, repository, summary):
     try:
         pages = json.loads(gh('api', '--paginate', '--slurp', endpoint+'/attempts/1/jobs?per_page=100'))
         names = [job['name'] for page in pages for job in page['jobs']
-                 if job['conclusion'] in ('failure', 'timed_out')]
+                 if job['conclusion'] in FAILED_CONCLUSIONS]
         failed_jobs = ', '.join(names) or 'none'
         reason = skip_reason(run, repository)
         if reason is None:
             latest = json.loads(gh('api', endpoint))
-            if latest['run_attempt'] != 1 or latest['status'] != 'completed' or latest['conclusion'] != 'failure':
-                reason = 'run is no longer a completed failure on attempt 1'
+            if (latest['run_attempt'] != 1 or latest['status'] != 'completed'
+                    or latest['conclusion'] not in FAILED_CONCLUSIONS):
+                reason = 'run is no longer a completed failure or timeout on attempt 1'
         if reason is None and run['event'] == 'pull_request':
-            reason = pr_skip_reason(run, current_pull(repository, run['pull_requests'][0]['number']), repository)
+            try:
+                pull = current_pull(repository, run['pull_requests'][0]['number'])
+            except (OSError, subprocess.SubprocessError, ValueError):
+                decision = 'Skipped: GitHub PR lookup failed'
+                raise
+            reason = pr_skip_reason(run, pull, repository)
         if reason is None:
             gh('run', 'rerun', run_id, '--repo', repository, '--failed')
             decision = 'Rerun requested for failed jobs'
