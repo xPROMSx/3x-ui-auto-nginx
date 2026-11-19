@@ -97,6 +97,9 @@ gpgv() {
 ss() {
     echo "tcp LISTEN 0 128 ${LISTEN_WEB:-127.0.0.1}:${AGH_WEB_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=5))"
     echo "${DNS_PROTOCOL:-udp} UNCONN 0 0 ${LISTEN_DNS:-127.0.0.1}:${AGH_DNS_PORT} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=6))"
+    if [[ "${DNS_TCP:-n}" == y ]]; then
+        echo "tcp LISTEN 0 128 127.0.0.1:$AGH_DNS_PORT 0.0.0.0:* users:((\"AdGuardHome\",pid=12345,fd=52))"
+    fi
     if [[ -n "${EXTRA_AGH_UDP:-}" ]]; then
         echo "udp UNCONN 0 0 ${EXTRA_AGH_UDP} 0.0.0.0:* users:((\"AdGuardHome\",pid=${LISTEN_PID:-12345},fd=51))"
     fi
@@ -201,7 +204,7 @@ class AdGuardInstaller(unittest.TestCase):
 
     def run_shell(self, names, body, input=None, **env):
         if 'adguard_stage' in names:
-            names = (*names, 'adguard_admin_probe')
+            names = (*names, 'adguard_admin_probe', 'configure_adguard_dot', 'render_adguard_dot', 'setup_firewall')
         source = MOCK + '\n' + '\n'.join(relocate(function(n), self.root) for n in names)
         return subprocess.run(['bash', '-eu', '-c', source + '\n' + body], input=input, text=True,
                               capture_output=True, env={**self.env, **env})
@@ -308,7 +311,7 @@ class AdGuardInstaller(unittest.TestCase):
         stubs+='\ninstall_adguard() { echo optional-AGH >> "$CALLS"; }\nx-ui() { :; }\n'
         for answer, expected in (('\n',False),('n\n',False),('N\n',False),('y\n',True),('Y\n',True)):
             self.calls.write_text('')
-            r=self.run_shell(('select_adguard','cleanup_adguard','main'),stubs+'\nmain',input=answer)
+            r=self.run_shell(('select_adguard','select_dot','ui_note','cleanup_adguard','main'),stubs+'\nmain',input=answer)
             self.assertEqual(r.returncode,0,r.stderr)
             log=self.calls.read_text()
             self.assertEqual('optional-AGH' in log,expected)
@@ -531,10 +534,10 @@ entrypoint "$@"
                     self.assertFalse(Path(private).exists())
                     self.assertEqual(self.run_shell(('cleanup_adguard',), 'cleanup_adguard').returncode, 0)
 
-    def final_result(self, requested, failure='', unverified=False):
+    def final_result(self, requested, failure='', unverified=False, dot='n', dns_tcp='y', language='en'):
         # Exercise the actual main, optional install/rollback and summary on private state.
-        operations = ('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state','select_security','select_vision','select_client','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','confirm_destructive_reinstall', 'validate_domains', 'clean_previous_install',
-                      'install_packages', 'setup_firewall', 'get_server_ip', 'setup_acme_http',
+        operations = ('preflight_base_os','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state','select_security','select_vision','select_client','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','select_amneziawg','preflight_amneziawg','preflight_panel_release','make_port','setup_swap','confirm_destructive_reinstall', 'validate_domains', 'clean_previous_install',
+                      'install_packages', 'get_server_ip', 'setup_acme_http',
                       'get_ssl_certs', 'install_panel', 'configure_nginx', 'configure_xui_db',
                       'install_clash_sub', 'install_fake_site', 'install_diagnostics', 'tune_system',
                       'install_backup_tool', 'setup_certificate_renewal')
@@ -552,8 +555,24 @@ entrypoint "$@"
         body = stubs + r'''
 msg_err() { echo "$*"; }
 select_adguard() { :; }
+select_dot() { INSTALL_AGH_DOT=$DOT_CHOICE; }
 x-ui() { :; }
-ufw() { echo 'Status: active'; }
+stat() {
+    if [[ "$*" == "-c %u:%g:%a $ROOT/etc/nginx/stream-dot.d" ]]; then
+        printf '0:0:%s\n' "$(command stat -c '%a' "$ROOT/etc/nginx/stream-dot.d")"
+    else
+        command stat "$@"
+    fi
+}
+ufw() {
+    if [[ $* == status ]]; then echo 'Status: active'; return 0; fi
+    if [[ $* == 'allow 853/tcp' ]]; then
+        [[ -f "$ROOT/etc/nginx/stream-dot.d/adguard-dot.conf" ]] || return 2
+        grep -Fq 'stream-dot.d/*.conf;' "$ROOT/etc/nginx/nginx.conf" || return 2
+    fi
+    echo "ufw $*" >> "$CALLS"
+    [[ "$*" != 'allow 853/tcp' || "$FAIL" != dot-ufw ]]
+}
 CORE_CHECKS=0
 check_installation() {
     CORE_CHECKS=$((CORE_CHECKS+1))
@@ -567,14 +586,105 @@ reality_domain=cover.example
 main
 '''
         return self.run_shell(('cleanup_adguard', 'adguard_stage', 'install_adguard', 'show_results', 'main'),
-                              body, INSTALL_AGH='y' if requested else 'n', FAIL=failure,
+                              body, INSTALL_AGH='y' if requested else 'n', FAIL=failure, UI_LANG=language,
+                              DOT_CHOICE=dot, DNS_TCP=dns_tcp,
                               UNVERIFIED='1' if unverified else '0', PYTHONOPTIMIZE='1')
+
+    def dot_nginx_fixture(self, ipv6=False):
+        nginx = self.root/'etc/nginx'
+        router = nginx/'stream-enabled/stream.conf'
+        router.parent.mkdir(exist_ok=True)
+        router.write_text('server {\n    listen     443;\n' +
+                          ('    listen     [::]:443;\n' if ipv6 else '') + '}\n')
+        main = nginx/'nginx.conf'
+        main.write_text(f'events {{}}\nstream {{ include {router.parent}/*.conf; }}\n')
+        return main, router
+
+    def test_dot_install_configuration_and_opt_out(self):
+        for requested, choice, ipv6 in ((False, 'n', False), (True, 'n', False),
+                                         (True, 'y', False), (True, 'y', True)):
+            with self.subTest(requested=requested, dot=choice, ipv6=ipv6):
+                self.calls.write_text('')
+                main, router = self.dot_nginx_fixture(ipv6)
+                previous = main.read_bytes(), router.read_bytes()
+                directory = main.parent/'stream-dot.d'
+                fragment = directory/'adguard-dot.conf'
+                result = self.final_result(requested, dot=choice, language='ru' if ipv6 else 'en')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                enabled = choice == 'y'
+                self.assertEqual(fragment.exists(), enabled)
+                firewall = [line for line in self.calls.read_text().splitlines() if line.startswith('ufw ')]
+                self.assertEqual(firewall, ['ufw allow 80/tcp', 'ufw allow 443/tcp', 'ufw allow 443/udp']
+                                 + (['ufw allow 853/tcp'] if enabled else []))
+                self.assertEqual(router.read_bytes(), previous[1])
+                if not enabled:
+                    self.assertEqual(main.read_bytes(), previous[0])
+                    self.assertFalse(directory.exists())
+                    self.assertNotIn('DNS-over-TLS:', result.stdout)
+                    continue
+                self.assertEqual(fragment.stat().st_mode & 0o777, 0o644)
+                self.assertEqual(directory.stat().st_mode & 0o777, 0o755)
+                include = f'include {directory}/*.conf;'
+                self.assertEqual(main.read_text().count(include), 1)
+                self.assertEqual(main.read_text(), previous[0].decode().replace('; }', f'; {include} }}'))
+                self.assertNotRegex(include, r'[$\\]')
+                dns = json.loads((self.root/'opt/AdGuardHome/managed.json').read_text())['dns_port']
+                text = fragment.read_text(encoding='utf-8').replace(str(self.root), '')
+                ipv6_listener = '    listen [::]:853 ssl;\n' if ipv6 else ''
+                self.assertEqual(text, 'limit_conn_zone $binary_remote_addr zone=dot_conn:1m;\n'
+                    'server {\n    listen 853 ssl;\n' + ipv6_listener +
+                    '    ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;\n'
+                    '    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;\n'
+                    '    ssl_protocols TLSv1.2 TLSv1.3;\n    limit_conn dot_conn 50;\n'
+                    f'    proxy_pass 127.0.0.1:{dns};\n}}\n')
+                summary = ('DNS-over-TLS: example.com, порт 853 (Android «Частный DNS»)' if ipv6 else
+                           'DNS-over-TLS: example.com, port 853 (Android Private DNS)')
+                self.assertIn(summary, ' '.join(result.stdout.split()))
+                fragment.unlink()
+                directory.rmdir()
+
+    def test_dot_ufw_failure_restores_nginx_and_fails_installation(self):
+        for preexisting in (False, True):
+            with self.subTest(preexisting_directory=preexisting):
+                self.calls.write_text('')
+                main, router = self.dot_nginx_fixture(ipv6=True)
+                previous = main.read_bytes(), router.read_bytes()
+                directory = main.parent/'stream-dot.d'
+                if preexisting:
+                    directory.mkdir()
+                    directory.chmod(0o755)
+                result = self.final_result(True, 'dot-ufw', dot='y')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual((main.read_bytes(), router.read_bytes()), previous)
+                self.assertFalse((directory/'adguard-dot.conf').exists())
+                self.assertEqual(directory.exists(), preexisting)
+                log = self.calls.read_text().splitlines()
+                failure = log.index('ufw allow 853/tcp')
+                self.assertLess(log.index('systemctl reload nginx'), failure)
+                self.assertLess(log.index('nginx-test', failure), log.index('systemctl reload nginx', failure))
+                self.assertIn('UFW could not allow 853/tcp for DNS-over-TLS.', result.stdout + result.stderr)
+                self.assert_core_credentials(result)
+                self.assert_no_agh_credentials_or_success(result)
+                self.assertNotIn('DNS-over-TLS:', result.stdout)
+
+    def test_agh_listeners_requires_tcp_dns_only_with_dot_file(self):
+        self.assertEqual(self.run_shell(('cleanup_adguard', 'adguard_stage', 'install_adguard'),
+                                       'install_adguard').returncode, 0)
+        args = 'source "$HELPER_FIXTURE"; agh_config && agh_listeners'
+        self.assertEqual(self.run_shell((), args).returncode, 0)
+        fragment = self.root/'etc/nginx/stream-dot.d/adguard-dot.conf'
+        fragment.parent.mkdir()
+        fragment.touch()
+        result = self.run_shell((), args)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('TCP DNS', result.stderr)
+        self.assertEqual(self.run_shell((), args, DNS_TCP='y').returncode, 0)
 
     def assert_core_credentials(self, result):
         self.assertIn('3X-UI Auto Nginx — Installation Result', result.stdout)
         self.assertIn('https://example.com/panel/', result.stdout)
-        self.assertIn('Username: panel-user', result.stdout)
-        self.assertEqual(result.stdout.count('Password: generated-panel-secret'), 1)
+        self.assertRegex(result.stdout, r'Username: +panel-user')
+        self.assertEqual(len(re.findall(r'Password: +generated-panel-secret', result.stdout)), 1)
         self.assertIn('Save these credentials', result.stdout)
         self.assertIn('core-health 1', self.calls.read_text())
 
@@ -582,10 +692,10 @@ main
         r = self.final_result(True)
         self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
         self.assert_core_credentials(r)
-        self.assertIn('[✓] AdGuard Home           Running (v0.107.80)', r.stdout)
-        self.assertIn('[✓] DNS-over-HTTPS         Ready', r.stdout)
-        self.assertIn('AdGuard Home:\n https://example.com/adg-'+'A'*12+'/', r.stdout)
-        self.assertEqual(r.stdout.count('Password: '+'A'*32), 1)
+        self.assertRegex(r.stdout, r'\[✓\] AdGuard Home +Running \(v0\.107\.80\)')
+        self.assertRegex(r.stdout, r'\[✓\] DNS-over-HTTPS +Ready')
+        self.assertRegex(r.stdout, r'AdGuard Home: +https://example\.com/adg-'+'A'*12+'/')
+        self.assertEqual(len(re.findall(r'Password: '+' +'+'A'*32, r.stdout)), 1)
         self.assertNotIn('A'*32, self.calls.read_text())
 
     def test_final_result_opt_out_keeps_only_core_credentials(self):
@@ -593,7 +703,7 @@ main
         self.assertEqual(r.returncode, 0, r.stdout+r.stderr)
         self.assert_core_credentials(r)
         self.assertNotIn('AdGuard Home:', r.stdout)
-        self.assertNotIn('Login: admin', r.stdout)
+        self.assertNotRegex(r.stdout, r'Login: +admin')
         self.assertNotIn('A'*32, r.stdout)
         self.assertNotIn('control/login', self.calls.read_text())
 
@@ -601,10 +711,10 @@ main
         r = self.final_result(True, 'cookie-unusable')
         self.assertEqual(r.returncode, 1, r.stdout+r.stderr)
         self.assert_core_credentials(r)
-        self.assertIn('[✓] 3X-UI / Xray           Running', r.stdout)
-        self.assertIn('[!] AdGuard Home           Failed — rolled back', r.stdout)
-        self.assertIn('[!] DNS-over-HTTPS         Not installed', r.stdout)
-        self.assertIn('The core 3X-UI stack remains operational.', r.stdout)
+        self.assertRegex(r.stdout, r'\[✓\] 3X-UI / Xray +Running')
+        self.assertRegex(r.stdout, r'\[!\] AdGuard Home +Failed — rolled back')
+        self.assertRegex(r.stdout, r'\[!\] DNS-over-HTTPS +Not installed')
+        self.assertIn('The core 3X-UI stack remains operational.', ' '.join(r.stdout.split()))
         self.assert_no_agh_credentials_or_success(r)
         self.assertIn('core-health 2', self.calls.read_text())
         self.assertFalse((self.root/'opt/AdGuardHome').exists())
@@ -614,7 +724,7 @@ main
         self.assertEqual(r.returncode, 1, r.stdout+r.stderr)
         self.assert_core_credentials(r)
         self.assertIn('Post-rollback core health could not be verified.', r.stdout)
-        self.assertIn('[!] AdGuard Home           Failed — rollback not verified', r.stdout)
+        self.assertRegex(r.stdout, r'\[!\] AdGuard Home +Failed — rollback not verified')
         for label in ('3X-UI / Xray', 'nginx', 'XHTTP', 'Diagnostics', 'Certificate renewal'):
             line = next(l for l in r.stdout.splitlines() if label in l and '[!]' in l)
             self.assertIn('Post-rollback health not verified', line)
@@ -623,8 +733,8 @@ main
         self.assertIn('core-health 2', self.calls.read_text())
 
     def assert_no_agh_credentials_or_success(self, result):
-        self.assertNotIn('AdGuard Home: https://', result.stdout)
-        self.assertNotIn('Login: admin', result.stdout)
+        self.assertNotRegex(result.stdout, r'AdGuard Home: +https://')
+        self.assertNotRegex(result.stdout, r'Login: +admin')
         self.assertNotIn('A'*32, result.stdout + result.stderr + self.calls.read_text())
         self.assertNotIn('[✓] AdGuard Home', result.stdout)
         self.assertNotIn('[✓] DNS-over-HTTPS', result.stdout)
@@ -645,10 +755,11 @@ main
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(directory.stat().st_mode & 0o777, 0o755)
 
-    def test_live_and_staged_renderers_emit_the_same_three_snippets(self):
+    def test_live_and_staged_renderers_emit_matching_snippets(self):
         backup = (ROOT / 'assets/backup/x-ui-backup.sh').read_text()
 
-        for path, variant in (('', 'legacy'), ('', ''), ('dns-AbCdEf123456', '')):
+        for path, variant in (('', 'legacy'), ('', 'pre-ip-headers'), ('', ''),
+                              ('dns-AbCdEf123456', 'pre-ip-headers'), ('dns-AbCdEf123456', '')):
             with self.subTest(path=path, variant=variant):
                 rendered = []
                 for source in (HELPER, backup):
@@ -659,17 +770,24 @@ main
                 self.assertEqual(*rendered)
                 self.assertIn(f'location = /{path or "dns-query"} {{\n'.encode(), rendered[0])
                 self.assertEqual(b'location ~ ' in rendered[0], variant != 'legacy')
+                for header in (b'CF-Connecting-IP', b'True-Client-IP'):
+                    self.assertEqual(rendered[0].count(b'proxy_set_header '+header+b' "";'),
+                                     0 if variant else 3)
 
     def test_real_nginx_optional_include_and_exact_routes(self):
         nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
         self.assertTrue(nginx, 'Real nginx is required')
         hits=[]
+        forwarded=[]
         random_id='client-'+os.urandom(6).hex()
         class Backend(BaseHTTPRequestHandler):
+            def record(self, method):
+                hits.append((method,self.path))
+                forwarded.append(tuple(self.headers.get(name) for name in ('CF-Connecting-IP', 'True-Client-IP')))
             def do_GET(self):
-                hits.append(('GET',self.path));self.send_response(200);self.end_headers();self.wfile.write(b'backend')
+                self.record('GET');self.send_response(200);self.end_headers();self.wfile.write(b'backend')
             def do_POST(self):
-                hits.append(('POST',self.path));self.send_response(200)
+                self.record('POST');self.send_response(200)
                 self.send_header('Set-Cookie', 'agh_session=fixture; Path=/; HttpOnly; SameSite=Lax')
                 self.end_headers();self.wfile.write(b'backend')
             def log_message(self,*args):pass
@@ -707,11 +825,13 @@ main
                 for path,method,status in cases:
                     before=len(hits)
                     url=f'http://127.0.0.1:{port}{path}'
-                    r=subprocess.run(['curl','--noproxy','*','-s','-o','/dev/null','-w','%{http_code}','-X',method,url],text=True,capture_output=True)
+                    r=subprocess.run(['curl','--noproxy','*','-s','-o','/dev/null','-w','%{http_code}','-X',method,
+                                      '-H','CF-Connecting-IP: 203.0.113.7','-H','True-Client-IP: 203.0.113.8',url],text=True,capture_output=True)
                     self.assertEqual(r.stdout,str(status),(path,method,r.stderr))
                     if status==200:
                         expected='/control/status' if path.startswith('/adg-') else '/dns-query'+path[len(public):]
                         self.assertEqual(hits[before:],[(method,expected)])
+                        self.assertEqual(forwarded[before:],[(None,None)])
                     else:self.assertEqual(len(hits),before,(path,method))
                 if enabled:
                     response = subprocess.run(['curl', '--noproxy', '*', '-fsS', '-D', '-', '-o', '/dev/null',

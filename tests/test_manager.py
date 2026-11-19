@@ -52,6 +52,15 @@ AUTHOR_CREDIT = '© xPROMSx · github.com/xPROMSx/3x-ui-auto-nginx'
 
 
 class Manager(unittest.TestCase):
+    def test_installer_wrap_keeps_words_whole(self):
+        words = ('сервера ' * 8 + 'обратите путь-с-дефисами ' + '/' + 'x' * 80).split()
+        result = subprocess.run(
+            ['bash', '-c', 'source "$1"; ui_wrap "38;5;208" "  $2" 76',
+             'fixture', str(ROOT/'x-ui-latest.sh'), ' '.join(words)],
+            env={**os.environ, 'LC_ALL': 'C', 'TERM': 'xterm'}, capture_output=True, text=True, check=True)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines, ['  ' + ' '.join(words[:9]), '  ' + words[9], '  ' + words[10]])
+
     def test_server_details_requires_root_in_both_languages(self):
         for language, expected in (('1', 'Root required'), ('2', 'Нужен root')):
             with self.subTest(language=language):
@@ -148,18 +157,20 @@ entrypoint "$@"
         with tempfile.TemporaryDirectory() as temporary:
             script=Path(temporary)/'questions.sh'
             script.write_text(library+'''
-validate_domains && select_security && select_vision && select_amneziawg && select_xhttp_cdn && select_adguard && select_client || exit $?
-printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_VISION" "$INSTALL_AWG" "$INSTALL_XHTTP_CDN" "$INSTALL_AGH" "$CREATE_CLIENT" "$domain" "$reality_domain" "$vision_domain"
+validate_domains && select_security && select_additional_connections && select_adguard && select_client || exit $?
+printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_WS_GRPC" "$INSTALL_VISION" "$INSTALL_AWG" "$INSTALL_XHTTP_CDN" "$INSTALL_AGH" "$CREATE_CLIENT" "$domain" "$reality_domain" "$vision_domain"
 ''')
-            code,text=tty_run(script,b'Panel.Example\nReality.Example\n\ny\nVision.Example\ny\ny\ny\n\n')
+            code,text=tty_run(script,b'Panel.Example\nReality.Example\n\ny\ny\ny\nVision.Example\ny\ny\ny\n\n')
             self.assertEqual(code,0,text)
             for prompt in ('домен панели 3X-UI','домен VLESS REALITY','Усилить безопасность VPS? [Y/n]',
+                           'Настроить дополнительные подключения? [y/N]:',
+                           'Настроить устаревшие подключения VLESS WebSocket и Trojan gRPC? [y/N]:',
                            'дополнительное подключение VLESS TCP/TLS','домен VLESS TLS Vision',
                            'дополнительное подключение AmneziaWG? [y/N]','Установить и настроить AdGuard Home? [y/N]',
                            'Создать клиента в 3X-UI'):
                 self.assertIn(prompt,text)
             self.assertIn('Добавить дополнительное подключение XHTTP, совместимое с CDN? [y/N]:',text)
-            self.assertIn('FLAGS:y:y:y:y:y:y:panel.example:reality.example:vision.example',text)
+            self.assertIn('FLAGS:y:y:y:y:y:y:y:panel.example:reality.example:vision.example',text)
             for name,variable,default in (('select_security','INSTALL_SECURITY','y'),('select_vision','INSTALL_VISION','n'),
                     ('select_amneziawg','INSTALL_AWG','n'),('select_xhttp_cdn','INSTALL_XHTTP_CDN','n'),('select_adguard','INSTALL_AGH','n'),('select_client','CREATE_CLIENT','y')):
                 for answers,expected in ((b'\n',default),(b'bad\nn\n','n'),(b'\x04','n')):
@@ -168,6 +179,35 @@ printf 'FLAGS:%s:%s:%s:%s:%s:%s:%s:%s:%s\n' "$INSTALL_SECURITY" "$INSTALL_VISION
                         code,text=tty_run(script,answers)
                         self.assertEqual(code,0,text);self.assertIn('RESULT:'+expected,text)
                         if answers.startswith(b'bad'):self.assertIn('Введите y или n.',text)
+
+    def test_russian_adguard_dot_prompt_and_eof(self):
+        source = (ROOT/'x-ui-latest.sh').read_text()
+        first = source.index('    select_adguard || exit 1')
+        last = source.index('\n', source.index('    select_client || exit 1', first))
+        prompt = 'Включить DNS-over-TLS (DoT) для ваших устройств? [y/N]:'
+        client = 'Создать клиента в 3X-UI'
+        with tempfile.TemporaryDirectory() as temporary:
+            script = Path(temporary)/'questions.sh'
+            script.write_text('source "'+str(ROOT/'x-ui-latest.sh')+'"\nUI_LANG=ru\nINSTALL_AGH_DOT=n\n'
+                              'uname() { echo x86_64; }\n'+source[first:last]+
+                              '\nprintf "\\nRESULT:%s:%s\\n" "$INSTALL_AGH_DOT" "$CREATE_CLIENT"\n')
+            for answers, expected in ((b'n\ny\n', 'n:y'), (b'y\n\x04\x04', 'n:n'),
+                                      (b'y\n\nn\n', 'n:n'), (b'y\nbad\nY\nn\n', 'y:n')):
+                with self.subTest(answers=answers):
+                    code, text = tty_run(script, answers, env={'TERM':'xterm', 'NO_COLOR':None})
+                    self.assertEqual(code, 0, text)
+                    self.assertIn('RESULT:'+expected, text)
+                    if answers.startswith(b'n'):
+                        self.assertNotIn(prompt, text)
+                        continue
+                    self.assertLess(text.index('Установить и настроить AdGuard Home'), text.index(prompt))
+                    plain = ' '.join(re.sub(r'\x1b\[[0-9;]*m', '', text).split())
+                    self.assertLess(plain.index(prompt), plain.index('Он открывает порт 853'))
+                    self.assertLess(text.rindex(prompt), text.index(client))
+                    self.assertIn('\x1b[38;5;208m', text)
+                    if b'bad' in answers:
+                        self.assertEqual(text.count(prompt), 2)
+                        self.assertIn('Введите y или n.', text)
 
     def test_russian_destructive_confirmation_still_requires_exact_yes(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -184,7 +224,7 @@ printf permitted > "$MARKER"
                     self.assertEqual(code,0 if answer==b'YES\n' else 1,text)
                     self.assertEqual(marker.exists(),answer==b'YES\n')
                     for warning in ('полная переустановка, а не обновление','Обновление ОС нельзя откатить','введите YES'):
-                        self.assertIn(warning,text)
+                        self.assertIn(warning,' '.join(text.split()))
 
     def test_russian_summary_keeps_credentials_urls_protocols_and_states(self):
         payload={'url':'https://panel.example/subscription/fixture%25id','protocols':['REALITY','XHTTP','Hysteria2','Vision']}
@@ -204,12 +244,14 @@ show_results
         self.assertEqual(result.returncode,0,result.stderr)
         for phrase in ('Результат установки','Часовой пояс','Работает','Готов','Логин: fixture-user',
                        'Подписка:','Сохраните эти учётные данные','configured','перезагрузка 04:38'):
-            self.assertIn(phrase,result.stdout)
+            self.assertIn(phrase,' '.join(result.stdout.split()))
+        self.assertNotIn('\x1b', result.stdout)
         for value in (password,payload['url'],'https://panel.example/fixture/',
                       'https://panel.example/fixture/diag','https://panel.example/adg-fixture/',
                       'https://panel.example/dns-query',' / '.join(payload['protocols'])):
             self.assertTrue(value in result.stdout,'A displayed fixture payload changed')
         self.assertEqual(result.stdout.count(password),1)
+        self.assertRegex(result.stdout, r'(?m)^ +Флаги подписки: +REALITY / XHTTP / Hysteria2 / Vision$')
         self.assertNotIn('\\n AmneziaWG:',result.stdout)
 
     def test_successful_installation_ends_at_summary_without_another_menu(self):
@@ -400,8 +442,8 @@ show_results "$RESULT_FIXTURE"
                     capture_output=True,text=True,env={**os.environ,'RESULT_FIXTURE':str(status),
                         'CORE_FIXTURE':'failed_unverified' if status else 'configured'})
                 self.assertEqual(result.returncode,0,result.stderr)
-                for title in (('COMPONENTS','PANEL ACCESS','SUBSCRIPTION AND SERVICES','OTHER INFORMATION') if language=='en' else
-                              ('КОМПОНЕНТЫ','ДОСТУП К ПАНЕЛИ','ПОДПИСКА И ДОПОЛНИТЕЛЬНЫЕ СЕРВИСЫ','ПРОЧАЯ ИНФОРМАЦИЯ')):
+                for title in (('PANEL ACCESS','CONNECTIONS','COMPONENTS','SECURITY','OTHER INFORMATION') if language=='en' else
+                              ('ДОСТУП К ПАНЕЛИ','ПОДКЛЮЧЕНИЯ','КОМПОНЕНТЫ','БЕЗОПАСНОСТЬ','ПРОЧАЯ ИНФОРМАЦИЯ')):
                     self.assertIn(title,result.stdout)
                 self.assertNotIn('\\n AmneziaWG:',result.stdout)
                 self.assertEqual(result.stdout.count('fixture%25\\n$(literal)'),1)
@@ -589,6 +631,29 @@ include /etc/nginx/snippets/x-ui-auto-optional/*.conf;
             self.assertIn('-'*60, redirected)
             self.assertEqual(files(), before)
 
+    def test_server_details_on_installer_layout_without_ws_grpc(self):
+        from test_domains import DomainFixture
+
+        fixture = DomainFixture(self.f.root/'details-core', ws_grpc='n')
+        db = fixture.p(fixture.module.DB)
+        marker = json.loads(fixture.p(fixture.module.MANIFEST).read_text())
+        self.assertEqual(set(marker['inbound_roles']), {'reality', 'xhttp', 'hysteria2'})
+        with sqlite3.connect(db) as connection:
+            connection.execute("INSERT INTO settings(key,value) VALUES ('subEnable','true'),('subJsonEnable','true')")
+        script = self.f.root/'details-core.sh'
+        source = (ROOT/'x-ui-latest.sh').read_text().replace('XUIDB="/etc/x-ui/x-ui.db"', f'XUIDB="{db}"')
+        source = source.replace('"${2:-/}" <<\'SERVER_DETAILS\'', f'"${{2:-{fixture.root}}}" <<\'SERVER_DETAILS\'')
+        script.write_text(source)
+        before = fixture.state()
+        code, output = tty_run(script, b'1\n6\n0\n', env={'NO_COLOR':'1'})
+        self.assertEqual(code, 0, output)
+        for public in ('https://deploy.example/panel/', 'https://deploy.example/subscription/',
+                       'https://deploy.example/jsonsub/'):
+            self.assertIn(public, output)
+        self.assertRegex(output, r'Active:\s+1\r?\n')
+        self.assertFalse(any(secret in output for secret in ('fixture-sub', 'fixture-hash', 'fixture-uuid')))
+        self.assertEqual(fixture.state(), before)
+
     def test_server_details_missing_foreign_and_busy_database(self):
         _, path, script = self.server_details_fixture()
         saved = self.marker.read_bytes()
@@ -641,7 +706,8 @@ include /etc/nginx/snippets/x-ui-auto-optional/*.conf;
         helper.write_bytes((ROOT/'assets/adguard/managed.sh').read_bytes())
         snippet = root/'etc/nginx/snippets/x-ui-auto-optional/adguard.conf'
         metadata = dict(domain='panel.example', path='adg-AbCdEf123456', web_port=18081)
-        for doh, variant in (('dns-query','legacy'),('dns-query',''),('dns-AbCdEf123456','')):
+        for doh, variant in (('dns-query','legacy'), ('dns-query','pre-ip-headers'),
+                             ('dns-AbCdEf123456','pre-ip-headers'), ('dns-AbCdEf123456','')):
             with self.subTest(doh=doh, variant=variant):
                 (agh/'managed.json').write_text(json.dumps(metadata if doh == 'dns-query' else dict(metadata,doh_path=doh)))
                 snippet.write_bytes(subprocess.check_output(['bash','-c',
@@ -660,6 +726,27 @@ include /etc/nginx/snippets/x-ui-auto-optional/*.conf;
         self.assertEqual(code, 0)
         self.assertRegex(text, r'DoH:\s+not found')
         self.assertNotIn('https://panel.example/dns-AbCdEf123456', text)
+
+    def test_server_details_dot_uses_file_and_stays_read_only(self):
+        root, db, script = self.server_details_fixture()
+        fragment = root/'etc/nginx/stream-dot.d/adguard-dot.conf'
+        fragment.parent.mkdir()
+        for installed in (False, True):
+            if installed:
+                fragment.touch()
+            before = {p: (p.read_bytes(), p.stat().st_mtime_ns)
+                      for p in (db, self.marker, *([fragment] if installed else []))}
+            for language, enabled, disabled in (
+                (b'1', 'panel.example, port 853', 'not enabled'),
+                (b'2', 'panel.example, порт 853', 'не включён'),
+            ):
+                with self.subTest(installed=installed, language=language):
+                    code, text = tty_run(script, language+b'\n6\n0\n')
+                    self.assertEqual(code, 0, text)
+                    self.assertRegex(text, r'DoT:\s+'+re.escape(enabled if installed else disabled))
+                    self.assertNotIn('private-panel-sentinel', text)
+            self.assertEqual(fragment.exists(), installed)
+            self.assertEqual(before, {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in before})
 
     def test_telegram_installed_always_refreshes_bootstrap(self):
         root=self.f.root;launcher=root/'launcher';marker=root/'handoff';network=root/'downloads'
@@ -804,6 +891,12 @@ entrypoint
                 for prompt in ('Номер архива или абсолютный путь','Автоматическая перезагрузка разрешена в 04:38',
                                'Fail2ban для SSH? [y/N]','Включить UFW с защитой доступа по SSH','введите YES'):
                     self.assertIn(prompt,text)
+                security, ufw = ('\r\n  '+name+'\r\n\r\n' for name in ('Security', 'UFW'))
+                self.assertLess(text.index(security), text.index('Fail2ban для SSH? [y/N]'))
+                self.assertLess(text.index('Fail2ban для SSH? [y/N]'), text.index(ufw))
+                self.assertLess(text.index(ufw), text.index('Включить UFW с защитой доступа по SSH'))
+                self.assertIn('Yes: на Ubuntu 24.04/26.04 попробуем включить UFW', text)
+                self.assertIn('No: добавим правила для приложений и сохраним состояние UFW.', text)
                 self.assertNotIn('{"format_version":3}',text);self.assertIn('Формат: Backup v3',text)
                 self.assertIn(f'{YES_RU} {FRAME} {YES_RU_PROMPT}',' '.join(text.replace(str(root),'').split()))  # the fixture relocates paths into its root
                 self.assertEqual(self.f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
@@ -832,6 +925,58 @@ entrypoint
         self.assertIn('Archive number',text);self.assertNotIn('Telegram Web Proxy Manager (TWPM) was found',text)
         code,text=tty_run(script,b'1\n3\n3\n/archive.tar.gz\nn\nn\nyes\n0\n0\n',env=self.f.env)
         self.assertIn(f'{YES_EN} {FRAME} {YES_EN_PROMPT}',' '.join(text.replace(str(root),'').split()));self.assertFalse((root/'restored').exists())
+
+    def test_dot_restore_menu_warns_once_in_selected_language_after_result(self):
+        from test_adguard_backup import AdGuardBackup
+        from test_personal_backup import relocated
+
+        # This class runs after the parallel root shards because Restore scans
+        # process arguments for other Backup utilities.
+        adguard = AdGuardBackup('runTest')
+        adguard.setUp()
+        self.addCleanup(adguard.doCleanups)
+        f = adguard.fixture
+        archive, _, _ = adguard.dot_archive()
+        manager = f.root/'manager.sh'
+        manager.write_text(relocated((ROOT/'x-ui-latest.sh').read_text(), f.root))
+        f.write('/usr/local/bin/x-ui-backup', f.script.read_text(), 0o755)
+        completion = f.root/'restore-completion'
+        code = '''
+source "$1"
+prepare_backup_helper() { :; }
+acquire_stack_lock() { :; }
+recover_domain_operation() { :; }
+UI_LANG=$2 UI_INTERACTIVE=1 UI_COMPLETION_FD=3 backup_action restore 3>"$3"
+'''
+        messages = {
+            'en': ('RESTORE RESULT', 'DoT was restored.', 'firewall rule blocks 853/tcp', 'Phones using Private DNS'),
+            'ru': ('РЕЗУЛЬТАТ ВОССТАНОВЛЕНИЯ', 'DoT восстановлен.', 'Порт 853/tcp закрыт', 'Телефоны с частным DNS'),
+        }
+        for language, (title, start, blocked, limited) in messages.items():
+            for action in ('deny', 'reject', 'limit', None):
+                with self.subTest(language=language, action=action):
+                    result = subprocess.run(
+                        ['bash', '-c', code, 'fixture', str(manager), language, str(completion)],
+                        input=f'{archive}\nn\nn\nYES\n', text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        env={**f.env, 'NO_COLOR': '1', 'UFW_STATE': 'active',
+                             'UFW_ADDED': f'ufw {action} 853/tcp' if action else ''}, timeout=60)
+                    output = result.stdout
+                    self.assertEqual(result.returncode, 0, output)
+                    self.assertEqual(completion.read_text(), 'completed\n')
+                    self.assertLess(output.index(title), output.index('Restore: SUCCESS'))
+                    self.assertLess(output.index('Restore: SUCCESS'), output.index('Overall: SUCCESS'))
+                    other = messages['ru' if language == 'en' else 'en'][1]
+                    self.assertNotIn(other, output)
+                    self.assertEqual(output.count(start), int(action is not None), output)
+                    last = output.strip().splitlines()[-1]
+                    if action:
+                        self.assertTrue(last.startswith(start), output)
+                        self.assertIn(limited if action == 'limit' else blocked, last)
+                        self.assertNotIn(blocked if action == 'limit' else limited, last)
+                        self.assertIn(f'ufw delete {action} 853/tcp', last)
+                        self.assertIn('ufw allow 853/tcp', last)
+                    else:
+                        self.assertEqual(last, 'Overall: SUCCESS', output)
 
     def test_post_restore_security_trust_cleanup_status_lock_and_partial_result(self):
         from test_personal_backup import relocated
@@ -957,9 +1102,12 @@ manager_menu
                 retained=list(self.f.path('/var/backups/x-ui').glob('.rollback-*'))
                 self.assertEqual(bool(retained),scenario=='unverified')
                 if scenario=='pre-mutation':
+                    self.assertIn('Restore stopped before replacing project data. No recovery directory was created.', text)
                     self.assertFalse(any(c[:2]==['systemctl','stop'] for c in self.f.commands()))
                 elif scenario=='verified':self.assertIn('Previous managed state/service states restored and checked',text)
-                else:self.assertIn('Automatic rollback could not be verified',text)
+                else:
+                    self.assertIn('Automatic rollback could not be verified',text)
+                    self.assertIn(f'Private recovery directory: {retained[0]}',text)
 
     def test_inspect_machine_result_marker_and_historical_roundtrip(self):
         import hashlib,json
@@ -1111,6 +1259,46 @@ manager_menu
         with sqlite3.connect(dbpath) as db:db.execute("UPDATE hosts SET address='other.example' WHERE inbound_id=?",(state['inbound_roles']['ws'],))
         result=subprocess.run(['bash','-c',code,'fixture',str(dbpath)],capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0);self.assertEqual(marker.read_bytes(),old)
+
+    def test_managed_state_allows_absent_ws_and_grpc_but_refuses_duplicates(self):
+        from test_domains import DomainFixture
+        from test_personal_backup import function
+
+        write_state = function('write_managed_state')
+        code = write_state + '\n' + '''
+CORE_RESULT=configured
+PROJECT_SOURCE_SHA=$2
+domain=$3
+reality_domain=$4
+XUIDB=$1
+write_managed_state
+'''
+        for missing in (('ws',), ('grpc',), ('ws', 'grpc')):
+            with self.subTest(missing=missing):
+                fixture = DomainFixture(self.f.root/('marker-'+'-'.join(missing)))
+                db_path = fixture.p(fixture.module.DB)
+                marker = fixture.p(fixture.module.MANIFEST)
+                original_roles = json.loads(marker.read_text())['inbound_roles']
+                fixture.remove_optional_transports(missing)
+                marker.unlink()
+                command = ['bash', '-c', code, 'fixture', str(db_path), 'a'*40, fixture.panel, fixture.reality]
+                result = subprocess.run(command, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = {name: iid for name, iid in original_roles.items() if name not in missing}
+                saved = marker.read_bytes()
+                self.assertEqual(json.loads(saved)['inbound_roles'], expected)
+                self.assertEqual(marker.stat().st_mode & 0o777, 0o600)
+                for name in {'ws', 'grpc'} & expected.keys():
+                    with sqlite3.connect(db_path) as db:
+                        db.row_factory = sqlite3.Row
+                        duplicate = dict(db.execute('SELECT * FROM inbounds WHERE id=?', (expected[name],)).fetchone())
+                        duplicate['id'] = 999
+                        db.execute('INSERT INTO inbounds ('+','.join(duplicate)+') VALUES ('+
+                                   ','.join('?' for _ in duplicate)+')', tuple(duplicate.values()))
+                    result = subprocess.run(command, capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('Ambiguous installed role: '+name, result.stderr)
+                    self.assertEqual(marker.read_bytes(), saved)
 
     def test_compatible_backup_helper_is_refreshed_from_selected_source(self):
         from test_personal_backup import function, relocated

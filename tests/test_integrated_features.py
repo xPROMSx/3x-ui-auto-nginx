@@ -144,7 +144,8 @@ printf 'RESULT:%s:%s:%s\n' "$core_port" "$xhttp_cdn_port" "$xhttp_cdn_path"
 
     def test_minimal_ufw_preserves_active_and_refuses_ambiguous_ssh_or_firewall(self):
         import hashlib
-        for scenario in ('active', 'service', 'socket', 'missing', 'foreign', 'deny', 'custom-before', 'nft', 'legacy', 'enable-fails'):
+        for scenario in ('active', 'service', 'socket', 'missing', 'foreign', 'deny', 'custom-before', 'nft',
+                         'legacy', 'enable-fails', 'dot-open', 'dot-closed', 'dot-unconfigured'):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory:
                 security = helper('security'); root = Path(directory); calls = []; active = scenario == 'active'
                 for name in ('etc/ufw', 'usr/share/ufw', 'etc/default', 'usr/sbin', 'proc/123'):
@@ -155,6 +156,13 @@ printf 'RESULT:%s:%s:%s\n' "$core_port" "$xhttp_cdn_port" "$xhttp_cdn_path"
                     for folder in ('etc/ufw','usr/share/ufw'): (root/folder/name).write_text('stock\n')
                 for name in ('user.rules','user6.rules'): (root/'etc/ufw'/name).write_text('*filter\nCOMMIT\n')
                 (root/'etc/ufw/ufw.conf').write_text('ENABLED=no\nLOGLEVEL=low\n')
+                if scenario in ('dot-open', 'dot-closed'):
+                    dot = root/'etc/nginx/stream-dot.d/adguard-dot.conf'
+                    dot.parent.mkdir(parents=True)
+                    dot.touch()
+                if scenario in ('dot-open', 'dot-unconfigured'):
+                    for name, chain in (('user.rules', 'ufw'), ('user6.rules', 'ufw6')):
+                        (root/'etc/ufw'/name).write_text(f'-A {chain}-user-input -p tcp --dport 853 -j ACCEPT\n')
                 conffiles = ''
                 for name in ('etc/default/ufw','etc/ufw/sysctl.conf'):
                     (root/name).write_text('stock\n')
@@ -186,8 +194,10 @@ printf 'RESULT:%s:%s:%s\n' "$core_port" "$xhttp_cdn_port" "$xhttp_cdn_path"
                     return ''
                 with patch.object(security,'command',side_effect=command), patch.dict(os.environ, {'SSH_CONNECTION':''}):
                     result = security.enable_ufw(root)
-                expected = 'preserved' if scenario == 'active' else 'configured' if scenario in ('service','socket') else 'failed_unverified' if scenario == 'enable-fails' else 'failed'
+                expected = 'preserved' if scenario == 'active' else 'configured' if scenario in (
+                    'service', 'socket', 'dot-open', 'dot-closed') else 'failed_unverified' if scenario == 'enable-fails' else 'failed'
                 self.assertEqual(result['status'], expected, result)
+                self.assertFalse(any(call[0] == 'ufw' and '853/tcp' in call for call in calls))
                 if scenario == 'active': self.assertEqual(calls, [('ufw','status')])
                 elif expected == 'failed': self.assertNotIn(('ufw','--force','enable'), calls)
                 else:
@@ -271,13 +281,13 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
                 capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             text=result.stdout
-            self.assertIn('VLESS TLS Vision       Ready (vision.example:443)',text)
+            self.assertRegex(text, r'VLESS TLS Vision +Ready \(vision\.example:443\)')
             if enabled:
-                positions=[text.index(value) for value in ('Panel:','Username:','Password:','Diagnostics (panel login required):','Subscription:','AmneziaWG:','AdGuard Home:','Backup:')]
+                positions=[text.index(value) for value in ('Panel:','Username:','Password:','Diagnostics:','Subscription:','[✓] AmneziaWG','AdGuard Home:','Backup:')]
                 self.assertEqual(positions,sorted(positions))
-                self.assertIn('I: https://panel.example/subscription/fixture-id',text)
+                self.assertRegex(text, r'Subscription: +https://panel\.example/subscription/fixture-id')
                 self.assertEqual(text.count(output['url']),1)
-                self.assertLess(text.index('[✓] Subscription'),text.index('Panel:'))
+                self.assertLess(text.index('[✓] Subscription'),text.index('Subscription:'))
                 self.assertIn(' / '.join(output['protocols']),text)
                 self.assertTrue(text.rstrip().endswith('REMAINING='))
             else:
@@ -292,10 +302,10 @@ python3() { if [[ "$*" == *--render-acme* ]]; then echo '# ACME fixture'; else p
                 env={**os.environ,'DOT_RESULT':dot,'F2BAN_RESULT':f2ban,'APT_RESULT':apt,'TUNING_RESULT':'partially_skipped'},capture_output=True,text=True)
             self.assertEqual(result.returncode,0,result.stderr)
             for label,state in (('Global DoT',dot),('Fail2ban',f2ban),('APT security',apt)):
-                line=next(line for line in result.stdout.splitlines() if label+' — ' in line)
+                line=next(line for line in result.stdout.splitlines() if label+' ' in line)
                 self.assertEqual('Configured' in line,state=='configured')
                 if state=='failed_unverified': self.assertIn('rollback not verified',line)
-            self.assertIn('Kernel tuning — Partially skipped',result.stdout)
+            self.assertRegex(result.stdout, r'Kernel tuning +Partially skipped')
             self.assertIn('fixture-user',result.stdout); self.assertIn('fixture-pass',result.stdout)
 
 
@@ -624,7 +634,7 @@ sysctl() {
                'select_adguard','select_client','preflight_base_os','preflight_panel_release','make_port','preflight_amneziawg',
                'select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','setup_swap','prepare_base_os','prepare_system_dns')
         base='\n'.join(n+'() { echo '+n+'; };' for n in names)
-        base+='\nmsg_err() { echo "$*" >&2; }; msg_warn() { :; }; cleanup_adguard() { echo CLEANUP; exit 19; };\n'
+        base+='\nINSTALL_AGH=n; msg_err() { echo "$*" >&2; }; msg_warn() { :; }; cleanup_adguard() { echo CLEANUP; exit 19; };\n'
         for failure in ('preflight_base_os','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features','prepare_base_os','prepare_system_dns'):
             result=subprocess.run(['bash','-eu','-c',base+function('main')+'\n'+failure+'() { return 1; }; main'],capture_output=True,text=True)
             self.assertEqual(result.returncode,1,result.stderr)
@@ -679,7 +689,7 @@ sysctl() {
                 stubs='\n'.join(name+'() { :; }' for name in names)
                 stubs+='\nselect_security() { INSTALL_SECURITY='+('n' if case=='declined' else 'y')+'; }; msg_err() { echo "$*" >&2; }; msg_warn() { :; };\n'
                 stubs+='curl() { cp "$FIXTURE_HELPER" "${@: -1}"; }; cleanup_adguard() { echo CLEANUP; exit 19; }; clean_previous_install() { echo DESTRUCTION; };\n'
-                script=stubs+function('preflight_integrated_features')+'\n'+function('main')+'\nINSTALL_VISION=n; CREATE_CLIENT=n; main'
+                script=stubs+function('preflight_integrated_features')+'\n'+function('main')+'\nINSTALL_VISION=n; INSTALL_AGH=n; CREATE_CLIENT=n; main'
                 env={**os.environ,'PANEL_STAGE':str(stage),'GITHUB_RAW':'https://fixture.invalid','FIXTURE_HELPER':str(root/'helper.py')}
                 before={str(p.relative_to(root)):os.readlink(p) if p.is_symlink() else p.read_bytes() for p in (root/'etc').rglob('*') if p.is_file() or p.is_symlink()}
                 result=subprocess.run(['bash','-eu','-c',script],env=env,capture_output=True,text=True)
@@ -837,12 +847,23 @@ sysctl() {
         self.assertTrue(answer.endswith(socket.inet_aton('198.51.100.10')))
 
     def test_concise_installer_question_sequence(self):
-        names=('validate_domains','select_security','select_vision','select_amneziawg','select_adguard','select_client')
+        names=('validate_domains','select_security','select_additional_connections','select_adguard','select_client')
+        helpers=('ui_note','select_ws_grpc','select_vision','select_amneziawg','select_xhttp_cdn')
         script='domain=; reality_domain=; msg_err() { echo "$*" >&2; }; msg_inf() { echo "$*"; };\n'+function('valid_hostname')+'\n'
-        script+='\n'.join(function(name) for name in names)+'\n'+'; '.join(names)
-        result=subprocess.run(['bash','-eu','-c',script],input='panel.example.com\nreality.example.com\ny\ny\nvision.example.com\nn\nn\ny\n',text=True,capture_output=True)
+        script+='\n'.join(function(name) for name in helpers+names)+'\n'+'; '.join(names)
+        result=subprocess.run(['bash','-eu','-c',script],input='panel.example.com\nreality.example.com\ny\ny\nn\ny\nvision.example.com\nn\nn\nn\ny\n',text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual(result.stdout,'Enter the domain for your 3X-UI panel: Enter the domain for VLESS REALITY: Enhance VPS security? [Y/n]: Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): Set up an additional AmneziaWG connection? [y/N]: Install and configure AdGuard Home? [y/N]: Create a client in 3X-UI and display a subscription link after installation? [Y/n]: ')
+        self.assertEqual(' '.join(result.stdout.replace('  > ', '').split()),
+            'Enter the domain for your 3X-UI panel: Enter the domain for VLESS REALITY: Enhance VPS security? [Y/n]: '
+            'By default, VLESS Reality, VLESS XHTTP and Hysteria2 will be installed and configured. '
+            'Additional connections: VLESS WebSocket, Trojan gRPC, VLESS TCP/TLS (XTLS Vision), AmneziaWG, XHTTP for CDN. '
+            'Set up additional connections? [y/N]: '
+            'Warning: all optional connections listed above may not work everywhere, it depends on your country and provider. Use at your own risk. If unsure, answer N. '
+            'Set up the outdated VLESS WebSocket and Trojan gRPC connections? [y/N]: '
+            'Set up an additional VLESS TCP/TLS (XTLS Vision) connection? (requires a separate domain) [y/N]: '
+            'Enter the domain for VLESS TLS Vision (must differ from the panel and REALITY domains): '
+            'Set up an additional AmneziaWG connection? [y/N]: Add an additional CDN-compatible XHTTP connection? [y/N]: '
+            'Install and configure AdGuard Home? [y/N]: Create a client in 3X-UI and display a subscription link after installation? [Y/n]:')
 
     def test_prompt_defaults_decline_and_eof(self):
         for name, variable, default in (('select_security', 'INSTALL_SECURITY', 'y'),
@@ -858,9 +879,34 @@ sysctl() {
                 if variable=='INSTALL_VISION' and expected=='n':
                     self.assertNotIn('Enter the domain for VLESS Vision',result.stdout)
 
+    def test_adguard_dot_prompt_defaults_and_order(self):
+        main = function('main')
+        first, last = main.index('    select_adguard'), main.index('    select_client')
+        sequence = main[first:main.index('\n', last)]
+        source = 'source "$1"\nuname() { echo x86_64; }\nINSTALL_AGH_DOT=n\n' + sequence
+        source += '\nprintf "\\nRESULT:%s:%s\\n" "$INSTALL_AGH_DOT" "$CREATE_CLIENT"'
+        prompt = 'Enable DNS-over-TLS (DoT) for your devices? [y/N]:'
+        client = 'Create a client in 3X-UI'
+        for answers, expected, count in (
+            ('n\ny\n', 'n:y', 0), ('y\n', 'n:n', 1), ('y\n\ny\n', 'n:y', 1),
+            ('y\nn\ny\n', 'n:y', 1), ('y\nN\ny\n', 'n:y', 1), ('y\ny\nn\n', 'y:n', 1),
+            ('y\nbad\nY\nn\n', 'y:n', 2),
+        ):
+            with self.subTest(answers=answers):
+                result = subprocess.run(['bash', '-eu', '-c', source, 'fixture', str(ROOT/'x-ui-latest.sh')],
+                                        input=answers, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('RESULT:'+expected, result.stdout)
+                self.assertEqual(result.stdout.count(prompt), count, result.stdout)
+                if count:
+                    plain = ' '.join(result.stdout.split())
+                    self.assertLess(plain.index(prompt), plain.index('It opens port 853'))
+                    self.assertLess(result.stdout.rindex(prompt), result.stdout.index(client))
+                self.assertEqual('Please enter y or n.' in result.stdout, count == 2)
+
     def test_all_choices_and_preflights_before_destruction(self):
         text = function('main')
-        for name in ('select_security', 'select_vision', 'select_client', 'select_amneziawg', 'select_adguard', 'preflight_integrated_features'):
+        for name in ('select_security', 'select_additional_connections', 'select_client', 'select_adguard', 'preflight_integrated_features'):
             self.assertLess(text.index(name), text.index('cleanup_adguard'))
         self.assertLess(text.index('install_vision'), text.index('install_security'))
         self.assertLess(text.index('install_adguard'), text.index('install_security'))
@@ -1252,7 +1298,8 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
             lineage=root/'etc/letsencrypt/live/vision.example'; lineage.mkdir(parents=True)
             (lineage/'fullchain.pem').write_text('administrator certificate')
             stubs='stat() { case "$2" in *%a*) echo "${OWNER:-0}:0:$(/usr/bin/stat -c %a "$3")";; *) echo "${OWNER:-0}:0";; esac; }; msg_err() { echo "$*" >&2; }; msg_warn() { :; };\n'
-            functions=relocated(function('render_vision_hook')+'\n'+function('preflight_vision_artifacts'),root)
+            functions=relocated('\n'.join(function(name) for name in (
+                'render_vision_hook', 'previous_vision_hook_domain', 'preflight_vision_artifacts')),root)
             run=lambda: subprocess.run(['bash','-eu','-c',stubs+functions+'\ncheck_webroot_lineage() { :; }; INSTALL_VISION=y; vision_domain=vision.example; preflight_vision_artifacts'],env={**os.environ,'PANEL_STAGE':str(stage)},capture_output=True,text=True)
             self.assertNotEqual(run().returncode,0,'Foreign existing lineage adopted')
             hook.write_text(subprocess.check_output(['bash','-c',relocated(function('render_vision_hook'),root)+'\nrender_vision_hook vision.example'],text=True)); hook.chmod(0o755)
@@ -1349,7 +1396,7 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
         # Security, Vision, AWG, AGH, Client; exact required six combinations.
         scenarios=('nnnnn','ynnny','nynny','ynnyy','nyyny','yyyyy')
         names=('confirm_destructive_reinstall','validate_domains','select_security','select_vision','select_amneziawg',
-               'select_adguard','select_client','preflight_panel_release','make_port','preflight_amneziawg','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features',
+               'select_adguard','select_dot','select_client','preflight_panel_release','make_port','preflight_amneziawg','select_xhttp_cdn','preflight_xhttp_cdn','preflight_cover_sites','preflight_integrated_features',
                'cleanup_adguard','clean_previous_install','install_packages','setup_firewall','get_server_ip','setup_acme_http',
                'get_ssl_certs','install_panel','configure_nginx','configure_xui_db','install_clash_sub','install_fake_site',
                'install_diagnostics','tune_system','install_backup_tool','setup_certificate_renewal','check_installation','show_results','preflight_base_os','setup_swap','prepare_base_os','prepare_system_dns','finish_initial_reboot','write_managed_state')
@@ -1362,7 +1409,8 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
             self.assertEqual(result.returncode,0,result.stderr)
             expected=[name for name,key in (('install_vision','INSTALL_VISION'),('install_amneziawg','INSTALL_AWG'),
                 ('install_adguard','INSTALL_AGH'),('install_security','INSTALL_SECURITY'),('install_initial_client','CREATE_CLIENT')) if variables[key]=='y']
-            self.assertEqual(result.stdout.splitlines(),['','Preparing system...']+expected)
+            lines = result.stdout.splitlines()
+            self.assertEqual(lines[lines.index('Preparing system...'):], ['Preparing system...']+expected)
         # An uncertain Vision inbound may still be enabled but lack its SNI
         # route. Do not attach a new client or publish it as ready in that state.
         failure_stubs=stubs+'\ninstall_vision() { VISION_RESULT=failed_unverified; return 1; }; show_results() { echo "$CLIENT_RESULT"; };'

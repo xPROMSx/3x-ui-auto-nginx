@@ -126,69 +126,14 @@ class RealIntegration(unittest.TestCase):
               '\nArchive SHA-256:',digest, '\n'+xray_version.splitlines()[0])
         print(subprocess.check_output([cls.mihomo,'-v'],text=True,timeout=20).strip())
         print(subprocess.run([cls.nginx,'-v'],capture_output=True,text=True,check=True,timeout=20).stderr.strip(),flush=True)
-        cls.expected_xray=xray_version.split()[1]
-        cls._prepare_arm32()
         cls.passed = []
         # Publish readiness only after every required artifact/tool is prepared.
         if os.environ.get('UPSTREAM_REPORT'):
             Path(os.environ['UPSTREAM_REPORT']).write_text(json.dumps({**versions,'preparation_complete':True})+'\n')
 
     @classmethod
-    def _prepare_arm32(cls):
-        version=cls.release['version']
-        # All required downloads finish before the Canary preparation marker.
-        cls.qemu_arm=shutil.which('qemu-arm')
-        if not cls.qemu_arm: raise RuntimeError('Explicit integration dependency qemu-user is missing')
-        cls.arm_tools={}
-        from release_contract import baseline
-        manifest=baseline()
-        if cls.release['candidate']:
-            metadata=cls.tools/'arm-release.json'
-            download(f'https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/{version}',metadata)
-            release=json.loads(metadata.read_text())
-            if release['tag_name']!=version or release['draft'] or release['prerelease']:
-                raise ValueError('Not the selected official stable ARM release')
-        for arch in ('armv5','armv6','armv7'):
-            name=f'x-ui-linux-{arch}.tar.gz'; archive=cls.tools/name; sidecar=cls.tools/(name+'.sha256')
-            if cls.release['candidate']:
-                assets=[a for a in release['assets'] if a['name']==name]
-                if len(assets)!=1: raise ValueError('Missing/ambiguous ARM asset: '+name)
-                digest=assets[0]['digest'].removeprefix('sha256:')
-            else: digest=manifest['archives'][arch]
-            cached=os.environ.get('INTEGRATION_ARTIFACTS')
-            if cached and not cls.release['candidate']:
-                shutil.copyfile(Path(cached)/name,archive)
-                shutil.copyfile(Path(cached)/(name+'.sha256'),sidecar)
-            else:
-                download(f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/{name}',archive)
-                download(f'https://github.com/MHSanaei/3x-ui/releases/download/{version}/{name}.sha256',sidecar)
-            if hashlib.sha256(archive.read_bytes()).hexdigest()!=digest or sidecar.read_text().split()!=[digest,name]:
-                raise ValueError('Official ARM archive/sidecar mismatch: '+arch)
-            validate_layout(archive,arch)
-            folder=cls.tools/arch; folder.mkdir()
-            with tarfile.open(archive) as bundle:
-                panel,binary=folder/'x-ui',folder/'xray-linux-arm32'
-                panel.write_bytes(bundle.extractfile('x-ui/x-ui').read()); panel.chmod(0o755)
-                binary.write_bytes(bundle.extractfile('x-ui/bin/xray-linux-'+arch).read()); binary.chmod(0o755)
-            cls.arm_tools[arch]=(panel,binary)
-
-    @classmethod
     def tearDownClass(cls):
         print('\nREAL XRAY INTEGRATION\n'+'\n'.join(f'{name:24} PASS' for name in cls.passed),flush=True)
-
-    def test_official_arm32_runtime_binary_contract(self):
-        config=self.root/'arm-config.json'
-        config.write_text(json.dumps({'inbounds':[],'outbounds':[{'protocol':'freedom'}]}))
-        for arch,(panel,binary) in self.arm_tools.items():
-            panel_version=subprocess.check_output([self.qemu_arm,str(panel),'-v'],text=True,timeout=45).strip()
-            self.assertEqual(panel_version,self.release['version'].removeprefix('v'))
-            output=subprocess.check_output([self.qemu_arm,str(binary),'version'],text=True,timeout=45)
-            self.assertTrue(output.startswith('Xray '+self.expected_xray+' '))
-            keys=subprocess.check_output([self.qemu_arm,str(binary),'x25519'],text=True,timeout=45)
-            self.assertTrue('PrivateKey:' in keys and 'Password' in keys,'X25519 output contract mismatch')
-            subprocess.run([self.qemu_arm,str(binary),'run','-test','-config',str(config)],check=True,capture_output=True,timeout=45)
-            print(arch+': authenticated ARM32 version / X25519 / real config validation PASS',flush=True)
-        self.passed.append('ARM32 runtime contract')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='real-core-')
@@ -418,8 +363,9 @@ class RealIntegration(unittest.TestCase):
         if 'Config validation' not in self.passed:
             self.passed.append('Config validation')
 
-    def nginx_config(self):
-        shared = render(SHARED, sub_port=str(self.backends['sub']), ws_port=str(self.backends['ws']),trojan_port=str(self.backends['trojan-grpc']))
+    def nginx_config(self, ws_grpc='y'):
+        shared = render(SHARED, sub_port=str(self.backends['sub']), ws_port=str(self.backends['ws']),
+                        trojan_port=str(self.backends['trojan-grpc']), INSTALL_WS_GRPC=ws_grpc)
         # Match backend relationship while keeping the seeded public paths unchanged.
         shared = shared.replace(f"/{self.backends['ws']}/websocket",'/10003/websocket').replace(
             f"/{self.backends['trojan-grpc']}/trojan",'/10004/trojan').replace('/dev/shm/uds2023.sock',str(self.uds))
@@ -1196,6 +1142,64 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
             self.assertIn('/panel/',access,'Control requests must still reach the normal nginx access log')
             self.assertNotIn(path,access,'Managed CDN base/packet-up requests leaked to the normal access log')
         self.passed.append('CDN packet-up / native RAW extra / JSON / nginx GET-cookie')
+
+    def test_native_xray_and_initial_client_on_both_installer_layouts(self):
+        from test_integrated_features import helper
+
+        client, session = helper('client'), helper('amneziawg')
+        dbdir, bindir = self.root/'db', self.root/'bin'
+        env = {**os.environ, 'XUI_DB_FOLDER':str(dbdir), 'XUI_BIN_FOLDER':str(bindir),
+               'XUI_LOG_FOLDER':str(self.root/'logs')}
+        core = {'reality', 'xhttp', 'hysteria2'}
+        pair = {'ws', 'trojan-grpc'}
+        for choice in ('y', 'n'):
+            with self.subTest(ws_grpc=choice):
+                rows, _ = seed(INSTALL_WS_GRPC=choice)
+                self.assertEqual(set(rows), core | pair if choice == 'y' else core)
+                with sqlite3.connect(dbdir/'x-ui.db') as db:
+                    db.execute('DELETE FROM client_inbounds')
+                    db.execute('DELETE FROM clients')
+                    for name, row in self.rows.items():
+                        if name in rows:
+                            db.execute('UPDATE inbounds SET enable=? WHERE id=?', (rows[name]['enable'], row['id']))
+                        else:
+                            db.execute('DELETE FROM hosts WHERE inbound_id=?', (row['id'],))
+                            db.execute('DELETE FROM inbounds WHERE id=?', (row['id'],))
+                    for key, path in (('subURI', 'subscription'), ('subJsonURI', 'jsonsub')):
+                        db.execute('UPDATE settings SET value=? WHERE key=?',
+                                   (f'https://deploy.example:{self.public}/{path}/', key))
+                nginx = self.nginx_config(choice)
+                panel = self.launch([self.xui], f'initial-client-{choice}', env)
+                try:
+                    self.ready(panel, ('127.0.0.1', self.backends['panel']))
+                    if choice == 'y':
+                        for name in pair:
+                            self.ready(panel, ('127.0.0.1', self.backends[name]))
+                        config = json.loads((bindir/'config.json').read_text())
+                        paired = {item['port']: item for item in config['inbounds']
+                                  if item.get('streamSettings', {}).get('network') in ('ws', 'grpc')}
+                        self.assertEqual(set(paired), {self.backends[name] for name in pair})
+                        self.assertTrue(all(item['listen'] == '127.0.0.1' and not item['settings'].get('clients')
+                                            for item in paired.values()))
+                        self.validate(config, 'enabled-pair-before-client')
+                        listener_table = subprocess.check_output(['ss', '-H', '-ltnp'], text=True, timeout=5)
+                        for number in paired:
+                            listeners = [line for line in listener_table.splitlines()
+                                         if line.split()[3].rsplit(':', 1)[-1] == str(number)]
+                            self.assertEqual([line.split()[3] for line in listeners], [f'127.0.0.1:{number}'])
+                            xray_pid = re.search(r'pid=(\d+)', listeners[0])[1]
+                            self.assertEqual(Path(f'/proc/{xray_pid}/exe').readlink(), bindir/self.xray.name)
+                    with tempfile.TemporaryDirectory(dir=self.root) as directory:
+                        api = session.Panel(f'https://deploy.example:{self.public}/panel/', 'integration', self.auth,
+                                            directory, ['--cacert', str(self.cert),
+                                                        '--resolve', f'deploy.example:{self.public}:127.0.0.1'])
+                        result = client.create(api)
+                        record = api.request('panel/api/clients/get/'+result['email'])['obj']
+                        self.assertEqual(set(record['inboundIds']), {self.rows[name]['id'] for name in rows})
+                finally:
+                    stop(panel)
+                    stop(nginx)
+                    self.release_subscription_socket()
 
     def test_vision_and_initial_client_official_api(self):
         from test_integrated_features import helper

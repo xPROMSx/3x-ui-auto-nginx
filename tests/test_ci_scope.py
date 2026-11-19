@@ -199,6 +199,24 @@ class CIScope(unittest.TestCase):
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         return module
 
+    def test_dot_restore_package_diagnostics_publish_only_counts(self):
+        diagnostics = self.diagnostics()
+        secret = 'https://user:credential@example.invalid/private-package'
+        private = f'''E: Failed to fetch {secret} 404 Not Found
+E: Failed to fetch {secret} Connection timed out
+E: Unable to locate package PRIVATE
+E: Could not get lock /var/lib/dpkg/lock-frontend. It is held by process 11
+E: Sub-process /usr/bin/dpkg returned an error code (1)
+'''
+        counts = diagnostics.dot_restore_package_counts(private)
+        self.assertEqual(counts, dict(apt_404=1, apt_failed_to_fetch=2, apt_unable_to_locate=1,
+                                      apt_lock_held=1, dpkg_error=1, timeout=1))
+        line = 'DoT Restore package diagnostics: 1 ' + ' '.join(map(str, counts.values()))
+        self.assertEqual(diagnostics.dot_restore_package_report((line+'\r\n').encode()),
+                         dict(restore_exit_code=1, **counts))
+        self.assertIsNone(diagnostics.dot_restore_package_report(f'{line} {secret}\n'.encode()))
+        self.assertEqual(set(diagnostics.dot_restore_package_counts('private data').values()), {0})
+
     def test_vision_failure_is_allowlisted_not_raw_log(self):
         diagnostics = self.diagnostics()
         secret = 'PRIVATE-CREDENTIAL-https://secret.invalid/token'
@@ -339,13 +357,14 @@ class CIScope(unittest.TestCase):
         import ast
         from types import SimpleNamespace
         tree=ast.parse((ROOT/'tests/fresh/acceptance.py').read_text())
-        function=next(node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='fresh_acceptance')
+        names = {'fresh_acceptance', 'boot_restore_pair'}
+        functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
         positive=['maximum-install','manager-backup','transport-consumers','AWG-payload','tech0-RED-GREEN',
                   'installed-renewal-hooks','cold-boot','cold-transport-consumers','change-domains','restore-before-domains']
         agh=['maximum-install','maximum-install','native-agh-update']
         negative=['mandatory-dependency-negative','DoT-outage-partial-install','DoT-outage-core-consumers']
         with tempfile.TemporaryDirectory() as directory:
-            for group,disks in (('all',4),('positive',1),('agh',1),('negative',2)):
+            for group,disks in (('all',6),('positive',3),('agh',1),('negative',2)):
                 events=[];calls=[];group_root=Path(directory)/group;group_root.mkdir()
                 env=dict(ROOT=group_root,phase='',re=re)
                 def record(kind):events.append((kind,env['phase']))
@@ -353,9 +372,10 @@ class CIScope(unittest.TestCase):
                     install=lambda scenario,*args:(record('phase'),calls.append(scenario)),
                     invoke=lambda expression,*args,**kwargs:(record('phase'),calls.append(expression)),
                     ssh=lambda *args,**kwargs:SimpleNamespace(returncode=0,stdout=b'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n'))
-                exec(compile(ast.Module(body=[function],type_ignores=[]),'acceptance.py','exec'),env)
+                exec(compile(ast.Module(body=functions,type_ignores=[]),'acceptance.py','exec'),env)
                 env['fresh_acceptance']('a'*40,group)
-                positive_phases=[positive[0],*positive[:6],'installed-renewal-hooks','cold-boot',*positive[6:]]
+                positive_phases=[positive[0],*positive[:6],'installed-renewal-hooks','cold-boot',*positive[6:],
+                                 'dot-restore-source','dot-restore-source','dot-clean-target','dot-change-panel']
                 self.assertEqual([phase for kind,phase in events if kind=='phase'],
                                  (positive_phases if group in ('all','positive') else [])+
                                  (agh if group in ('all','agh') else [])+
@@ -364,9 +384,10 @@ class CIScope(unittest.TestCase):
                     'checks.amneziawg()','checks.search_domain_regression()','checks.renewal()',
                     'checks.disabled_cold_boot(prepare=True)','checks.disabled_cold_boot()',
                     'checks.installed(cold=True)','checks.transports()','checks.change_domains()',
-                    'checks.restore_before_domains()']
+                    'checks.restore_before_domains()','dot-restore-source','checks.restore_source(dot=True)',
+                    'checks.restore_dot_target()','checks.change_dot_panel()']
                 agh_calls=['positive','checks.installed()','checks.native_agh_update()']
-                negative_calls=['dependency','dot-outage','checks.transports(vision=False)']
+                negative_calls=['dependency','dot-outage','checks.transports(vision=False, ws_grpc=False)']
                 self.assertEqual(calls,(positive_calls if group in ('all','positive') else [])+
                                        (agh_calls if group in ('all','agh') else [])+
                                        (negative_calls if group in ('all','negative') else []))
@@ -384,6 +405,9 @@ class CIScope(unittest.TestCase):
                     cold=events.index(('boot','cold-boot'))
                     self.assertEqual(events[cold-1][0],'off')
                     self.assertNotIn(('disk','cold-boot'),events)
+                    restored = events.index(('boot', 'dot-clean-target'))
+                    self.assertEqual(events[restored-2:restored],
+                                     [('off', 'dot-restore-source'), ('disk', 'dot-clean-target')])
             events.clear()
             with self.assertRaises(ValueError):env['fresh_acceptance']('a'*40,'unknown')
             self.assertEqual(events,[])

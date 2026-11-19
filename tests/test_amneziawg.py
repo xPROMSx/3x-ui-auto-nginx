@@ -153,7 +153,8 @@ else: sys.exit(1)
         main=function('main')
         self.assertLess(main.index('preflight_amneziawg'),main.index('prepare_awg_reinstall'))
         self.assertLess(main.index('prepare_awg_reinstall'),main.index('cleanup_adguard'))
-        self.assertLess(main.index('select_amneziawg'),main.index('select_adguard'))
+        self.assertIn('select_amneziawg && select_xhttp_cdn',function('select_additional_connections'))
+        self.assertLess(main.index('select_additional_connections ||'),main.index('select_adguard'))
         self.assertIn('3X-UI AUTO NGINX',SOURCE)
         helper=Path(__file__).resolve().parents[1]/'assets/amneziawg/managed.py'
         self.assertTrue(helper.exists())
@@ -236,7 +237,7 @@ else: sys.exit(1)
                 self.assertIn('Configured (UDP/8443)',lines[0]);self.assertIn('\x1b[32m',lines[0])
             else:
                 self.assertIn('Not configured',lines[0]);self.assertIn('\x1b[33m',lines[0])
-            self.assertIn('Password: password',result.stdout)
+            self.assertRegex(result.stdout, r'Password: +password')
 
     def test_api_credentials_use_stdin_and_private_temporary_state(self):
         import importlib.util

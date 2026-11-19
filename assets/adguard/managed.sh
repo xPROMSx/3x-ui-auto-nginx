@@ -232,6 +232,10 @@ agh_install_service() {
 
 agh_snippet() {
     local doh_path=${AGH_DOH_PATH:-dns-query} client_route='' exact_rewrite='' client_rewrite=''
+    local reset_ip_headers=''
+    if [[ ${1:-} != legacy && ${1:-} != pre-ip-headers ]]; then
+        reset_ip_headers=$'    proxy_set_header CF-Connecting-IP "";\n    proxy_set_header True-Client-IP "";\n'
+    fi
     # AdGuard Home ValidateClientID: one hostname label, 1..63 bytes.
     local client_id='[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?'
     if [[ ${1:-} == legacy ]]; then
@@ -251,7 +255,7 @@ ${client_rewrite}    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$remote_addr;
     proxy_set_header X-Forwarded-Proto https;
-    proxy_buffering off;
+${reset_ip_headers}    proxy_buffering off;
     proxy_intercept_errors off;
     access_log off;
 }
@@ -268,7 +272,7 @@ ${exact_rewrite}    proxy_pass http://127.0.0.1:${AGH_WEB_PORT};
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$remote_addr;
     proxy_set_header X-Forwarded-Proto https;
-    proxy_buffering off;
+${reset_ip_headers}    proxy_buffering off;
     proxy_intercept_errors off;
     access_log off;
 }
@@ -283,20 +287,21 @@ location ^~ /${AGH_PATH}/ {
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$remote_addr;
     proxy_set_header X-Forwarded-Proto https;
-    proxy_intercept_errors off;
+${reset_ip_headers}    proxy_intercept_errors off;
     add_header X-Robots-Tag "noindex, nofollow" always;
 }${client_route}
 EOFNG
 }
 
 agh_listeners() {
-    local pid listeners
+    local pid listeners dot=n
     pid=$(systemctl show -p MainPID --value AdGuardHome) || return 1
     [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
     listeners=$(ss -H -lntup) || return 1
-    python3 - "$pid" "$AGH_WEB_PORT" "$AGH_DNS_PORT" "$listeners" <<'PY'
+    if [[ -f /etc/nginx/stream-dot.d/adguard-dot.conf ]]; then dot=y; fi
+    python3 - "$pid" "$AGH_WEB_PORT" "$AGH_DNS_PORT" "$listeners" "$dot" <<'PY'
 import sys
-pid, web, dns, listing = sys.argv[1:]
+pid, web, dns, listing, dot = sys.argv[1:]
 owned = [l.split() for l in listing.splitlines() if 'pid=' + pid + ',' in l]
 if not owned:
     raise ValueError('Invalid AGH owned listeners')
@@ -312,6 +317,8 @@ if not any(l[0] == 'tcp' and l[4].endswith(':' + web) for l in service):
     raise ValueError('Invalid AGH TCP web socket')
 if not any(l[0] == 'udp' and l[4].endswith(':' + dns) for l in service):
     raise ValueError('Invalid AGH UDP DNS socket')
+if dot == 'y' and not any(l[0] == 'tcp' and l[4] == '127.0.0.1:' + dns for l in service):
+    raise ValueError('Missing AGH TCP DNS socket at 127.0.0.1:' + dns)
 PY
 }
 
@@ -362,7 +369,7 @@ agh_health() {
     expected=$(agh_snippet) || return 1
     [[ -f "$AGH_SNIPPET" && ! -L "$AGH_SNIPPET" ]] || return 1
     body=$(cat "$AGH_SNIPPET") || return 1
-    [[ "$body" == "$expected" || ( $AGH_DOH_PATH == dns-query && "$body" == "$(agh_snippet legacy)" ) ]] || return 1
+    [[ "$body" == "$expected" || "$body" == "$(agh_snippet pre-ip-headers)" || ( $AGH_DOH_PATH == dns-query && "$body" == "$(agh_snippet legacy)" ) ]] || return 1
     agh_doh_probe "http://127.0.0.1:${AGH_WEB_PORT}/dns-query" || return 1
     agh_doh_probe "https://${AGH_DOMAIN}/${AGH_DOH_PATH}" "${AGH_DOMAIN}:443:127.0.0.1" || return 1
     backend=$(curl --noproxy '*' -fsS --connect-timeout 5 --max-time 15 "http://127.0.0.1:${AGH_WEB_PORT}/login.html") || return 1

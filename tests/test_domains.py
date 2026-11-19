@@ -33,8 +33,14 @@ def rendered_hook(panel, reality, source=None):
                                     'fixture', panel, reality], text=True)
 
 
+def rendered_dot(panel, ipv6):
+    renderer = function('render_adguard_dot')
+    return subprocess.check_output(['bash', '-c', renderer+'\nrender_adguard_dot "$1" 18082 "$2"',
+                                    'fixture', panel, ipv6], text=True)
+
+
 class DomainFixture:
-    def __init__(self, root, legacy=False, optional=False, historical=False):
+    def __init__(self, root, legacy=False, optional=False, historical=False, ws_grpc='y'):
         self.root = Path(root); self.module = helper('domains')
         self.version='3.10.2' if legacy else '3.11.0'
         ref = 'v2.1.7' if legacy else 'f7f5cbbb2d00c1c0cdb2749745e2b4ff2aaf00c1'
@@ -60,7 +66,7 @@ class DomainFixture:
         self.write(self.module.HOOK, rendered_hook(self.panel, self.reality,self.source), 0o755)
         for name, text in ((self.module.STREAM, render('cat > /etc/nginx/stream-enabled/stream.conf',self.source)),
                            (self.module.HTTP, render('cat > /etc/nginx/sites-available/80.conf',self.source)),
-                           ('/etc/nginx/snippets/includes.conf', render(SHARED,self.source)),
+                           ('/etc/nginx/snippets/includes.conf', render(SHARED,self.source,INSTALL_WS_GRPC=ws_grpc)),
                            ('/etc/nginx/sites-available/'+self.panel, render(MAIN,self.source)),
                            ('/etc/nginx/sites-available/'+self.reality, render('cat > "/etc/nginx/sites-available/${reality_domain}"',self.source))):
             self.write(name, text)
@@ -78,7 +84,7 @@ class DomainFixture:
         self.p('/etc/nginx/snippets/x-ui-auto-optional').mkdir()
         self.write(self.module.CLASH, (ROOT/'assets/clash/clash.yaml').read_text().replace('${DOMAIN}', self.panel).replace('${SUB_PATH}', 'subscription'))
         self.write(self.module.DIAGNOSTICS, (ROOT/'assets/diagnostics/index.html').read_text().replace('__SERVER_DOMAIN__', self.panel))
-        rows, hosts = seed(group_id=True,source=self.source)
+        rows, hosts = seed(group_id=True,source=self.source,INSTALL_WS_GRPC=ws_grpc)
         with sqlite3.connect(self.p(self.module.DB)) as db:
             for table, records in (('inbounds', list(rows.values())), ('hosts', hosts)):
                 names = list(records[0])
@@ -120,6 +126,26 @@ class DomainFixture:
 
     def p(self, path):
         return self.root/path.lstrip('/')
+
+    def remove_optional_transports(self, roles=('ws', 'grpc')):
+        marker_path = self.p(self.module.MANIFEST)
+        marker = json.loads(marker_path.read_text())
+        shared = self.p('/etc/nginx/snippets/includes.conf')
+        text = shared.read_text()
+        with sqlite3.connect(self.p(self.module.DB)) as db:
+            for name in roles:
+                iid = marker['inbound_roles'].pop(name)
+                stream = json.loads(db.execute('SELECT stream_settings FROM inbounds WHERE id=?', (iid,)).fetchone()[0])
+                route = (stream['wsSettings']['path'] if name == 'ws' else
+                         stream['grpcSettings']['serviceName'].split('|')[0])
+                text, count = re.subn(r'(?ms)^    location = '+re.escape(route)+r' \{.*?^    \}\n', '', text)
+                if count != 1:
+                    raise AssertionError('Expected one fixture location for '+name)
+                for table in ('hosts', 'client_inbounds'):
+                    db.execute('DELETE FROM '+table+' WHERE inbound_id=?', (iid,))
+                db.execute('DELETE FROM inbounds WHERE id=?', (iid,))
+        shared.write_text(text)
+        marker_path.write_text(json.dumps(marker))
 
     def cdn(self, legacy=False):
         cdn=helper('xhttp-cdn'); path='/Independent12345/cookie'; port=12345
@@ -280,6 +306,11 @@ class DomainFixture:
                     raise subprocess.CalledProcessError(1,[action])
                 if action == 'render-hook':
                     return rendered_hook(*args)
+                if action == 'render-dot':
+                    panel, port, ipv6 = args
+                    if str(port) != '18082':
+                        raise AssertionError('Unexpected fixture DNS port')
+                    return rendered_dot(panel, ipv6)
                 if action == 'hook':
                     if fixture.p(fixture.module.HOOK).read_text() != rendered_hook(*args):
                         raise fixture.module.Refusal('Unowned project hook.')
@@ -324,7 +355,7 @@ curl() {
             names = ('check_certificate_identity', 'check_webroot_lineage', 'check_no_legacy_certbot_cron',
                      'check_acme_http', 'check_certificate_renewal', 'render_certificate_hook',
                      'check_xray_runtime', 'check_configured_xray_runtime', 'check_installation',
-                     'check_awg_reinstall_owner', 'ui_text', 'msg_err')
+                     'check_awg_reinstall_owner', 'ui_text', 'msg_err', 'render_adguard_dot')
             body += '\n'.join(function(name) for name in names)+'\n'+source+'\nprepare_domains_tools\n'
             result = subprocess.run(['bash', '-c', body], capture_output=True, text=True,
                                     env={**os.environ, 'REPOSITORY': str(ROOT)})
@@ -918,7 +949,8 @@ curl() {
                 html=f.root/'var/www/html'
                 for name in ('cover-panel','cover-reality','cover-vision','other'):(html/name).mkdir(parents=True,exist_ok=True)
                 script='systemctl() { :; }; msg_err() { :; };\n'
-                script+='\n'.join(relocated(function(name),f.root) for name in ('preflight_xhttp_cdn','preflight_cover_sites','clean_previous_install'))
+                script+='\n'.join(relocated(function(name),f.root) for name in (
+                    'preflight_xhttp_cdn','preflight_cover_sites','has_managed_awg_inbound','clean_previous_install'))
                 script+='\nINSTALL_XHTTP_CDN=n; preflight_xhttp_cdn; '
                 if foreign=='after-preflight':script+="printf '# changed route; preserve\\n' > "+str(route)+'; '
                 script+='clean_previous_install'
@@ -960,6 +992,121 @@ curl() {
                 self.assertTrue(f.p('/etc/letsencrypt/archive/deploy.example/privkey1.pem').read_bytes()==oldcert,'Old certificate key changed')
                 self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
                 self.assertTrue(all(v=='active' for v in f.services.values()))
+
+    def dot_fixture(self, ipv6=False):
+        f = self.fixture(optional=True)
+        metadata = f.p(f.module.AGH)
+        metadata.write_text(json.dumps({**json.loads(metadata.read_text()), 'dns_port': 18082}))
+        main = f.p('/etc/nginx/nginx.conf')
+        main.write_text(main.read_text().replace('stream-enabled/*.conf; }',
+                                                 'stream-enabled/*.conf; include /etc/nginx/stream-dot.d/*.conf; }'))
+        if not ipv6:
+            stream = f.p(f.module.STREAM)
+            stream.write_text(re.sub(r'(?m)^[ \t]*listen[ \t]+\[::\]:443;[ \t]*\n', '', stream.read_text()))
+        fragment = '/etc/nginx/stream-dot.d/adguard-dot.conf'
+        f.write(fragment, rendered_dot(f.panel, 'y' if ipv6 else 'n'))
+        f.write('/etc/nginx/stream-dot.d/foreign.conf', '# administrator configuration\n')
+        return f, f.p(fragment)
+
+    def test_change_panel_and_reality_with_dot(self):
+        for ipv6 in (False, True):
+            with self.subTest(ipv6=ipv6):
+                f, dot = self.dot_fixture(ipv6)
+                f.change('dot-panel.example')
+                self.assertEqual(dot.read_text(), rendered_dot('dot-panel.example', 'y' if ipv6 else 'n'))
+                before = (dot.read_bytes(), dot.stat().st_mtime_ns)
+                foreign = dot.with_name('foreign.conf')
+                foreign_before = (foreign.read_bytes(), foreign.stat().st_ino)
+                f.change(reality='dot-cover.example')
+                self.assertEqual((dot.read_bytes(), dot.stat().st_mtime_ns), before)
+                self.assertEqual((foreign.read_bytes(), foreign.stat().st_ino), foreign_before)
+
+    def test_dot_domain_rollback_restores_original_fragment(self):
+        f, dot = self.dot_fixture()
+        before = f.state(), dot.read_bytes(), dot.stat().st_mtime_ns
+        f.fault = 'verifying new stack'
+        with self.assertRaises(subprocess.CalledProcessError):
+            f.change('dot-panel.example')
+        self.assertTrue(f.fault_used)
+        self.assertEqual((f.state(), dot.read_bytes(), dot.stat().st_mtime_ns), before)
+        self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+
+    def test_dot_mismatch_and_duplicate_stream_refuse_before_backup(self):
+        for fault in ('wrong-fragment', 'duplicate-stream'):
+            with self.subTest(fault=fault):
+                f, dot = self.dot_fixture()
+                main = f.p('/etc/nginx/nginx.conf')
+                if fault == 'wrong-fragment':
+                    dot.write_text(dot.read_text().replace('dot_conn 50', 'dot_conn 51'))
+                    error = 'adguard-dot.conf.*default'
+                else:
+                    main.write_text(main.read_text()+next(line for line in main.read_text().splitlines(keepends=True)
+                                                         if line.startswith('stream ')))
+                    error = 'nginx.conf.*stream'
+                before = f.state(), main.read_bytes(), dot.read_bytes()
+                with self.assertRaisesRegex(f.module.Refusal, error):
+                    f.change('dot-panel.example')
+                self.assertEqual((f.state(), main.read_bytes(), dot.read_bytes()), before)
+                self.assertFalse(any(args[0] in ('bash', 'certbot') for _, args in f.calls))
+                self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
+
+    def test_change_domains_on_both_installer_layouts(self):
+        for choice in ('y', 'n'):
+            with self.subTest(ws_grpc=choice):
+                f = self.fixture(ws_grpc=choice)
+                roles = {'reality', 'xhttp', 'hysteria2'} | ({'ws', 'grpc'} if choice == 'y' else set())
+                before = f.operation.discover()
+                self.assertEqual(set(before['inbound_roles']), roles)
+                shared = f.p('/etc/nginx/snippets/includes.conf').read_bytes()
+                f.change('new-panel.example', 'new-cover.example')
+                after = f.operation.discover()
+                self.assertEqual(after['domains'], dict(panel='new-panel.example', reality='new-cover.example', vision=None))
+                self.assertEqual(after['inbound_roles'], before['inbound_roles'])
+                self.assertEqual(set(after['hosts']), roles)
+                self.assertEqual(f.p('/etc/nginx/snippets/includes.conf').read_bytes(), shared)
+
+    def test_change_domains_without_ws_and_grpc(self):
+        for mode in ('panel', 'reality', 'both'):
+            with self.subTest(mode=mode):
+                f = self.fixture()
+                f.remove_optional_transports()
+                before = f.state()
+                shared = f.p('/etc/nginx/snippets/includes.conf')
+                shared_before = shared.read_bytes()
+                panel = 'new-panel.example' if mode != 'reality' else f.panel
+                reality = 'new-cover.example' if mode != 'panel' else f.reality
+                f.change(panel, reality)
+                context = f.operation.discover()
+                self.assertEqual(context['domains'], dict(panel=panel, reality=reality, vision=None))
+                self.assertEqual(set(context['inbound_roles']), {'reality', 'xhttp', 'hysteria2'})
+                self.assertEqual(set(context['hosts']), set(context['inbound_roles']))
+                self.assertEqual(shared.read_bytes(), shared_before)
+                after = f.state()
+                for table in ('clients', 'users', 'client_inbounds', 'client_traffics'):
+                    self.assertEqual(after[table], before[table])
+
+    def test_change_domains_refuses_ws_and_grpc_marker_mismatches(self):
+        for role in ('ws', 'grpc'):
+            for missing in ('database', 'marker'):
+                with self.subTest(role=role, missing=missing):
+                    f = self.fixture()
+                    marker_path = f.p(f.module.MANIFEST)
+                    if missing == 'database':
+                        original = marker_path.read_bytes()
+                        f.remove_optional_transports((role,))
+                        marker_path.write_bytes(original)
+                    else:
+                        marker = json.loads(marker_path.read_text())
+                        del marker['inbound_roles'][role]
+                        marker_path.write_text(json.dumps(marker))
+                    before = f.state()
+                    marker_before = marker_path.read_bytes()
+                    with self.assertRaisesRegex(f.module.Refusal, 'Manifest conflicts with the running configuration'):
+                        f.change('new-panel.example')
+                    self.assertEqual(f.state(), before)
+                    self.assertEqual(marker_path.read_bytes(), marker_before)
+                    self.assertFalse(any(args[:3] == ['bash', 'fixture-backup', 'backup'] for _, args in f.calls))
+                    self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
 
     def test_legacy_adoption_and_repeated_switch_without_reinstall(self):
         f=self.fixture(legacy=True)
