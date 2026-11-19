@@ -309,6 +309,25 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
             self.assertEqual(env['report'].get('failure_location'),'checks.py:527')
             self.assertNotIn(secret,json.dumps(env['report']))
 
+    def test_service_diagnostics_publish_only_unit_states_and_ports(self):
+        from unittest.mock import patch
+        diagnostics = self.diagnostics()
+        sample = 'udp UNCONN 0 0 [::]:53 [::]:*\ntcp LISTEN 0 1 127.0.0.1:443 0.0.0.0:*'
+        metadata = self.repo/'agh.json'
+        metadata.write_text(json.dumps({'web_port': 8080, 'dns_port': 53}))
+        with patch.object(diagnostics.subprocess, 'run', return_value=subprocess.CompletedProcess([], 3, 'failed\n')), \
+                patch.object(diagnostics.subprocess, 'check_output', return_value=sample):
+            lines = list(diagnostics.agh_listener_diagnostics(metadata))
+        self.assertEqual(lines, ['Expected ports AdGuardHome web tcp/8080, DNS udp/53, nginx tcp/443',
+                                 'AdGuardHome is-active=failed', 'nginx is-active=failed',
+                                 'x-ui is-active=failed', 'Listening ports tcp/443, udp/53'])
+        guest = '\r\n'.join('CI service: '+line for line in lines+[
+            'is-active check failed for apt-daily.timer', 'nginx is-active=private-data',
+            'Listening ports tcp/443 https://private.invalid/secret', 'is-active check failed for private-unit',
+        ])
+        self.assertEqual(list(diagnostics.public_service_diagnostics(guest.encode())),
+                         lines+['is-active check failed for apt-daily.timer'])
+
     def test_dns_wire_contract_and_safe_probe_failures(self):
         d = self.diagnostics()
         ident=b'\x12\x34'

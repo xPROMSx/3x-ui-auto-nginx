@@ -17,6 +17,11 @@ pull requests targeting `main`, and manual `workflow_dispatch`. Full Fresh runs
 on `opened`, `reopened` and `synchronize` (every push) for a PR targeting `main`, Draft included; switching Draft to Ready does not start a new run. These PR validation workflows
 have read-only repository permissions and no repository-secret dependency.
 
+Auto rerun makes at most one automatic retry of failed jobs for a current
+same-repository PR, a push to `main`, or a scheduled Upstream Canary run.
+See the **Auto rerun** workflow's job summary for the decision and the failed
+jobs. The first failed attempt remains in the original run's history.
+
 Reproduce the full suites on a disposable Ubuntu 24.04 test environment:
 
 ```bash
