@@ -157,12 +157,11 @@ Ordinary workflow concurrency cancels superseded runs only for the same PR and
 workflow. Main pushes and dispatches have independent run-ID groups; Canary and
 release workflows remain independent. Cancelled runs are not successful checks.
 
-Fresh diagnostics publish only allowlisted Vision stage/exit/rollback fields and
-DNS probe/RCODE/ID-match/Answer-count/expected-A/length/timing values. Unknown
-Vision stages become `unknown`; raw logs, DNS names, packets, credentials and URLs
-remain private. DNS parsing validates the expected Answer A record rather than
-assuming it occupies the final four packet bytes. No retries or timeout increases
-are added; failure remains failure.
+Fresh diagnostics publish allowlisted Vision stage/exit/rollback fields, DNS
+probe metrics, service names and states, and protocol/port pairs. Unknown Vision
+stages become `unknown`. Raw logs, DNS names, packets, credentials, addresses and
+URLs remain private. DNS parsing validates the expected Answer A record. The
+scenario checks keep their original assertions and deadlines.
 
 ## Verified upstream baseline and Canary
 
@@ -172,7 +171,10 @@ The installer bootstraps only release-preflight dependencies, then verifies the 
 
 `upstream-canary.yml` runs daily or manually on free Ubuntu 24.04 runners; PRs changing Canary infrastructure also validate it as a non-required check. It runs the existing integration suite with the candidate's own official x-ui and bundled Xray, including native CLI/migration/SQLite persistence, actual RAW/JSON subscriptions, five transport positive/negative pairs and Mihomo. Its report records version, archive SHA-256, bundled Xray and failure diagnostics. It is **not a required PR check**, never writes the baseline, and has no repository-secret or VPS dependency.
 
-A small Actions cache stores only the tested result, keyed by version, digest and test-implementation fingerprint. Unchanged daily candidates reuse the latest tested PASS/FAIL report; preparation/download failures are reported but not cached as tested; changed artifacts/code and every manual run retest. Each fresh result gets a unique cache key, so manual retesting supersedes previous results. Cache eviction causes a fresh run, not a skip. Reports/logs are retained as artifacts for 30 days.
+A small Actions cache stores only the tested result, keyed by version, digest and test-implementation fingerprint. Unchanged daily candidates reuse the latest tested PASS/FAIL report; preparation/download failures are reported but not cached as tested; changed artifacts/code, manual runs and rerun attempts execute the tests again. Each fresh result gets a unique cache key. Cache eviction causes a fresh run, not a skip. Reports/logs are retained as artifacts for 30 days.
+
+The hosted probe uses GitHub's built-in read-only token for release metadata.
+Local probes can use `GITHUB_TOKEN` or the public API anonymously.
 
 For an explicit local candidate run (non-root, integration dependencies installed):
 
