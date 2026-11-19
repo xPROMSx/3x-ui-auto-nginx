@@ -312,7 +312,7 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
     def test_service_diagnostics_publish_only_unit_states_and_ports(self):
         from unittest.mock import patch
         diagnostics = self.diagnostics()
-        sample = 'udp UNCONN 0 0 [::]:53 [::]:*\ntcp LISTEN 0 1 127.0.0.1:443 0.0.0.0:*'
+        sample = 'udp UNCONN 0 0 *:53 *:*\ntcp LISTEN 0 1 *:443 *:*'
         metadata = self.repo/'agh.json'
         metadata.write_text(json.dumps({'web_port': 8080, 'dns_port': 53}))
         with patch.object(diagnostics.subprocess, 'run', return_value=subprocess.CompletedProcess([], 3, 'failed\n')), \
