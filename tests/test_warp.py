@@ -499,7 +499,7 @@ msg_warn() { :; }
                      'CREATE_CLIENT','INSTALL_XHTTP_CDN')},'FIXTURE_RESULT':state})
             self.assertEqual(result.returncode,0 if state=='configured' else 1,result.stderr)
             self.assertEqual(result.stdout.count('HEALTH'),2)
-            self.assertLess(result.stdout.index('WARP'),result.stdout.rindex('HEALTH'))
+            self.assertLess(result.stdout.index('\nWARP\n'),result.stdout.rindex('HEALTH'))
             self.assertIn('RESULT:'+('0' if state=='configured' else '1')+':'+state,result.stdout)
         main=function('main')
         self.assertLess(main.index('select_additional_connections ||'),main.index('select_warp_ru ||'))

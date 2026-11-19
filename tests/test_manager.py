@@ -891,6 +891,12 @@ entrypoint
                 for prompt in ('Номер архива или абсолютный путь','Автоматическая перезагрузка разрешена в 04:38',
                                'Fail2ban для SSH? [y/N]','Включить UFW с защитой доступа по SSH','введите YES'):
                     self.assertIn(prompt,text)
+                security, ufw = ('\r\n  '+name+'\r\n\r\n' for name in ('Security', 'UFW'))
+                self.assertLess(text.index(security), text.index('Fail2ban для SSH? [y/N]'))
+                self.assertLess(text.index('Fail2ban для SSH? [y/N]'), text.index(ufw))
+                self.assertLess(text.index(ufw), text.index('Включить UFW с защитой доступа по SSH'))
+                self.assertIn('Yes: на Ubuntu 24.04/26.04 попробуем включить UFW', text)
+                self.assertIn('No: добавим правила для приложений и сохраним состояние UFW.', text)
                 self.assertNotIn('{"format_version":3}',text);self.assertIn('Формат: Backup v3',text)
                 self.assertIn(f'{YES_RU} {FRAME} {YES_RU_PROMPT}',' '.join(text.replace(str(root),'').split()))  # the fixture relocates paths into its root
                 self.assertEqual(self.f.path('/etc/x-ui/x-ui.db').read_bytes(),original)
