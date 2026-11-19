@@ -347,10 +347,10 @@ UI_LANG=$LANGUAGE
                                              'NEW_PANEL': domain if case == 'new panel' else 'example.com',
                                              'LANGUAGE': language, 'PANEL_STAGE': str(stage)})
                 warning = (f'Сертификат Vision для {domain} будет удалён. Вернуть его можно только из Backup, сделанного до переустановки.'
-                           if language == 'ru' else f'The Vision certificate for {domain} will be deleted.')
+                           if language == 'ru' else f'The Vision certificate for {domain} will be deleted. It can only be restored from a Backup made before reinstalling.')
                 prompt = 'введите YES' if language == 'ru' else 'Type YES'
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertEqual(warning in result.stdout.split(prompt)[0], deletes)
+                self.assertEqual(warning in ' '.join(result.stdout.split(prompt)[0].split()), deletes)
                 command = f'delete --cert-name {domain} --non-interactive'
                 self.assertEqual(self.calls.read_text().splitlines() if self.calls.exists() else [], [command] if deletes else [])
                 self.assertEqual(('certbot '+command) in result.stdout, deletes)
