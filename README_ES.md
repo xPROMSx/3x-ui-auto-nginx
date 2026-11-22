@@ -446,6 +446,16 @@ Los archivos se guardan en `/var/backups/x-ui/`.
 
 [Restauración en un VPS nuevo](#restore-on-new-vps).
 
+### Restaurar clientes y suscripciones
+
+Tras instalar el proyecto en un VPS nuevo o reinstalado, abre **Copias de seguridad → 4. Restaurar clientes y suscripciones**. Selecciona un archivo normal de Backup v3 por su número o introduce su ruta absoluta. Introduce las credenciales actuales del panel y el código 2FA si está activado. Esta opción restaura los datos de clientes en una instalación en funcionamiento sin actualizar el proyecto ni restaurar todo el sistema.
+
+Del archivo se recuperan identificadores, credenciales, estado, límites, caducidad, contadores compatibles y rutas compartidas RAW y JSON. Los clientes reciben todas las conexiones locales activas compatibles. El dominio, los certificados, la configuración de las conexiones y el resto de la infraestructura proceden de la instalación actual. El panel asigna las direcciones de AmneziaWG desde la subred actual.
+
+Para conservar las URL anteriores, usa el dominio anterior del panel. Si ha cambiado la IP, apunta ese dominio al nuevo VPS mediante DNS. Los enlaces que este servidor haya emitido antes con otras rutas pueden dejar de funcionar. Actualiza las suscripciones manualmente en las aplicaciones cliente para cargar las nuevas conexiones.
+
+Si coincide el correo o el identificador de suscripción, se conserva el registro existente y se omite el cliente del archivo. También se omiten los identificadores vacíos o compartidos por varios registros del archivo. `PARTIAL` indica que se aplicaron las rutas y hubo clientes omitidos, registros incompletos o comprobaciones sin confirmar. Revisa clientes, límites, caducidad y conexiones en 3x-ui.
+
 <a id="cascade"></a>
 
 ## 🔗 Cascada entre dos servidores

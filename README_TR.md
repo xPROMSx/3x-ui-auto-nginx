@@ -446,6 +446,16 @@ Arşivler `/var/backups/x-ui/` dizinine kaydedilir.
 
 [Yeni bir VPS'e geri yükleme](#restore-on-new-vps).
 
+### İstemcileri ve abonelikleri geri yükleme
+
+Yeni veya yeniden kurulmuş bir VPS'ye kurulum yaptıktan sonra **Yedekler → 4. İstemcileri ve abonelikleri geri yükle** seçeneğini açın. Numarasıyla normal bir Backup v3 arşivi seçin veya mutlak dosya yolunu girin. Panelin güncel giriş bilgilerini ve etkinse 2FA kodunu girin. Bu seçenek, projeyi güncellemeden veya tüm sistemi geri yüklemeden istemci verilerini çalışan kuruluma aktarır.
+
+Arşivden istemci kimlikleri, bağlantı bilgileri, durum, limitler, son kullanma tarihleri, desteklenen sayaçlar ve ortak RAW ve JSON yolları alınır. İstemcilere uygun tüm etkin yerel bağlantılar atanır. Alan adı, sertifikalar, bağlantı ayarları ve altyapının geri kalanı mevcut kurulumdan gelir. Panel AmneziaWG adreslerini mevcut alt ağdan atar.
+
+Önceki URL'leri korumak için panelin önceki alan adını kullanın. IP değiştiyse DNS üzerinden alan adını yeni VPS'ye yönlendirin. Bu sunucunun daha önce farklı yollarla verdiği bağlantılar çalışmayı bırakabilir. Yeni bağlantıları almak için istemci uygulamalarında abonelikleri elle yenileyin.
+
+E-posta veya abonelik kimliği çakışırsa mevcut kayıt korunur ve arşivdeki istemci atlanır. Boş kimlikler ve arşivde birden fazla kayıtta kullanılan kimlikler de atlanır. `PARTIAL` yolların uygulandığını ve bazı istemcilerin atlandığını, kayıtların eksik olduğunu veya doğrulamanın tamamlanamadığını gösterir. İstemcileri, limitleri, son kullanma tarihlerini ve bağlantıları 3x-ui panelinden kontrol edin.
+
 <a id="cascade"></a>
 
 ## 🔗 İki sunuculu Kaskad

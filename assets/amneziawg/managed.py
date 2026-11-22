@@ -47,8 +47,12 @@ def validate(inbound, domain, port=8443):
     return inbound
 
 
+class PanelRejected(ValueError):
+    """The panel returned a valid API response explicitly rejecting the request."""
+
+
 class Panel:
-    def __init__(self, base, username, password, directory, options=(), *, deadline=None):
+    def __init__(self, base, username, password, directory, options=(), *, deadline=None, two_factor=None):
         self.base = base
         self.directory = Path(directory)
         self.options = list(options)
@@ -59,7 +63,10 @@ class Panel:
         self.headers.touch(mode=0o600)
         self.token = None
         self.token = self.request('csrf-token')['obj']
-        self.request('login', {'username':username,'password':password})
+        login = {'username': username, 'password': password}
+        if two_factor is not None and self.request('getTwoFactorEnable', {})['obj'] is True:
+            login['twoFactorCode'] = two_factor()
+        self.request('login', login)
         self.token = self.request('csrf-token')['obj']
 
     def request(self, path, data=None, *, method=None, form=False, timeout=20):
@@ -87,7 +94,9 @@ class Panel:
         if result.returncode:
             raise ValueError('AmneziaWG panel request failed: '+path)
         value = json.loads(result.stdout)
-        if value.get('success') is not True:
+        if isinstance(value, dict) and value.get('success') is False:
+            raise PanelRejected('AmneziaWG panel rejected request: '+path)
+        if not isinstance(value, dict) or value.get('success') is not True:
             raise ValueError('AmneziaWG panel rejected request: '+path)
         return value
 

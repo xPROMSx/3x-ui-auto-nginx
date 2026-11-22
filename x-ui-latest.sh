@@ -3994,10 +3994,23 @@ sys.exit(1 if failed else 0)
 PYSECURITY
 )
 
+select_backup_archive() {
+    local choice
+    backup_list || return 1
+    ui_text 'Archive number or absolute path (empty to cancel): ' 'Номер архива или абсолютный путь (пустой ввод — отмена): '
+    IFS= read -r choice || return 2
+    [[ -n "$choice" ]] || return 2
+    if [[ "$choice" =~ ^[0-9]+$ && ${#choice} -lt 8 ]]; then
+        (( 10#$choice > 0 && 10#$choice <= ${#BACKUP_CHOICES[@]} )) || { msg_err "$(ui_text 'Invalid archive number.' 'Некорректный номер архива.')"; return 1; }
+        archive=${BACKUP_CHOICES[10#$choice-1]}
+    elif [[ "$choice" == /* ]]; then archive=$choice
+    else msg_err "$(ui_text 'Enter an archive number or absolute path.' 'Укажите номер архива или абсолютный путь.')"; return 1; fi
+}
+
 backup_action() (
     acquire_stack_lock || exit $?
     recover_domain_operation || exit $?
-    local action=$1 choice archive answer apt=n ufw=n RESTORE_SECURITY_DIR='' restore_warning=''
+    local action=$1 archive answer apt=n ufw=n RESTORE_SECURITY_DIR='' restore_warning='' selection=0
     trap '[[ -z "$RESTORE_SECURITY_DIR" ]] || rm -rf -- "$RESTORE_SECURITY_DIR"' EXIT
     if [[ "$action" == list ]]; then backup_list; exit $?; fi
     prepare_backup_helper || exit 1
@@ -4017,15 +4030,8 @@ backup_action() (
         exit 0
     fi
     twpm_blocks_restore && exit 1
-    backup_list || exit 1
-    ui_text 'Archive number or absolute path (empty to cancel): ' 'Номер архива или абсолютный путь (пустой ввод — отмена): '
-    IFS= read -r choice || exit 0
-    [[ -n "$choice" ]] || exit 0
-    if [[ "$choice" =~ ^[0-9]+$ && ${#choice} -lt 8 ]]; then
-        (( 10#$choice > 0 && 10#$choice <= ${#BACKUP_CHOICES[@]} )) || { msg_err "$(ui_text 'Invalid archive number.' 'Некорректный номер архива.')"; exit 1; }
-        archive=${BACKUP_CHOICES[10#$choice-1]}
-    elif [[ "$choice" == /* ]]; then archive=$choice
-    else msg_err "$(ui_text 'Enter an archive number or absolute path.' 'Укажите номер архива или абсолютный путь.')"; exit 1; fi
+    select_backup_archive || selection=$?
+    case $selection in 2) exit 0 ;; 1) exit 1 ;; esac
     if [[ ${UI_INTERACTIVE:-0} == 1 ]]; then
         local metadata
         metadata=$(bash /usr/local/bin/x-ui-backup inspect "$archive") || exit $?
@@ -4150,10 +4156,14 @@ domains_tool() {
         --backup "$DOMAINS_STAGE/x-ui-backup.sh" --source "$PROJECT_SOURCE_SHA" "$@"
 }
 
-recover_domain_operation() (
-    if [[ ! -e /var/lib/3x-ui-auto-nginx/change-domains/journal.json &&
+no_pending_domain_operation() {
+    [[ ! -e /var/lib/3x-ui-auto-nginx/change-domains/journal.json &&
           ! -L /var/lib/3x-ui-auto-nginx/change-domains/journal.json &&
-          ! -L /var/lib/3x-ui-auto-nginx/change-domains && ! -L /var/lib/3x-ui-auto-nginx ]]; then return 0; fi
+          ! -L /var/lib/3x-ui-auto-nginx/change-domains && ! -L /var/lib/3x-ui-auto-nginx ]]
+}
+
+recover_domain_operation() (
+    if no_pending_domain_operation; then return 0; fi
     acquire_stack_lock || exit $?
     local DOMAINS_STAGE=''
     trap '[[ -z "$DOMAINS_STAGE" ]] || rm -rf -- "$DOMAINS_STAGE"' EXIT
@@ -4161,6 +4171,58 @@ recover_domain_operation() (
     local status=0
     domains_tool recover || status=$?
     if (( status )); then ui_text '' 'Не удалось подтвердить восстановление доменов. Сохраните Backup и журнал восстановления; новые изменения заблокированы.\n' >&2; fi
+    exit "$status"
+)
+
+restore_clients_action() (
+    local archive answer status=0 stage='' asset report
+    select_backup_archive || status=$?
+    case $status in 2) exit 0 ;; 1) exit 1 ;; esac
+    local title
+    title=$(ui_text 'RESTORE CLIENTS AND SUBSCRIPTIONS' 'ВОССТАНОВЛЕНИЕ КЛИЕНТОВ И ПОДПИСОК')
+    ui_header "$title"
+    ui_wrap '38;5;208' "$(ui_text \
+        '  Clients, their identifiers and previous subscription paths will be restored. A server without clients is recommended.\n  Clients will use this server’s active local connections. Available protocols may change.\n  Shared subscription paths will change. Links previously issued by this server with different paths may stop working.\n  To keep previous URLs, use the previous panel domain. If the IP has changed, update DNS yourself.\n  Refresh subscriptions in the client apps after restore. Until then, apps may keep using the old connections.\n  Existing clients will be preserved. Avoid editing clients in the web panel during recovery.' \
+        '  Будут восстановлены клиенты, их идентификаторы и прежние пути подписок. Рекомендуется выполнять операцию на сервере без клиентов.\n  Клиенты получат активные локальные подключения этого сервера. Доступные протоколы могут измениться.\n  Общие пути подписок изменятся. Ссылки, ранее выданные этим сервером с другими путями, могут перестать работать.\n  Чтобы сохранить прежние URL, используйте прежний домен панели. Если IP изменился, настройте DNS самостоятельно.\n  После восстановления обновите подписки в приложениях. До обновления приложения могут использовать старые подключения.\n  Существующие клиенты будут сохранены. Во время восстановления не редактируйте клиентов в веб-панели.')"
+    ui_text '  Continue? [Y/n] ' '  Продолжить? [Y/n] '
+    IFS= read -r answer || exit 0
+    case "$answer" in ''|Y|y) ;; *) exit 0 ;; esac
+
+    if ! acquire_stack_lock; then
+        ui_text '  FAILED — cannot acquire the stack lock.\n' '  FAILED — не удалось получить блокировку стека.\n'
+        exit 1
+    fi
+    if ! no_pending_domain_operation; then
+        ui_text '  FAILED — finish Change Domains recovery first.\n' '  FAILED — сначала завершите восстановление после смены доменов.\n'
+        exit 1
+    fi
+    umask 077
+    trap '[[ -z "$stage" ]] || rm -rf -- "$stage"' EXIT
+    if ! {
+        pin_project_source &&
+        stage=$(mktemp -d /run/xui-restore-clients.XXXXXXXX) &&
+        mkdir -- "$stage/client" "$stage/amneziawg" &&
+        for asset in client/managed.py amneziawg/managed.py client/restore.py backup/x-ui-backup.sh; do
+            local destination=$asset
+            case "$asset" in client/restore.py|backup/x-ui-backup.sh) destination=${asset##*/} ;; esac
+            curl -q -fsSL --connect-timeout 10 --max-time 45 "$GITHUB_RAW/assets/$asset" -o "$stage/$destination" || break
+        done &&
+        [[ -s "$stage/x-ui-backup.sh" && -s "$stage/restore.py" ]] &&
+        bash -n "$stage/x-ui-backup.sh"
+    }; then
+        ui_text '  FAILED — cannot prepare restore helpers.\n' '  FAILED — не удалось подготовить компоненты восстановления.\n'
+        exit 1
+    fi
+    report=$(/usr/bin/python3 -IB "$stage/restore.py" "$archive" "$UI_LANG") || status=$?
+    if (( status == 2 )); then exit 0; fi
+    ui_title "$title"
+    if [[ -n "$report" ]]; then
+        printf '%s\n' "$report"
+    else
+        ui_text '  FAILED — client restore helper could not run.\n' '  FAILED — не удалось запустить компонент восстановления.\n'
+        status=1
+    fi
+    ui_rule
     exit "$status"
 )
 
@@ -4967,7 +5029,7 @@ manager_menu() {
             3)
                 while true; do
                     ui_header "$(ui_text 'BACKUPS' 'РЕЗЕРВНЫЕ КОПИИ')"
-                    ui_text '\n  1. Create backup\n  2. List backups\n  3. Restore backup\n' '\n  1. Создать резервную копию\n  2. Список резервных копий\n  3. Восстановить резервную копию\n'
+                    ui_text '\n  1. Create backup\n  2. List backups\n  3. Restore backup\n  4. Restore clients and subscriptions\n' '\n  1. Создать резервную копию\n  2. Список резервных копий\n  3. Восстановить резервную копию\n  4. Восстановить клиентов и подписки\n'
                     ui_back "$(ui_text '  0. Back' '  0. Назад')"
                     printf '\n'; ui_prompt
                     IFS= read -r choice || return "$status"
@@ -4983,6 +5045,7 @@ manager_menu() {
                             } 4>&1
                             reported=1
                             if (( status == 0 )) && [[ $completion == completed ]]; then return 0; fi ;;
+                        4) restore_clients_action; status=$?; reported=1 ;;
                         *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
                     esac
                     (( status == 0 )) || break

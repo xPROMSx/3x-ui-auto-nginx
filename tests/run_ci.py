@@ -20,6 +20,7 @@ SUITES = {
         'test_ci_auto_rerun.CIAutoRerun',
         'test_recovery_extract.RecoveryExtract',
         'test_backup_client_read.BackupClientRead',
+        'test_client_restore.ClientRestore',
         'test_git_identity.GitIdentity',
         'test_integrated_features.IntegratedFeatures',
         'test_personal_xhttp.PersonalXHTTP',
@@ -39,6 +40,7 @@ SUITES = {
     'root': (
         'test_cascade_manager.CascadeManagerLock',
         'test_domains.Domains',
+        'test_client_restore.ClientRestoreNginx',
         'test_manager.ManagerBackup',
         'test_cover_sites.CoverPublication',
         'test_audit_findings.DiagnosticsFiles',

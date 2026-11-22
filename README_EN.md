@@ -454,6 +454,16 @@ The destination must be new; original paths are preserved under `files/` and lin
 
 [Recovery on a new VPS](#restore-on-new-vps).
 
+### Restore clients and subscriptions
+
+After installation on a new or reinstalled VPS, open **Backups → 4. Restore clients and subscriptions**. Select a regular Backup v3 archive by number or enter its absolute path. Enter the current panel credentials and the 2FA code if enabled. This option restores client data into a running installation without updating the project or restoring the full stack.
+
+The archive supplies client identifiers and credentials, status, limits, expiry, supported counters, and shared RAW and JSON paths. Clients receive all eligible active local connections. The running installation supplies the domain, certificates, connection settings, and the rest of the infrastructure. The panel allocates AmneziaWG addresses from its current subnet.
+
+Existing URLs work with the previous panel domain. If the IP changed, point that domain to the new VPS through DNS. Links this server previously issued with different paths may stop working. Refresh subscriptions manually in your client apps to load the new connections.
+
+If an email or subscription identifier matches, the existing record is preserved and the archived client is skipped. An empty identifier or one shared by multiple archive records also causes a skip. `PARTIAL` means the paths were applied and some clients were skipped, some records were incomplete, or verification could not confirm operation. Check the clients, limits, expiry, and connections in 3x-ui.
+
 <a id="cascade"></a>
 
 ## 🔗 Cascade between two servers

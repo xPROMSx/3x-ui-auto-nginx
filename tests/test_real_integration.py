@@ -1201,6 +1201,111 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
                     stop(nginx)
                     self.release_subscription_socket()
 
+    def test_restore_clients_official_import_and_subscriptions(self):
+        import hmac
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+        from test_client_restore import restore, reader, session, archive_client
+        origin = f'https://deploy.example:{self.public}'
+        previous = {'subPath': '/subscription/', 'subJsonPath': '/jsonsub/',
+                    'subURI': origin + '/subscription/', 'subJsonURI': origin + '/jsonsub/'}
+        archived = {'subPath': '/restored/raw/', 'subJsonPath': '/restored/json/'}
+        clash = self.root / 'clash.yaml.tpl'
+        clash.write_text((ROOT / 'assets/clash/clash.yaml').read_text()
+                         .replace('${DOMAIN}', f'deploy.example:{self.public}').replace('${SUB_PATH}', 'subscription'))
+        backend = self.root / 'mtr.py'
+        backend.write_text((ROOT / 'assets/diagnostics/mtr-backend.py').read_text()
+                           .replace('/var/www/subpage/clash.yaml.tpl', str(clash)))
+        daemon = self.launch([sys.executable, str(backend), '--port', str(self.backends['api'])], 'restore-mihomo')
+        self.ready(daemon, ('127.0.0.1', self.backends['api']))
+        self.nginx_config()
+        db_path = self.root / 'db/x-ui.db'
+        otp_secret = os.urandom(20)
+        with sqlite3.connect(db_path) as db:
+            for key, value in previous.items():
+                db.execute('UPDATE settings SET value=? WHERE key=?', (value, key))
+            db.execute("INSERT INTO clients(email,sub_id,uuid,enable,limit_hwid) VALUES ('orphan','kept',?,1,7)",
+                       (str(uuid.uuid4()),))
+            db.executemany('INSERT INTO settings(key,value) VALUES (?,?)',
+                           [('twoFactorEnable', 'true'), ('twoFactorToken', base64.b32encode(otp_secret).decode())])
+        env = {**os.environ, 'XUI_DB_FOLDER': str(db_path.parent), 'XUI_BIN_FOLDER': str(self.root/'bin'),
+               'XUI_LOG_FOLDER': str(self.root/'logs')}
+        panel_process = self.launch([self.xui], 'restore-panel', env)
+        self.ready(panel_process, ('127.0.0.1', self.backends['panel']))
+
+        def config_test(candidate, live):
+            config = self.root / 'candidate.conf'
+            config.write_text((self.root/'nginx.conf').read_text().replace(str(live), str(candidate)))
+            subprocess.run([self.nginx, '-t', '-p', str(self.root)+'/', '-c', str(config)],
+                           check=True, capture_output=True, timeout=15)
+
+        def command(*args):
+            nonlocal panel_process
+            if args == ('systemctl', 'stop', 'x-ui'):
+                stop(panel_process)
+                self.release_subscription_socket()
+            elif args == ('systemctl', 'start', 'x-ui'):
+                panel_process = self.launch([self.xui], 'restore-panel-after-paths', env)
+                self.ready(panel_process, ('127.0.0.1', self.backends['panel']))
+            else:
+                self.assertEqual(args, ('systemctl', 'reload', 'nginx'))
+                subprocess.run([self.nginx, '-s', 'reload', '-p', str(self.root)+'/',
+                                '-c', str(self.root/'nginx.conf')], check=True, capture_output=True, timeout=15)
+
+        def two_factor():
+            counter = int(time.time() // 30).to_bytes(8, 'big')
+            digest = hmac.digest(otp_secret, counter, 'sha1')
+            offset = digest[-1] & 15
+            return f"{(int.from_bytes(digest[offset:offset+4], 'big') & 0x7fffffff) % 1000000:06d}"
+
+        with tempfile.TemporaryDirectory(dir=self.root) as credentials:
+            panel = session.Panel(origin+'/panel/', 'integration', self.auth, credentials,
+                                  ['--cacert', str(self.cert), '--resolve', f'deploy.example:{self.public}:127.0.0.1'],
+                                  two_factor=two_factor)
+            awg = panel.create('deploy.example', port(self.allocated_ports, udp=True))
+            before = panel.request('panel/api/clients/list')['obj']
+            retained = next(row for row in before if row['email'] == 'orphan')
+            self.assertFalse(retained['inboundIds'])
+            rows = reader.active_inbounds(panel)
+            self.assertEqual({row['protocol'] for row in rows}, {'vless', 'trojan', 'hysteria', 'amneziawg'})
+            self.assertIn(awg['id'], [row['id'] for row in rows])
+            key = X25519PrivateKey.generate()
+            keys = dict(privateKey=base64.b64encode(key.private_bytes_raw()).decode(),
+                        publicKey=base64.b64encode(key.public_key().public_bytes_raw()).decode(),
+                        preSharedKey=base64.b64encode(os.urandom(32)).decode())
+            archived_clients = [
+                archive_client('ORPHAN ', 'kept', limitHwid=1),
+                {**archive_client('restored-active', 'archive-id', id=str(uuid.uuid4()),
+                                  password=os.urandom(16).hex(), auth=os.urandom(16).hex(),
+                                  flow='xtls-rprx-vision', expiryTime=int(time.time() * 1000) + 3600000,
+                                  allowedIPs=['192.0.2.7/32'], totalGB=10000, limitIp=2, **keys),
+                 'traffic': {'up': 120, 'down': 180, 'resetCount': 2, 'lastOnline': 456, 'lastSubFetch': 789}},
+                archive_client('restored-disabled', 'second-archive-id', enable=False, limitHwid=2),
+            ]
+            pending, skipped = restore.plan_import(archived_clients, before, rows)
+            self.assertEqual(skipped, [('ORPHAN', 'email already present')])
+            settings = restore.panel_settings(panel)
+            self.assertEqual(reader.fetch(panel, origin+'/subscription/missing', with_status=True)[0], 404)
+            (self.root/'var/lib').mkdir(parents=True)
+            with patch.multiple(restore, DB=Path('db/x-ui.db'), INCLUDES=Path('shared.conf'),
+                                CLASH=Path('clash.yaml.tpl')), \
+                    patch.object(restore, 'candidate_nginx', side_effect=config_test), \
+                    patch.object(restore, 'run', side_effect=command), \
+                    patch.object(restore, 'service_active', return_value=True):
+                self.assertEqual(restore.apply_paths(self.root, reader, panel, origin, archived, previous,
+                                                     settings, before), ('applied', [], None))
+            full, incomplete, issues = restore.import_clients(reader, session.PanelRejected, panel, pending, skipped)
+            self.assertEqual(incomplete, [])
+            self.assertEqual(issues, [])
+            self.assertEqual(len(full), 2)
+            restored = next(record for record, _ in full if record['email'] == 'restored-active')
+            self.assertEqual(restored['traffic']['lastSubFetch'], 789)
+            self.assertEqual(restore.verify_subscriptions(reader, panel, origin, archived, settings, full), 'verified')
+            after = panel.request('panel/api/clients/list')['obj']
+            self.assertTrue(next(row for row in after if row['email'] == 'orphan') == retained)
+            self.assertFalse(restore.plan_import(archived_clients, after, rows)[0])
+            self.assertNotEqual(reader.fetch(panel, origin+'/subscription/archive-id', with_status=True)[0], 200)
+        self.passed.append('Client restore API/HTTPS')
+
     def test_vision_and_initial_client_official_api(self):
         from test_integrated_features import helper
         client, awg, self.vision_module = helper('client'), helper('amneziawg'), helper('vision')

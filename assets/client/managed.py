@@ -217,13 +217,18 @@ def decode_subscription(raw):
     return links
 
 
-def fetch(panel, url):
+def fetch(panel, url, *, user_agent=None, with_status=False):
     # No cookies required by the official subscription endpoint. Never follow redirects.
-    result = subprocess.run(['curl', '-q', '-fsS', '--noproxy', '*', '--connect-timeout', '5',
-                             '--max-time', '20', *panel.options, '--config', '-'],
+    options = ['--write-out', '%{http_code}'] if with_status else ['--fail']
+    if user_agent is not None:
+        options += ['--user-agent', user_agent]
+    result = subprocess.run(['curl', '-q', '-sS', '--noproxy', '*', '--connect-timeout', '5',
+                             '--max-time', '20', *panel.options, *options, '--config', '-'],
                             input=('url = '+json.dumps(url)+'\n').encode(), capture_output=True, timeout=25)
     if result.returncode:
         raise ValueError('Subscription request failed (curl status ' + str(result.returncode) + ')')
+    if with_status:
+        return int(result.stdout[-3:]), result.stdout[:-3]
     return result.stdout
 
 
