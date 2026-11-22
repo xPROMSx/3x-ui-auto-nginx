@@ -5,15 +5,18 @@
 
 """Initial client via official 3x-ui v3.9.0 session/CSRF and subscription backend.
 
-Import Panel from the existing AWG helper. No SQL, custom exports or stored tokens.
+Import Panel from the existing AWG helper for creation. Backup reading is offline.
 """
 import base64
 import configparser
+from contextlib import closing
 import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import secrets
+import sqlite3
 import string
 import subprocess
 import sys
@@ -28,6 +31,106 @@ def random_id():
 
 def object_value(value):
     return json.loads(value) if isinstance(value, str) else value
+
+
+# Official ClientRecord.ToClient and ClientCreatePayload (3x-ui).
+BACKUP_CLIENT_FIELDS = {
+    'email': 'email', 'sub_id': 'subId', 'uuid': 'id', 'password': 'password',
+    'auth': 'auth', 'flow': 'flow', 'security': 'security', 'enable': 'enable',
+    'wg_private_key': 'privateKey', 'wg_public_key': 'publicKey',
+    'wg_pre_shared_key': 'preSharedKey', 'wg_forwarded_ports': 'forwardedPorts',
+    'secret': 'secret', 'ad_tag': 'adTag', 'limit_ip': 'limitIp',
+    'limit_hwid': 'limitHwid', 'total_gb': 'totalGB', 'expiry_time': 'expiryTime',
+    'tg_id': 'tgId', 'group_name': 'group', 'comment': 'comment', 'reset': 'reset',
+    'reset_day': 'resetDay', 'reset_weekday': 'resetWeekday', 'reset_max': 'resetMax',
+    'traffic_reset': 'trafficReset', 'traffic_reset_day': 'trafficResetDay',
+    'created_at': 'created_at', 'updated_at': 'updated_at',
+}
+BACKUP_TRAFFIC_FIELDS = {
+    'up': 'up', 'down': 'down', 'reset_count': 'resetCount',
+    'last_online': 'lastOnline', 'last_sub_fetch': 'lastSubFetch',
+}
+
+
+def _backup_rows(db, table, fields, required, *, optional=False):
+    columns = {row['name'] for row in db.execute(f'PRAGMA table_info({table})')}
+    if optional and not columns:
+        return ()
+    for name in required:
+        if name not in columns:
+            raise ValueError(f'Archived SQLite is missing {table}.{name}.')
+    selected = ', '.join(name for name in fields if name in columns)
+    return db.execute(f'SELECT {selected} FROM {table} ORDER BY email')
+
+
+def read_backup_clients(archive, backup_helper):
+    """Use the local Backup helper to return archived paths and client payloads in memory."""
+    with tempfile.TemporaryDirectory(prefix='xui-backup-clients-') as work:
+        staging = Path(work) / 'sqlite'
+        result = subprocess.run(
+            ['bash', '--', str(backup_helper), 'extract-client-db', str(archive), str(staging)],
+            capture_output=True, text=True,
+        )
+        if result.returncode:
+            raise ValueError(result.stderr.strip() or 'Archive SQLite extraction failed.')
+        database = staging / 'files/etc/x-ui/x-ui.db'
+        try:
+            with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as db:
+                return _backup_client_payload(db)
+        except sqlite3.Error:
+            raise ValueError('Archived x-ui.db could not be read as SQLite.') from None
+
+
+def _backup_client_payload(db):
+    db.row_factory = sqlite3.Row
+    if [tuple(row) for row in db.execute('PRAGMA quick_check')] != [('ok',)]:
+        raise ValueError('Archived x-ui.db failed SQLite quick_check.')
+
+    paths = {}
+    for key in ('subPath', 'subJsonPath'):
+        rows = db.execute('SELECT value FROM settings WHERE key = ?', (key,)).fetchall()
+        # Use the same path syntax accepted by Restore's staged core preflight.
+        if (len(rows) != 1 or not isinstance(rows[0][0], str)
+                or not re.fullmatch(r'/(?:[A-Za-z0-9_-]+/)+', rows[0][0])):
+            raise ValueError(f'Archived settings must contain one valid {key}.')
+        paths[key] = rows[0][0]
+
+    traffic = {}
+    for record in _backup_rows(db, 'client_traffics', ('email', *BACKUP_TRAFFIC_FIELDS),
+                               ('email', 'up', 'down'), optional=True):
+        row = dict(record)
+        traffic[row['email']] = {api: row[col] for col, api in BACKUP_TRAFFIC_FIELDS.items()
+                                 if row.get(col) is not None}
+
+    clients = []
+    fields = (*BACKUP_CLIENT_FIELDS, 'wg_allowed_ips', 'wg_keep_alive', 'wg_keep_alive_range', 'reverse')
+    for record in _backup_rows(db, 'clients', fields, ('email', 'sub_id', 'enable')):
+        row = dict(record)
+        if not isinstance(row['email'], str) or not row['email'].strip():
+            raise ValueError('Archived clients.email must be nonempty text.')
+        if not isinstance(row['sub_id'], str):
+            raise ValueError('Archived clients.sub_id must be text.')
+        if type(row['enable']) is not int or row['enable'] not in (0, 1):
+            raise ValueError('Archived clients.enable must be a SQLite boolean.')
+        client = {api: row[col] for col, api in BACKUP_CLIENT_FIELDS.items() if row.get(col) is not None}
+        client['enable'] = bool(row['enable'])
+        addresses = [ip.strip() for ip in (row.get('wg_allowed_ips') or '').split(',') if ip.strip()]
+        if addresses:
+            client['allowedIPs'] = addresses
+        keep_alive = row.get('wg_keep_alive') or row.get('wg_keep_alive_range')
+        if keep_alive:
+            client['keepAlive'] = int(keep_alive) if re.fullmatch(r'-?[0-9]+', str(keep_alive)) else keep_alive
+        try:
+            reverse = json.loads(row.get('reverse') or 'null')
+        except json.JSONDecodeError:
+            reverse = None  # Upstream ignores an invalid stored reverse configuration.
+        if isinstance(reverse, dict) and isinstance(reverse.get('tag', ''), str):
+            client['reverse'] = {'tag': reverse.get('tag', '')}
+        item = {'client': client}
+        if row['email'] in traffic:
+            item['traffic'] = traffic[row['email']]
+        clients.append(item)
+    return {**paths, 'clients': clients}
 
 
 def active_inbounds(panel):
@@ -233,7 +336,6 @@ def main():
             if saved.get('owner') != '3x-ui-auto-nginx':
                 raise ValueError('Unowned initial client marker')
             identity = saved['identity']
-            import re
             if not re.fullmatch(r'client-[a-z0-9]{16}', identity['email']) or not re.fullmatch(r'[a-z0-9]{16}', identity['subId']):
                 raise ValueError('Invalid initial client marker')
         def reserve(identity):

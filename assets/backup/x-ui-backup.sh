@@ -287,7 +287,7 @@ quick_check() {
 # accepted; links cannot redirect extraction or target arbitrary OS/security files.
 validate_archive() {
     local -a runner=()
-    if [[ ${2:-restore} == extract ]]; then runner=(exec)
+    if [[ ${2:-restore} == extract || ${2:-restore} == client-db ]]; then runner=(exec)
     elif [[ ${2:-restore} == inspect ]]; then
         gzip -t -- "$1" 2>/dev/null || die 'Archive gzip integrity check failed.'
     else gzip -t -- "$1" || die 'Archive gzip integrity check failed.'; fi
@@ -305,8 +305,12 @@ trees = [p.lstrip('/') for p in paths[:split]]
 files = [p.lstrip('/') for p in paths[split + 1:]]
 allowed = trees + files
 required = ['files/' + p.lstrip('/') for p in required]
+db_member = 'files/' + db.lstrip('/')
+class ArchiveError(ValueError):
+    pass
+
 def fail(message):
-    raise ValueError(message)
+    raise ArchiveError(message)
 def clean(name):
     if name.startswith('./'):
         name = name[2:]
@@ -361,7 +365,7 @@ def directory(base, parts, create=False, owned=None, trusted_parents=False):
     finally:
         os.close(fd)
 
-def extract_files(tar, members, target):
+def extract_files(tar, members, target, report=True):
     target = os.path.abspath(target)
     parts = PurePosixPath(target).parts[1:]
     if not parts:
@@ -436,12 +440,13 @@ def extract_files(tar, members, target):
                         os.close(fd)
     finally:
         os.close(base)
-    print('Extracted data: ' + target)
-    print('Files: ' + str(files_written))
-    print('Skipped links: ' + str(links_skipped))
-    print('WARNING: Data contains secrets and private keys; keep it private.')
+    if report:
+        print('Extracted data: ' + target)
+        print('Files: ' + str(files_written))
+        print('Skipped links: ' + str(links_skipped))
+        print('WARNING: Data contains secrets and private keys; keep it private.')
 
-if mode == 'extract':
+if mode in ('extract', 'client-db'):
     def interrupted(signum, frame):
         raise InterruptedError('Recovery extraction interrupted')
     signal.signal(signal.SIGTERM, interrupted)
@@ -520,10 +525,11 @@ try:
                 target = members.get(clean(member.linkname))
                 if not target or not target.isfile():
                     fail('Invalid hard link')
-        if mode == 'extract':
+        if mode in ('extract', 'client-db'):
             # tar stops at its end marker; still validate the entire gzip stream/CRC.
             while compressed.read(1024 * 1024):
                 pass
+        if mode == 'extract':
             extract_files(tar, members, output)
         else:
             for name in ['meta.json', *required]:
@@ -531,7 +537,7 @@ try:
                     fail('Archive is missing required managed state')
                 if name in required and not (members[name].isdir() if name[6:] in trees else members[name].isfile()):
                     fail('Required managed state has the wrong file type')
-            for name in ('meta.json', 'files/' + db.lstrip('/')):
+            for name in ('meta.json', db_member):
                 if not members[name].isfile():
                     fail('Metadata and DB must be regular files')
             xray_prefix = 'files/' + xray_dir.lstrip('/') + '/xray-linux-'
@@ -550,14 +556,25 @@ try:
                 fail('Incomplete backup metadata')
             if meta['source_ipv4']:
                 ipaddress.IPv4Address(meta['source_ipv4'])
-            if mode == 'inspect':
+            if mode == 'client-db':
+                selected = {db_member: members[db_member]}
+                wal = db_member + '-wal'
+                if wal in members:
+                    if not members[wal].isfile():
+                        fail('SQLite WAL must be a regular file')
+                    selected[wal] = members[wal]
+                # SQLite rebuilds the shared-memory index in private staging.
+                extract_files(tar, selected, output, report=False)
+            elif mode == 'inspect':
                 # JSON encoding escapes all terminal control characters. No private fields.
                 print(json.dumps({key: meta[key] for key in (
                     'format_version','os_id','os_version','arch','created','x_ui_version',
                     'xray_version','adguard_home','service_states') if key in meta}, ensure_ascii=True))
 except (ValueError, OSError, EOFError, tarfile.TarError, KeyError, UnicodeError) as exc:
     label = 'Recovery extraction failed' if mode == 'extract' else 'Invalid or unsafe backup archive'
-    print('[FAIL] ' + label + ': ' + str(exc), file=sys.stderr)
+    # Parsing errors can include private archive values.
+    detail = type(exc).__name__ if mode == 'client-db' and not isinstance(exc, ArchiveError) else str(exc)
+    print('[FAIL] ' + label + ': ' + detail, file=sys.stderr)
     sys.exit(1)
 PY
 }
@@ -2740,6 +2757,10 @@ main() {
             [[ $# == 2 ]] || die 'Usage: x-ui-backup inspect <archive>'
             command -v python3 >/dev/null && command -v gzip >/dev/null || die 'Inspect requires Python 3 and gzip; no packages were installed.'
             validate_archive "$2" inspect
+            return ;;
+        extract-client-db)
+            [[ $# == 3 && -n "$2" && -n "$3" ]] || die 'Usage: x-ui-backup extract-client-db <archive> <new-directory>'
+            validate_archive "$2" client-db "$3"
             return ;;
     esac
     if [[ ${1:-} == extract ]]; then

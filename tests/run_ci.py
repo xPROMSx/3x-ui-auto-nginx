@@ -19,6 +19,7 @@ SUITES = {
         'test_ci_scope.CIScope',
         'test_ci_auto_rerun.CIAutoRerun',
         'test_recovery_extract.RecoveryExtract',
+        'test_backup_client_read.BackupClientRead',
         'test_git_identity.GitIdentity',
         'test_integrated_features.IntegratedFeatures',
         'test_personal_xhttp.PersonalXHTTP',
