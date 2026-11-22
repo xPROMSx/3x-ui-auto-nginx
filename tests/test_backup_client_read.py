@@ -96,7 +96,7 @@ class BackupClientRead(unittest.TestCase):
                 columns = ', '.join(client)
                 placeholders = ', '.join('?' for _ in client)
                 db.execute(f'INSERT INTO clients({columns}) VALUES ({placeholders})', tuple(client.values()))
-            db.execute("INSERT INTO client_inbounds VALUES (7, 456, 'old-inbound-flow', 0)")
+            db.execute("INSERT INTO client_inbounds VALUES (7, 456, 'xtls-rprx-vision', 0)")
             db.execute("""INSERT INTO client_traffics(inbound_id,email,up,down,reset_count,last_online,last_sub_fetch)
                           VALUES (456,'attached',123,4567,2,1700000000010,1700000000011),
                                  (789,'deleted',900,901,0,0,0)""")
@@ -152,6 +152,29 @@ class BackupClientRead(unittest.TestCase):
         self.assertEqual(unattached['client']['keepAlive'], 25)
         self.assertEqual(set(unattached), {'client'})
 
+    def test_effective_flow_from_inbound_overrides(self):
+        with closing(self.connect(self.sqlite)) as db, db:
+            db.executescript("""
+                UPDATE clients SET flow='xtls-rprx-vision-udp443' WHERE email='disabled';
+                DELETE FROM client_inbounds;
+                INSERT INTO client_inbounds (client_id, inbound_id, flow_override) VALUES
+                    (7, 120, 'xtls-rprx-vision-udp443'),
+                    (7, 110, 'xtls-rprx-vision'),
+                    (7, 100, ''),
+                    (7, 101, NULL),
+                    (9, 90, '');
+            """)
+        for stored_flow in ('', 'xtls-rprx-vision-udp443'):
+            with self.subTest(stored_flow=stored_flow):
+                with closing(self.connect(self.sqlite)) as db, db:
+                    db.execute("UPDATE clients SET flow=? WHERE email='attached'", (stored_flow,))
+                self.pack()
+                attached, disabled, unattached = self.read()['clients']
+                self.assertEqual(attached['client']['flow'], 'xtls-rprx-vision')
+                self.assertEqual(disabled['client']['flow'], 'xtls-rprx-vision-udp443')
+                self.assertNotIn('flow', unattached['client'])
+                self.assertEqual(set(attached), {'client', 'traffic'})
+
     def test_wal_is_read_in_private_staging(self):
         with closing(self.connect(self.sqlite)) as db:
             self.assertEqual(db.execute('PRAGMA journal_mode=wal').fetchone(), ('wal',))
@@ -193,6 +216,7 @@ class BackupClientRead(unittest.TestCase):
         self.pack()
         item = self.read()['clients'][0]
         self.assertNotIn('future_data', item['client'])
+        self.assertEqual(item['client']['flow'], 'xtls-rprx-vision')
         self.assertNotIn('trafficResetDay', item['client'])
         self.assertNotIn('lastSubFetch', item['traffic'])
         with closing(self.connect(self.sqlite)) as db, db:

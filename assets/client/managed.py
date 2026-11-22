@@ -95,6 +95,18 @@ def _backup_client_payload(db):
             raise ValueError(f'Archived settings must contain one valid {key}.')
         paths[key] = rows[0][0]
 
+    effective_flows = {}
+    if db.execute('PRAGMA table_info(client_inbounds)').fetchone():
+        # ExportAll uses the first nonempty override in ascending inbound ID order.
+        for email, flow in db.execute("""
+            SELECT c.email, ci.flow_override
+            FROM client_inbounds AS ci
+            JOIN clients AS c ON c.id = ci.client_id
+            WHERE ci.flow_override <> ''
+            ORDER BY ci.inbound_id ASC
+        """):
+            effective_flows.setdefault(email, flow)
+
     traffic = {}
     for record in _backup_rows(db, 'client_traffics', ('email', *BACKUP_TRAFFIC_FIELDS),
                                ('email', 'up', 'down'), optional=True):
@@ -113,6 +125,8 @@ def _backup_client_payload(db):
         if type(row['enable']) is not int or row['enable'] not in (0, 1):
             raise ValueError('Archived clients.enable must be a SQLite boolean.')
         client = {api: row[col] for col, api in BACKUP_CLIENT_FIELDS.items() if row.get(col) is not None}
+        if row['email'] in effective_flows:
+            client['flow'] = effective_flows[row['email']]
         client['enable'] = bool(row['enable'])
         addresses = [ip.strip() for ip in (row.get('wg_allowed_ips') or '').split(',') if ip.strip()]
         if addresses:
