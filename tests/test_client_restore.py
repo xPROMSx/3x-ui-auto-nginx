@@ -215,6 +215,16 @@ class ClientRestore(unittest.TestCase):
         self.assertEqual(fetch.call_count, 3)
         self.assertTrue(all('/old/raw/missing' in call.args[1] for call in fetch.call_args_list))
 
+    def test_disabled_subscription_service_ignores_retained_json_flag(self):
+        # The panel's master switch shuts down the subscription listener.
+        # nginx returns 502 even if the independent JSON setting remains true.
+        settings = {'subEnable': False, 'subJsonEnable': True}
+        with patch.object(reader, 'fetch', return_value=(502, b'')) as fetch:
+            restore.check_routes(reader, self.panel, ORIGIN, TARGET, settings, [])
+            self.assertEqual(restore.verify_subscriptions(reader, self.panel, ORIGIN, TARGET, settings, []),
+                             'subscription service disabled')
+        fetch.assert_not_called()
+
     def test_menu_selects_number_or_path_and_cancels_before_lock_or_download(self):
         shell = """
 source "$1"

@@ -164,20 +164,21 @@ def has_provider(body, url):
 
 
 def check_routes(reader, panel, origin, paths, settings, existing):
+    if not settings['subEnable']:
+        return  # The master switch also stops the JSON subscription listener.
     reserved = {entry['subId'] for entry in existing}
     sub_id = reader.random_id()
     while sub_id in reserved:
         sub_id = reader.random_id()
-    if settings['subEnable']:
-        raw = origin + paths['subPath'] + sub_id
-        if reader.fetch(panel, raw, with_status=True)[0] != 404:
-            raise ValueError('RAW route')
-        status, body = reader.fetch(panel, raw, user_agent=MIHOMO, with_status=True)
-        provider = provider_url(origin, paths['subPath'], sub_id)
-        if status != 200 or not has_provider(body, provider):
-            raise ValueError('Mihomo route')
-        if reader.fetch(panel, provider, user_agent=MIHOMO, with_status=True)[0] != 404:
-            raise ValueError('Mihomo provider route')
+    raw = origin + paths['subPath'] + sub_id
+    if reader.fetch(panel, raw, with_status=True)[0] != 404:
+        raise ValueError('RAW route')
+    status, body = reader.fetch(panel, raw, user_agent=MIHOMO, with_status=True)
+    provider = provider_url(origin, paths['subPath'], sub_id)
+    if status != 200 or not has_provider(body, provider):
+        raise ValueError('Mihomo route')
+    if reader.fetch(panel, provider, user_agent=MIHOMO, with_status=True)[0] != 404:
+        raise ValueError('Mihomo provider route')
     if settings['subJsonEnable'] and reader.fetch(
             panel, origin + paths['subJsonPath'] + sub_id, with_status=True)[0] != 404:
         raise ValueError('JSON route')
@@ -482,8 +483,8 @@ def json_endpoints(configs):
 
 
 def verify_subscriptions(reader, panel, origin, paths, settings, full):
-    if not (settings['subEnable'] or settings['subJsonEnable']):
-        return 'both formats disabled'
+    if not settings['subEnable']:
+        return 'subscription service disabled'
     candidates = [(record, bindings) for record, bindings in full if usable(record)]
     if not candidates:
         return 'no usable imported client'
@@ -503,24 +504,21 @@ def verify_subscriptions(reader, panel, origin, paths, settings, full):
     expected = Counter(map(reader.link_identity, official))
     endpoints = {(schemes[link.scheme], link.hostname, link.port) for link in links if link.scheme != 'vpn'}
     for _ in range(2):
-        if settings['subEnable']:
-            actual = Counter(map(reader.link_identity, reader.decode_subscription(reader.fetch(panel, url))))
+        actual = Counter(map(reader.link_identity, reader.decode_subscription(reader.fetch(panel, url))))
+        if actual != expected:
+            return 'RAW endpoints or credentials differ'
+        if endpoints:
+            provider = provider_url(origin, paths['subPath'], sub_id)
+            if not has_provider(reader.fetch(panel, url, user_agent=MIHOMO), provider):
+                return 'Mihomo YAML provider URL differs'
+            actual = Counter(map(reader.link_identity, reader.decode_subscription(
+                reader.fetch(panel, provider, user_agent=MIHOMO))))
             if actual != expected:
-                return 'RAW endpoints or credentials differ'
-            if endpoints:
-                provider = provider_url(origin, paths['subPath'], sub_id)
-                if not has_provider(reader.fetch(panel, url, user_agent=MIHOMO), provider):
-                    return 'Mihomo YAML provider URL differs'
-                actual = Counter(map(reader.link_identity, reader.decode_subscription(
-                    reader.fetch(panel, provider, user_agent=MIHOMO))))
-                if actual != expected:
-                    return 'Mihomo provider endpoints or credentials differ'
+                return 'Mihomo provider endpoints or credentials differ'
         if settings['subJsonEnable'] and endpoints:
             configs = json.loads(reader.fetch(panel, origin + paths['subJsonPath'] + sub_id))
             if json_endpoints(configs) != endpoints:
                 return 'JSON endpoints differ'
-    if not settings['subEnable'] and not endpoints:
-        return 'no supported protocol for enabled formats'
     return 'verified'
 
 
@@ -556,10 +554,9 @@ MESSAGES = {
     'already applied': 'уже действовали',
     'applied': 'применены',
     'not checked': 'не выполнена',
-    'both formats disabled': 'RAW и JSON выключены',
+    'subscription service disabled': 'служба подписок выключена',
     'no usable imported client': 'нет пригодного импортированного клиента для HTTP-проверки',
     'HTTP probe would occupy a device slot': 'для HTTP-проверки пришлось бы занять слот устройства',
-    'no supported protocol for enabled formats': 'во включённых форматах нет поддерживаемого протокола',
     'official links miss an active inbound': 'в официальных ссылках отсутствует активное подключение',
     'RAW endpoints or credentials differ': 'RAW содержит другие адреса подключений или учётные данные',
     'Mihomo YAML provider URL differs': 'в YAML Mihomo указан другой адрес провайдера',
