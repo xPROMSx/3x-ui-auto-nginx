@@ -1290,7 +1290,8 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
                                 CLASH=Path('clash.yaml.tpl')), \
                     patch.object(restore, 'candidate_nginx', side_effect=config_test), \
                     patch.object(restore, 'run', side_effect=command), \
-                    patch.object(restore, 'service_active', return_value=True):
+                    patch.object(restore, 'service_active',
+                                 side_effect=lambda name: name == 'nginx' or panel_process.poll() is None):
                 self.assertEqual(restore.apply_paths(self.root, reader, panel, origin, archived, previous,
                                                      settings, before), ('applied', [], None))
             full, incomplete, issues = restore.import_clients(reader, session.PanelRejected, panel, pending, skipped)

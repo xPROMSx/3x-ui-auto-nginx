@@ -251,7 +251,16 @@ def apply_paths(root, reader, panel, origin, archived, current, settings, existi
             stage = 'verify HTTPS routes'
             if not service_active('nginx'):
                 raise ValueError(stage)
-            check_routes(reader, panel, origin, target, settings, existing)
+            attempts = 6 if reloaded else 1
+            for attempt in range(attempts):
+                try:
+                    check_routes(reader, panel, origin, target, settings, existing)
+                    break
+                except ValueError:
+                    # ExecReload signals nginx before the new workers accept HTTPS.
+                    if attempt == attempts - 1:
+                        raise
+                    time.sleep(1)
         except Exception:
             failed = rollback_paths(root, panel, old, files, changed_db, replaced, reloaded)
             retain = bool(failed)

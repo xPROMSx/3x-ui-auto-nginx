@@ -77,6 +77,7 @@ class ClientRestore(unittest.TestCase):
         with patch.object(restore, 'run', side_effect=command or self.service_call), \
                 patch.object(restore, 'service_active', side_effect=self.services.__getitem__), \
                 patch.object(restore, 'candidate_nginx', side_effect=test or self.candidate), \
+                patch.object(restore.time, 'sleep'), \
                 patch.object(restore, 'check_routes', check):
             result = restore.apply_paths(self.root, reader, self.panel, ORIGIN, archive,
                                          restore.local_settings(self.root), FORMATS, [])
@@ -138,6 +139,12 @@ class ClientRestore(unittest.TestCase):
                 self.assertEqual(result[1:], ([], None))
                 self.assert_original()
                 self.assertEqual(list((self.root / 'var/lib').iterdir()), [])
+
+    def test_waits_for_reloaded_nginx_to_publish_new_routes(self):
+        result, routes = self.apply(routes=[ValueError('Mihomo route'), None])
+        self.assertEqual(result, ('applied', [], None))
+        self.assertEqual(routes.call_count, 2)
+        self.assertEqual(restore.local_settings(self.root), {**self.config_before, **TARGET})
 
     def test_unverified_rollback_keeps_only_private_previous_paths(self):
         def command(*args):
