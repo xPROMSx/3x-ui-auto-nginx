@@ -247,9 +247,9 @@ class CIScope(unittest.TestCase):
         sources.write_text(original)
         mirror = 'https://mirrors.edge.kernel.org/ubuntu/'
         self.write('timeout', '''#!/bin/sh
-case "$1:$2:$3" in -k:5s:2m|-k:5s:3m) ;; *) exit 88 ;; esac
+case "$1:$2:$3" in -k:5s:1m|-k:5s:90s|-k:5s:2m|-k:5s:3m) ;; *) exit 88 ;; esac
 shift 3
-exec /usr/bin/timeout -k 1s 0.5s "$@"
+exec /usr/bin/timeout -k 1s 0.8s "$@"
 ''')
         self.write('apt-get', '''#!/bin/sh
 origin=primary
@@ -267,7 +267,10 @@ esac
 printf '%s %s\n' "$origin" "$operation" >> "$trace"
 case "$scenario:$origin:$operation" in
     slow:primary:update) while :; do printf '.\n'; sleep 0.05; done ;;
+    slow-package:primary:fetch) while :; do printf '.\n'; sleep 0.05; done ;;
+    separate:primary:update|separate:primary:fetch) sleep 0.55 ;;
     unavailable:primary:update|reuse:primary:update|both:*:update|package:primary:fetch) exit 100 ;;
+    mirror-package:primary:update|mirror-package:mirror:fetch) exit 100 ;;
     dpkg:primary:install) exit 101 ;;
 esac
 ''')
@@ -276,10 +279,13 @@ esac
         for scenario, status, calls in (
             ('healthy', 0, 'primary update,primary fetch,primary install'),
             ('slow', 0, 'primary update,mirror update,mirror fetch,mirror install'),
+            ('slow-package', 0, 'primary update,primary fetch,mirror update,mirror fetch,mirror install'),
+            ('separate', 0, 'primary update,primary fetch,primary install'),
             ('unavailable', 0, 'primary update,mirror update,mirror fetch,mirror install'),
             ('reuse', 0, 'primary update,mirror update,mirror fetch,mirror install,mirror download'),
             ('package', 0, 'primary update,primary fetch,mirror update,mirror fetch,mirror install'),
             ('both', 100, 'primary update,mirror update'),
+            ('mirror-package', 100, 'primary update,mirror update,mirror fetch'),
             ('dpkg', 101, 'primary update,primary fetch,primary install'),
         ):
             with self.subTest(scenario=scenario):
@@ -304,10 +310,10 @@ ci_image_apt check_image''',
                         original.replace('http://archive.ubuntu.com/ubuntu/', mirror)
                                 .replace('http://security.ubuntu.com/ubuntu/', mirror))
                     self.assertIn(mirror, result.stderr)
-                if scenario == 'slow':
+                if scenario in ('slow', 'slow-package'):
                     self.assertIn('exit 124', result.stderr)
                     self.assertIn('.\n.\n', result.stdout)
-                if scenario == 'both':
+                if scenario in ('both', 'mirror-package'):
                     self.assertIn('fallback failed (exit 100)', result.stderr)
 
     def test_dot_restore_package_diagnostics_publish_only_counts(self):

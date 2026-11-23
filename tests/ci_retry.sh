@@ -40,18 +40,22 @@ ci_image_apt() (
     "$@"
 )
 
-ci_image_apt_attempt() {
+ci_image_apt_timed() {
     ci_budget=$1
     shift
-    timeout -k 5s "$ci_budget" sh -ec '
-        refresh=$1
-        shift
-        apt() {
-            apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 "$@"
-        }
-        if [ "$refresh" = yes ]; then apt -o APT::Update::Error-Mode=any update; fi
-        apt "$@"
-    ' sh "$@"
+    timeout -k 5s "$ci_budget" apt-get \
+        -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 "$@"
+}
+
+ci_image_apt_attempt() {
+    ci_update_budget=$1 ci_download_budget=$2 ci_attempt_refresh=$3
+    shift 3
+    if [ "$ci_attempt_refresh" = yes ]; then
+        ci_operation=update
+        ci_image_apt_timed "$ci_update_budget" -o APT::Update::Error-Mode=any update || return
+    fi
+    ci_operation="download ($1)"
+    ci_image_apt_timed "$ci_download_budget" "$@"
 }
 
 ci_image_apt_fetch() {
@@ -64,8 +68,8 @@ ci_image_apt_fetch() {
 
     ci_mirror=https://mirrors.edge.kernel.org/ubuntu/
     if [ -z "$ci_primary_sources" ]; then
-        if ci_image_apt_attempt 2m "$ci_refresh" "$@"; then return 0; else ci_status=$?; fi
-        printf 'Ubuntu APT %s from primary failed (exit %s); switching to %s\n' "$1" "$ci_status" "$ci_mirror" >&2
+        if ci_image_apt_attempt 2m 3m "$ci_refresh" "$@"; then return 0; else ci_status=$?; fi
+        printf 'Ubuntu APT %s from primary failed (exit %s); switching to %s\n' "$ci_operation" "$ci_status" "$ci_mirror" >&2
         ci_saved_sources=$(mktemp) || return
         cp "$ci_ubuntu_sources" "$ci_saved_sources" || { rm -f "$ci_saved_sources"; return 1; }
         ci_primary_sources=$ci_saved_sources
@@ -73,8 +77,8 @@ ci_image_apt_fetch() {
             "$ci_primary_sources" > "$ci_ubuntu_sources" || return
         ci_refresh=yes
     fi
-    if ci_image_apt_attempt 3m "$ci_refresh" "$@"; then return 0; else ci_status=$?; fi
-    printf 'Ubuntu APT %s from %s fallback failed (exit %s)\n' "$1" "$ci_mirror" "$ci_status" >&2
+    if ci_image_apt_attempt 1m 90s "$ci_refresh" "$@"; then return 0; else ci_status=$?; fi
+    printf 'Ubuntu APT %s from %s fallback failed (exit %s)\n' "$ci_operation" "$ci_mirror" "$ci_status" >&2
     return "$ci_status"
 }
 

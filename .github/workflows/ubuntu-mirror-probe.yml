@@ -1,0 +1,68 @@
+name: Ubuntu mirror probe for PR 157
+
+on:
+  pull_request:
+    branches: [main]
+    types: [synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: github.repository == 'xPROMSx/3x-ui-auto-nginx' && github.event.pull_request.number == 157 && github.event.pull_request.head.repo.full_name == github.repository
+    name: Mirror ${{ matrix.mirror }} on ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mirror: [ovh, hetzner]
+        runner: [ubuntu-24.04, ubuntu-26.04]
+        include:
+          - runner: ubuntu-24.04
+            image: ubuntu:24.04
+            dockerfile: tests/systemd/tools.Dockerfile
+          - runner: ubuntu-26.04
+            image: ubuntu:26.04
+            dockerfile: tests/fresh/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Build with one candidate and forced primary failure
+        env:
+          CANDIDATE: ${{ matrix.mirror }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          BASE_IMAGE: ${{ matrix.image }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path('tests/ci_retry.sh')
+          source = path.read_text()
+          archive, security = {
+              'ovh': ('https://ubuntu.mirrors.ovh.net/ubuntu/',) * 2,
+              'hetzner': ('https://mirror.hetzner.com/ubuntu/packages/',
+                          'https://mirror.hetzner.com/ubuntu/security/'),
+          }[os.environ['CANDIDATE']]
+          source = source.replace('ci_mirror=https://mirrors.edge.kernel.org/ubuntu/', f'ci_mirror={archive}')
+          source = source.replace('-o Acquire::Retries=0',
+              '-o Acquire::http::Proxy::archive.ubuntu.com=http://127.0.0.1:1 '
+              '-o Acquire::http::Proxy::security.ubuntu.com=http://127.0.0.1:1 '
+              '-o Acquire::Retries=0')
+          if security != archive:
+              source = source.replace('sed -E "s@^URIs:', 'sed -E -e "s@^URIs:')
+              source = source.replace('(archive|security)', 'archive')
+              source = source.replace('URIs: $ci_mirror@" \\\n', 'URIs: $ci_mirror@" \\\n'
+                  rf'            -e "s@^URIs: https?://security\.ubuntu\.com/ubuntu/?\$@URIs: {security}@" ' + '\\\n')
+          path.write_text(source)
+          PY
+          timeout 8m docker build --progress plain --secret "id=proxy_ca,src=/etc/ssl/certs/ca-certificates.crt" \
+            -f "$DOCKERFILE" -t xui-ubuntu-mirror-probe .
+          docker run --rm "$BASE_IMAGE" cat /etc/apt/sources.list.d/ubuntu.sources > original.sources
+          docker run --rm xui-ubuntu-mirror-probe cat /etc/apt/sources.list.d/ubuntu.sources > built.sources
+          cmp original.sources built.sources
+          docker run --rm xui-ubuntu-mirror-probe sh -ec 'test -z "$(dpkg --audit)"'
