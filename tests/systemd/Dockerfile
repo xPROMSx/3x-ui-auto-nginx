@@ -3,16 +3,17 @@ FROM ${DISTRO}
 ARG DISTRO
 ARG MINIMAL_DNS=0
 ENV DEBIAN_FRONTEND=noninteractive
-RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
+RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem,mode=0444 \
     --mount=type=bind,source=tests/ci_retry.sh,target=/tmp/ci_retry.sh \
     . /tmp/ci_retry.sh && \
     if test -f /run/proxy-ca.pem; then printf 'Acquire::https::CaInfo "/run/proxy-ca.pem";\n' > /etc/apt/apt.conf.d/99test-proxy; fi && \
     apt_setup() { \
-      ci_apt_install apt-get systemd systemd-sysv systemd-resolved dbus \
+      ci_image_apt_install yes systemd systemd-sysv systemd-resolved dbus \
         openssh-server fail2ban unattended-upgrades nftables kmod nginx libnginx-mod-stream certbot sqlite3 \
         python3 python3-systemd python3-cryptography python3-configobj openssl ca-certificates iproute2 curl wget jq procps iptables dpkg-dev tcpdump tar gzip && \
-      if test "$MINIMAL_DNS" = 0; then apt-get install -y --no-install-recommends qemu-user; fi; \
-    } && ci_retry apt_setup && \
+      if test "$MINIMAL_DNS" = 0; then ci_image_apt_install no qemu-user; fi; \
+    } && \
+    if test "$DISTRO" = debian:13; then ci_retry ci_image_apt apt_setup; else ci_image_apt apt_setup; fi && \
     rm -f /etc/apt/apt.conf.d/99test-proxy && mkdir -p /run/sshd && ssh-keygen -A
 RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
     mkdir -p /opt/xui-ci && \
@@ -21,10 +22,11 @@ RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
       https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.79/AdGuardHome_linux_amd64.tar.gz -o /tmp/agh.tar.gz && \
     printf 'c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f  /tmp/agh.tar.gz\n' | sha256sum --check --status && \
     tar -xzf /tmp/agh.tar.gz -C /opt/xui-ci --strip-components=2 ./AdGuardHome/AdGuardHome && rm /tmp/agh.tar.gz
-RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
-    if test "$MINIMAL_DNS" = 1; then \
-      if test -f /run/proxy-ca.pem; then printf 'Acquire::https::CaInfo "/run/proxy-ca.pem";\n' > /etc/apt/apt.conf.d/99test-proxy; fi; \
-      mkdir -p /opt/xui-ci/apt && cd /opt/xui-ci/apt && apt-get download systemd-resolved ufw && \
+RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem,mode=0444 \
+    --mount=type=bind,source=tests/ci_retry.sh,target=/tmp/ci_retry.sh \
+    . /tmp/ci_retry.sh && \
+    apt_fixtures() { \
+      mkdir -p /opt/xui-ci/apt && cd /opt/xui-ci/apt && ci_image_apt_fetch no download systemd-resolved ufw && \
       for spec in xui-ci-upgrade:1 xui-ci-upgrade:2 xui-ci-retained:1; do \
         package=${spec%:*}; version=${spec#*:}; mkdir -p /tmp/ci-package/DEBIAN; \
         printf 'Package: %s\nVersion: %s\nArchitecture: all\nMaintainer: CI <ci@example.invalid>\nDescription: isolated APT regression fixture\n' "$package" "$version" > /tmp/ci-package/DEBIAN/control; \
@@ -33,10 +35,14 @@ RUN --mount=type=secret,id=proxy_ca,target=/run/proxy-ca.pem \
       done && dpkg-scanpackages --multiversion . > Packages && \
       dpkg -r systemd-resolved && \
       if test "$DISTRO" = ubuntu:26.04; then \
-        apt-get -y --download-only install curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr-tiny python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates && \
+        ci_image_apt_fetch no install -y --download-only curl wget jq bash sudo nginx-full certbot sqlite3 ufw netcat-openbsd mtr-tiny python3 python3-configobj python3-cryptography libcap2-bin openssl procps iproute2 tar gzip tzdata ca-certificates && \
         mkdir -p /opt/xui-ci/nginx && cp /var/cache/apt/archives/*.deb /opt/xui-ci/nginx/ && \
-        cd /opt/xui-ci/nginx && apt-get download nginx nginx-common libnginx-mod-stream && dpkg-scanpackages . > Packages; \
-      fi && rm -f /etc/apt/apt.conf.d/99test-proxy; \
+        cd /opt/xui-ci/nginx && ci_image_apt_fetch no download nginx nginx-common libnginx-mod-stream && dpkg-scanpackages . > Packages; \
+      fi; \
+    } && \
+    if test "$MINIMAL_DNS" = 1; then \
+      if test -f /run/proxy-ca.pem; then printf 'Acquire::https::CaInfo "/run/proxy-ca.pem";\n' > /etc/apt/apt.conf.d/99test-proxy; fi && \
+      ci_image_apt apt_fixtures && rm -f /etc/apt/apt.conf.d/99test-proxy; \
     fi
 STOPSIGNAL SIGRTMIN+3
 CMD ["/sbin/init"]

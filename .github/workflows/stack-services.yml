@@ -118,8 +118,13 @@ jobs:
           DISTRO: ${{ matrix.distro }}
         run: |
           . tests/ci_retry.sh
-          ci_retry docker build --build-arg "DISTRO=$DISTRO" --build-arg MINIMAL_DNS=1 -t xui-systemd-root -f tests/systemd/Dockerfile .
-          ci_retry docker build -t xui-systemd-tools -f tests/systemd/tools.Dockerfile .
+          ca=(--secret id=proxy_ca,src=/etc/ssl/certs/ca-certificates.crt)
+          if [[ "$DISTRO" == debian:13 ]]; then
+            ci_retry docker build --build-arg "DISTRO=$DISTRO" --build-arg MINIMAL_DNS=1 -t xui-systemd-root -f tests/systemd/Dockerfile .
+          else
+            docker build "${ca[@]}" --build-arg "DISTRO=$DISTRO" --build-arg MINIMAL_DNS=1 -t xui-systemd-root -f tests/systemd/Dockerfile .
+          fi
+          docker build "${ca[@]}" -t xui-systemd-tools -f tests/systemd/tools.Dockerfile .
       - name: Real APT upgrade and console MTR installation (disposable container)
         if: steps.scope.outputs.docs_only != 'true'
         run: |

@@ -236,6 +236,80 @@ class CIScope(unittest.TestCase):
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         return module
 
+    def test_ubuntu_image_apt_uses_one_bounded_fallback(self):
+        sources = self.repo/'ubuntu.sources'
+        original = ('Types: deb\nURIs: http://archive.ubuntu.com/ubuntu/\n'
+                    'Suites: noble noble-updates noble-backports\nComponents: main universe\n'
+                    'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\n'
+                    'Types: deb\nURIs: http://security.ubuntu.com/ubuntu/\n'
+                    'Suites: noble-security\nComponents: main universe\n'
+                    'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n')
+        sources.write_text(original)
+        mirror = 'https://mirrors.edge.kernel.org/ubuntu/'
+        self.write('timeout', '''#!/bin/sh
+case "$1:$2:$3" in -k:5s:2m|-k:5s:3m) ;; *) exit 88 ;; esac
+shift 3
+exec /usr/bin/timeout -k 1s 0.5s "$@"
+''')
+        self.write('apt-get', '''#!/bin/sh
+origin=primary
+if grep -q 'mirrors.edge.kernel.org' "$CI_IMAGE_APT_SOURCES"; then
+    origin=mirror
+    cp "$CI_IMAGE_APT_SOURCES" "$trace.sources"
+fi
+case " $* " in
+    *' update '*) operation=update; case " $* " in *' APT::Update::Error-Mode=any '*) ;; *) exit 88 ;; esac ;;
+    *' --download-only '*) operation=fetch ;;
+    *' --no-download '*) operation=install ;;
+    *' download '*) operation=download ;;
+    *) exit 88 ;;
+esac
+printf '%s %s\n' "$origin" "$operation" >> "$trace"
+case "$scenario:$origin:$operation" in
+    slow:primary:update) while :; do printf '.\n'; sleep 0.05; done ;;
+    unavailable:primary:update|reuse:primary:update|both:*:update|package:primary:fetch) exit 100 ;;
+    dpkg:primary:install) exit 101 ;;
+esac
+''')
+        for executable in ('timeout', 'apt-get'):
+            (self.repo/executable).chmod(0o755)
+        for scenario, status, calls in (
+            ('healthy', 0, 'primary update,primary fetch,primary install'),
+            ('slow', 0, 'primary update,mirror update,mirror fetch,mirror install'),
+            ('unavailable', 0, 'primary update,mirror update,mirror fetch,mirror install'),
+            ('reuse', 0, 'primary update,mirror update,mirror fetch,mirror install,mirror download'),
+            ('package', 0, 'primary update,primary fetch,mirror update,mirror fetch,mirror install'),
+            ('both', 100, 'primary update,mirror update'),
+            ('dpkg', 101, 'primary update,primary fetch,primary install'),
+        ):
+            with self.subTest(scenario=scenario):
+                trace = self.repo/scenario
+                result = subprocess.run(
+                    ['sh', '-ec', '''. "$1"
+check_image() {
+    ci_image_apt_install yes example &&
+        if [ "$scenario" = reuse ]; then ci_image_apt_fetch no download example; fi
+}
+ci_image_apt check_image''',
+                     'sh', str(ROOT/'tests/ci_retry.sh')],
+                    env={**os.environ, 'PATH': str(self.repo)+':'+os.environ['PATH'],
+                         'CI_IMAGE_APT_SOURCES': str(sources), 'scenario': scenario, 'trace': str(trace)},
+                    capture_output=True, text=True, timeout=8,
+                )
+                self.assertEqual(result.returncode, status, result.stdout+result.stderr)
+                self.assertEqual(trace.read_text().splitlines(), calls.split(','))
+                self.assertEqual(sources.read_text(), original)
+                if 'mirror' in calls:
+                    self.assertEqual(trace.with_suffix('.sources').read_text(),
+                        original.replace('http://archive.ubuntu.com/ubuntu/', mirror)
+                                .replace('http://security.ubuntu.com/ubuntu/', mirror))
+                    self.assertIn(mirror, result.stderr)
+                if scenario == 'slow':
+                    self.assertIn('exit 124', result.stderr)
+                    self.assertIn('.\n.\n', result.stdout)
+                if scenario == 'both':
+                    self.assertIn('fallback failed (exit 100)', result.stderr)
+
     def test_dot_restore_package_diagnostics_publish_only_counts(self):
         diagnostics = self.diagnostics()
         secret = 'https://user:credential@example.invalid/private-package'
