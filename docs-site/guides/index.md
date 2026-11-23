@@ -15,11 +15,23 @@ hide:
 
 <div class="grid cards guide-cards" markdown>
 
+-   :material-swap-horizontal:{ .lg .middle } **Балансировщик и резервный VPS**
+
+    Автоматическое переключение каскада на запасной зарубежный сервер при отказе основного: Least ping, Fallback и Observatory.
+
+    [Настроить резервирование](balancer.md)
+
 -   :material-shield-check:{ .lg .middle } **Безопасность VPS**
 
     Сетевой экран UFW, Fail2ban, защищённый DNS, автоматические обновления nginx и ядра, расписание и проверка результата.
 
     [Настроить защиту сервера](security.md)
+
+-   :material-import:{ .lg .middle } **Импорт VLESS REALITY**
+
+    Как скопировать подключение из клиента на одном сервере 3x-ui, импортировать его на другом и проверить по HTTP.
+
+    [Импортировать сервер](import-reality.md)
 
 -   :material-source-branch:{ .lg .middle } **Каскад из двух VPS**
 
@@ -38,6 +50,12 @@ hide:
     AdGuard Home, блокировка рекламы, DNS-over-HTTPS, ClientID и частный DNS на Android.
 
     [Настроить AdGuard Home и DNS](dns.md)
+
+-   :material-routes:{ .lg .middle } **Маршрутизация трафика**
+
+    Правила каскада и четыре примера: YouTube, весь трафик, блокировка для клиента и отдельное входящее XHTTP.
+
+    [Настроить маршрутизацию](routing.md)
 
 -   :material-lan:{ .lg .middle } **Подключения и nginx**
 
