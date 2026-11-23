@@ -194,7 +194,6 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 Дополнительно: [защита VPS и проверка настроек](https://xpromsx.github.io/3x-ui-auto-nginx/guides/security/), [настройка SSH-ключей на Windows 11 и Ubuntu](https://xpromsx.github.io/3x-ui-auto-nginx/guides/ssh-keys/).
 
-
 ---
 
 ### 4. 🧩 Дополнительные подключения
