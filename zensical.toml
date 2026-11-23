@@ -16,10 +16,13 @@ nav = [
   { "Инструкции" = [
     { "Все инструкции" = "guides/index.md" },
     # Остальные пункты в русском алфавитном порядке.
+    { "Балансировщик и резервный VPS" = "guides/balancer.md" },
     { "Безопасность VPS" = "guides/security.md" },
+    { "Импорт VLESS REALITY" = "guides/import-reality.md" },
     { "Каскад из двух VPS" = "guides/cascade.md" },
     { "Ключи SSH" = "guides/ssh-keys.md" },
     { "Личный DNS" = "guides/dns.md" },
+    { "Маршрутизация трафика" = "guides/routing.md" },
     { "Подключения и nginx" = "guides/connections.md" },
     { "Резервные копии и клиенты" = "guides/backup.md" },
     { "Смена доменов" = "guides/domains.md" },
