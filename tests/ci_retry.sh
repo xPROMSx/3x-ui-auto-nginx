@@ -66,7 +66,7 @@ ci_image_apt_fetch() {
         return
     fi
 
-    ci_mirror=https://mirrors.edge.kernel.org/ubuntu/
+    ci_mirror=https://ubuntu.mirrors.ovh.net/ubuntu/
     if [ -z "$ci_primary_sources" ]; then
         if ci_image_apt_attempt 2m 3m "$ci_refresh" "$@"; then return 0; else ci_status=$?; fi
         printf 'Ubuntu APT %s from primary failed (exit %s); switching to %s\n' "$ci_operation" "$ci_status" "$ci_mirror" >&2

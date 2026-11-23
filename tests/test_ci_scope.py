@@ -245,7 +245,7 @@ class CIScope(unittest.TestCase):
                     'Suites: noble-security\nComponents: main universe\n'
                     'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n')
         sources.write_text(original)
-        mirror = 'https://mirrors.edge.kernel.org/ubuntu/'
+        mirror = 'https://ubuntu.mirrors.ovh.net/ubuntu/'
         self.write('timeout', '''#!/bin/sh
 case "$1:$2:$3" in -k:5s:1m|-k:5s:90s|-k:5s:2m|-k:5s:3m) ;; *) exit 88 ;; esac
 shift 3
@@ -253,7 +253,7 @@ exec /usr/bin/timeout -k 1s 0.8s "$@"
 ''')
         self.write('apt-get', '''#!/bin/sh
 origin=primary
-if grep -q 'mirrors.edge.kernel.org' "$CI_IMAGE_APT_SOURCES"; then
+if grep -Fq 'https://ubuntu.mirrors.ovh.net/ubuntu/' "$CI_IMAGE_APT_SOURCES"; then
     origin=mirror
     cp "$CI_IMAGE_APT_SOURCES" "$trace.sources"
 fi
@@ -314,7 +314,9 @@ ci_image_apt check_image''',
                     self.assertIn('exit 124', result.stderr)
                     self.assertIn('.\n.\n', result.stdout)
                 if scenario in ('both', 'mirror-package'):
-                    self.assertIn('fallback failed (exit 100)', result.stderr)
+                    operation = 'update' if scenario == 'both' else 'download (install)'
+                    self.assertIn(f'Ubuntu APT {operation} from {mirror} fallback failed (exit 100)',
+                                  result.stderr)
 
     def test_dot_restore_package_diagnostics_publish_only_counts(self):
         diagnostics = self.diagnostics()
