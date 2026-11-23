@@ -30,6 +30,7 @@ MANIFEST = DB.with_name('auto-nginx-managed.json')
 INCLUDES = Path('etc/nginx/snippets/includes.conf')
 CLASH = Path('var/www/subpage/clash.yaml.tpl')
 SETTINGS = ('subPath', 'subURI', 'subJsonPath', 'subJsonURI')
+DEFAULT_SUB_PATHS = {'subPath': '/sub/', 'subJsonPath': '/json/'}
 MISSING = object()
 MIHOMO = 'mihomo'
 CREDENTIALS = {
@@ -189,8 +190,8 @@ def apply_paths(root, reader, panel, origin, archived, current, settings, existi
     old = stored_paths(current)
     target = {key: archived[key] for key in ('subPath', 'subJsonPath')}
     target.update(subURI=origin + target['subPath'], subJsonURI=origin + target['subJsonPath'])
-    old_raw = old.get('subPath', '/sub/')
-    old_json = old.get('subJsonPath', '/json/')
+    old_raw = old.get('subPath', DEFAULT_SUB_PATHS['subPath'])
+    old_json = old.get('subJsonPath', DEFAULT_SUB_PATHS['subJsonPath'])
     files = {}
     for path in (INCLUDES, CLASH):
         info = (root / path).lstat()
@@ -564,7 +565,6 @@ MESSAGES = {
     'applied': 'применены',
     'not checked': 'не выполнена',
     'subscription service disabled': 'служба подписок выключена',
-    'no usable imported client': 'нет пригодного импортированного клиента для HTTP-проверки',
     'HTTP probe would occupy a device slot': 'для HTTP-проверки пришлось бы занять слот устройства',
     'official links miss an active inbound': 'в официальных ссылках отсутствует активное подключение',
     'RAW endpoints or credentials differ': 'RAW содержит другие адреса подключений или учётные данные',
@@ -578,7 +578,7 @@ MESSAGES = {
 
 
 def report(ru, status, paths, subscription='not checked', *, full=(), skipped=(),
-           incomplete=(), issues=(), recovery=None):
+           incomplete=(), issues=(), recovery=None, paths_changed=False):
     def tr(en, translated):
         return translated if ru else en
 
@@ -594,12 +594,17 @@ def report(ru, status, paths, subscription='not checked', *, full=(), skipped=()
     print(tr('  Incomplete or uncertain — ', '  Неполных или неподтверждённых записей — ') + str(len(incomplete)))
     for email, why in incomplete:
         print('    ' + ascii(email) + ' — ' + reason(why))
+    if subscription == 'no usable imported client':
+        subscription = tr(
+            'No newly imported client was eligible for the HTTP check. Existing subscriptions were outside the scope of this check.',
+            'Среди новых импортированных клиентов нет подходящего для HTTP-проверки. Эта проверка охватывает только импортированных клиентов.',
+        )
     print(tr('  Subscriptions and connections — ', '  Подписки и подключения — ') + reason(subscription))
     for issue in issues:
         print('    ' + reason(issue))
     if recovery:
         print(tr('  Private recovery files — ', '  Приватные файлы для восстановления — ') + str(recovery))
-    if status == 'PARTIAL':
+    if status == 'PARTIAL' and paths_changed:
         print(tr('  Links previously issued by this server with different paths may stop working.',
                  '  Ссылки, ранее выданные этим сервером с другими путями, могут перестать работать.'))
     if status in ('SUCCESS', 'PARTIAL'):
@@ -657,7 +662,9 @@ def restore(root, reader, session, archive, backup, directory, ru):
     except Exception:
         checked = 'subscription check failed'
     status = 'PARTIAL' if skipped or incomplete or issues or checked != 'verified' else 'SUCCESS'
-    return report(ru, status, paths, checked, full=full, skipped=skipped, incomplete=incomplete, issues=issues)
+    paths_changed = any(archived[key] != current.get(key, default) for key, default in DEFAULT_SUB_PATHS.items())
+    return report(ru, status, paths, checked, full=full, skipped=skipped, incomplete=incomplete, issues=issues,
+                  paths_changed=paths_changed)
 
 
 def interrupted(signum, frame):

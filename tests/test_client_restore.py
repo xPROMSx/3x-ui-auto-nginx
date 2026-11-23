@@ -1,14 +1,15 @@
 """Partial client restore with real installer templates and isolated failure fixtures."""
 
-from contextlib import closing
+from contextlib import closing, redirect_stdout
 from importlib.util import module_from_spec, spec_from_file_location
+from io import StringIO
 import json
 from pathlib import Path
 import sqlite3
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, mock_open, patch
 
 from test_integrated_features import helper
 from test_personal_xhttp import FIXTURE, ROOT, SHARED, render
@@ -231,6 +232,44 @@ class ClientRestore(unittest.TestCase):
             self.assertEqual(restore.verify_subscriptions(reader, self.panel, ORIGIN, TARGET, settings, []),
                              'subscription service disabled')
         fetch.assert_not_called()
+
+    def test_partial_warns_only_when_raw_or_json_path_changed(self):
+        for archive, paths, warns in (
+            (SETTINGS, 'already applied', False),
+            (SETTINGS, 'applied', False),  # Only the URI settings needed repair.
+            (dict(SETTINGS, subPath=ARCHIVED['subPath']), 'applied', True),
+            (dict(SETTINGS, subJsonPath=ARCHIVED['subJsonPath']), 'applied', True),
+        ):
+            for ru, warning in (
+                (False, 'Links previously issued by this server with different paths may stop working.'),
+                (True, 'Ссылки, ранее выданные этим сервером с другими путями, могут перестать работать.'),
+            ):
+                with self.subTest(archive=archive, paths=paths, ru=ru), redirect_stdout(StringIO()) as out, \
+                        patch.object(reader, 'read_backup_clients', return_value={**archive, 'clients': []}), \
+                        patch.object(reader, 'active_inbounds', return_value=[{'id': 1}]), \
+                        patch.object(session, 'Panel', return_value=Mock(request=Mock(return_value={'obj': []}))), \
+                        patch.object(restore, 'open', mock_open(), create=True), \
+                        patch.object(restore.getpass, 'getpass', return_value='fixture'), \
+                        patch.multiple(
+                            restore, local_settings=Mock(return_value={**SETTINGS, 'webBasePath': '/panel/'}),
+                            managed_origin=Mock(return_value=ORIGIN),
+                            panel_settings=Mock(return_value={**FORMATS, 'webDomain': '', 'subDomain': ''}),
+                            apply_paths=Mock(return_value=(paths, [], None)),
+                            import_clients=Mock(return_value=([], [], [])),
+                        ):
+                    self.assertEqual(restore.restore(self.root, reader, session, None, None, None, ru), 1)
+                    self.assertIn('  PARTIAL\n', out.getvalue())
+                    self.assertEqual(warning in out.getvalue(), warns)
+
+    def test_no_usable_imported_client_explains_http_check_scope(self):
+        reason = restore.verify_subscriptions(reader, self.panel, ORIGIN, TARGET, FORMATS, [])
+        for ru, expected in (
+            (False, 'No newly imported client was eligible for the HTTP check. Existing subscriptions were outside the scope of this check.'),
+            (True, 'Среди новых импортированных клиентов нет подходящего для HTTP-проверки. Эта проверка охватывает только импортированных клиентов.'),
+        ):
+            with self.subTest(ru=ru), redirect_stdout(StringIO()) as out:
+                self.assertEqual(restore.report(ru, 'PARTIAL', 'already applied', reason), 1)
+                self.assertIn(expected, out.getvalue())
 
     def test_menu_selects_number_or_path_and_cancels_before_lock_or_download(self):
         shell = """
