@@ -8,10 +8,14 @@ repo_name = "GitHub"
 copyright = "© xPROMSx · github.com/xPROMSx/3x-ui-auto-nginx"
 docs_dir = "docs-site"
 site_dir = "site"
+extra_css = ["stylesheets/extra.css"]
 nav = [
   { "Главная" = "index.md" },
-  { "Начало работы" = "start.md" },
-  { "Инструкции" = "guides/index.md" },
+  { "Первый запуск" = "start.md" },
+  { "Инструкции" = [
+    { "Все инструкции" = "guides/index.md" },
+    { "Каскад из двух VPS" = "guides/cascade.md" },
+  ] },
 ]
 
 [project.theme]
@@ -20,6 +24,7 @@ features = [
   "navigation.instant",
   "navigation.tabs",
   "navigation.top",
+  "navigation.path",
   "search.highlight",
   "toc.follow",
 ]

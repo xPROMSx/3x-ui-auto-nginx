@@ -18,7 +18,7 @@
 [![Debian](https://img.shields.io/badge/Debian-13-A81D33?logo=debian&logoColor=white)](#technical-details)
 [![Support](https://img.shields.io/badge/Support-Donate-EA4AAA)](docs/SUPPORT.md)
 
-[📦 Релизы](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [🔗 Каскад](#cascade) · [🌐 Сайты-прикрытия](#cover-sites) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ Поддержать](#support-development) · [💬 Обратная связь](https://t.me/promsdev)
+[📚 Гайды и инструкции](https://xpromsx.github.io/3x-ui-auto-nginx/guides/) · [🔗 Каскад](https://xpromsx.github.io/3x-ui-auto-nginx/guides/cascade/) · [📣 Телеграм-канал](https://t.me/promsdev) · [✈️ Telegram Web Proxy](#telemt-web-manager) · [❤️ Поддержать](#support-development)
 
 </div>
 

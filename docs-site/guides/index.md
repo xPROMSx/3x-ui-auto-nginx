@@ -1,55 +1,68 @@
-# Инструкции
+---
+hide:
+  - toc
+---
 
-Краткий старт и руководства по настройке и обслуживанию сервера из README проекта.
+# Гайды и инструкции
 
-## Уже можно прочитать
+Здесь собраны пошаговые руководства. **Если устанавливаешь проект впервые**, начни с «Первого запуска». Если сервер уже работает, выбери нужную операцию ниже.
 
-<div class="grid cards" markdown>
+## Начни с этих руководств
 
-- :material-rocket-launch:{ .lg .middle } **Первая установка**
+<div class="grid cards guide-cards" markdown>
 
-    Подготовка VPS, доменов и запуск установщика.
+-   :material-rocket-launch:{ .lg .middle } **Первый запуск**
 
-    [Первый запуск](../start.md)
+    ---
 
-- :material-source-branch:{ .lg .middle } **Каскад из двух серверов**
+    Подготовка VPS и доменов, подключение по SSH, все семь вопросов установщика, безопасность, WARP и проверка подключения.
 
-    Как соединить входной и выходной VPS, проверить работу и отключить Каскад.
+    [Читать пошаговую инструкцию](../start.md)
 
-    [Открыть раздел README](https://github.com/xPROMSx/3x-ui-auto-nginx#cascade)
+-   :material-source-branch:{ .lg .middle } **Каскад из двух VPS**
 
-- :material-account-sync:{ .lg .middle } **Восстановление клиентов и подписок**
+    ---
 
-    Как перенести клиентов на новую установку и при каких условиях сохраняются прежние ссылки.
+    Соедини входной и выходной серверы, проверь маршрут трафика, разберись в ограничениях и частых ошибках.
 
-    [Открыть раздел README](https://github.com/xPROMSx/3x-ui-auto-nginx#восстановление-клиентов-и-подписок)
-
-- :material-backup-restore:{ .lg .middle } **Резервные копии и восстановление**
-
-    Как создать Backup и восстановить весь стек на совместимом VPS.
-
-    [Открыть раздел README](https://github.com/xPROMSx/3x-ui-auto-nginx#backup--restore)
-
-- :material-shield-check:{ .lg .middle } **AdGuard Home и защищённый DNS**
-
-    Как включить личный DNS с DoH и дополнительной поддержкой DoT.
-
-    [Открыть раздел README](https://github.com/xPROMSx/3x-ui-auto-nginx#6--adguard-home--dns-over-https)
-
-- :material-web:{ .lg .middle } **Смена доменов**
-
-    Как сменить домены панели и REALITY на работающем сервере.
-
-    [Открыть раздел README](https://github.com/xPROMSx/3x-ui-auto-nginx#change-domains)
+    [Настроить каскад](cascade.md)
 
 </div>
 
-## Следующие подробные руководства
+## Управление работающим сервером
 
-Планируется дополнить каталог отдельными статьями со скриншотами:
+Эти операции пока подробно описаны в README. Ссылки ведут сразу к соответствующему разделу, а не на начало документа.
 
-- Настроить Каскад от начала до конца.
-- Добавить дополнительную выходную ноду вручную в панели 3x-ui.
-- Создать правило маршрутизации для сайта или приложения.
-- Проверить, через какой сервер идёт трафик.
-- Использовать AdGuard Home и защищённый DNS.
+<div class="grid cards guide-cards" markdown>
+
+-   :material-account-sync:{ .lg .middle } **Перенести клиентов и подписки**
+
+    Перенеси клиентов на новую установку без замены всей конфигурации сервера.
+
+    [Открыть руководство в README](https://github.com/xPROMSx/3x-ui-auto-nginx#восстановление-клиентов-и-подписок)
+
+-   :material-backup-restore:{ .lg .middle } **Backup и Restore**
+
+    Создай копию стека и восстанови её на VPS с подходящими ОС и архитектурой.
+
+    [Открыть руководство в README](https://github.com/xPROMSx/3x-ui-auto-nginx#backup--restore)
+
+-   :material-shield-check:{ .lg .middle } **AdGuard Home и защищённый DNS**
+
+    Настрой DoH, права доступа к DNS и, при необходимости, DoT.
+
+    [Открыть руководство в README](https://github.com/xPROMSx/3x-ui-auto-nginx#6--adguard-home--dns-over-https)
+
+-   :material-web:{ .lg .middle } **Смена доменов**
+
+    Замени домены панели и REALITY без повторной установки проекта.
+
+    [Открыть руководство в README](https://github.com/xPROMSx/3x-ui-auto-nginx#change-domains)
+
+</div>
+
+## Что появится позже
+
+В дальнейшем здесь будут отдельные инструкции о маршрутизации Xray, дополнительных узлах и проверке соединений. До публикации таких статей используй существующие разделы README.
+
+[Новости проекта и чат в Telegram](https://t.me/promsdev){ .md-button }

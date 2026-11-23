@@ -1,0 +1,14 @@
+/* Task cards align their action links without adding a theme dependency. */
+.md-typeset .guide-cards > ul > li {
+  display: flex;
+  flex-direction: column;
+  gap: .12rem;
+  padding: .9rem 1rem;
+  border-radius: .55rem;
+}
+.md-typeset .guide-cards > ul > li > p:first-child { margin-top: 0; }
+.md-typeset .guide-cards > ul > li > p:last-child { margin-top: auto; padding-top: .65rem; }
+.md-typeset .guide-cards > ul > li > p:last-child > a { font-weight: 600; }
+@media (max-width: 44.99em) {
+  .md-typeset .guide-cards > ul > li { padding: .8rem .85rem; }
+}
