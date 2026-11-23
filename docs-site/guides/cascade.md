@@ -14,7 +14,7 @@
 
 В обычной схеме устройство подключается непосредственно к зарубежному VPS. В каскаде появляется промежуточный сервер, например в России.
 
-```text
+``` { .text .no-copy }
 Телефон, компьютер или роутер
              |
              v
@@ -142,7 +142,7 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 
 При первом запуске выбери язык:
 
-```text
+``` { .text .no-copy }
 1. English
 2. Русский
 ```
@@ -151,7 +151,7 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 
 В главном меню:
 
-```text
+``` { .text .no-copy }
 1. Установка
 2. Смена доменов
 3. Резервные копии
@@ -250,7 +250,7 @@ bash x-ui-latest.sh
 
 Появится меню:
 
-```text
+``` { .text .no-copy }
 1. Создать ключ (выходной сервер)
 2. Подключить выходной сервер (входной сервер)
 3. Состояние

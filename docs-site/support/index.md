@@ -35,13 +35,37 @@
 
 Переводы принимаются в нескольких сетях. Перед отправкой **выбери нужную валюту и сеть** в кошельке и проверь полный адрес получателя. Переводы между разными сетями не взаимозаменяемы.
 
-| Валюта | Сеть | Адрес |
-| --- | --- | --- |
-| USDT | Tron (TRC20) | `TG4smVymuDacUsfjZmvfmPCSsKr9xUJkFS` |
-| USDT | BNB Smart Chain (BEP20) | `0xD9C2344533e35d7d12B14F4c7852248B5127e2A8` |
-| USDT / USDC | Solana (SPL) | `BdB4sJBHbrpwqCBANyNzZFiseoMbXUveQ6AH8gdwfERg` |
-| GRAM / USDT | TON (в зависимости от валюты и формата кошелька) | `UQCEcONYCy9zd86SxLkFmVECCEtwTOUtjhgGOz8pvDS9u5lP` |
-| BTC | Bitcoin (native SegWit) | `bc1qd82dr7sru37znp9s8r9hdrujctqsdzs5eea5sf` |
+Адреса ниже можно скопировать одной кнопкой. Проверь сеть и адрес в своём кошельке **перед подтверждением перевода**.
+
+**USDT · Tron (TRC20)**
+
+```text
+TG4smVymuDacUsfjZmvfmPCSsKr9xUJkFS
+```
+
+**USDT · BNB Smart Chain (BEP20)**
+
+```text
+0xD9C2344533e35d7d12B14F4c7852248B5127e2A8
+```
+
+**USDT / USDC · Solana (SPL)**
+
+```text
+BdB4sJBHbrpwqCBANyNzZFiseoMbXUveQ6AH8gdwfERg
+```
+
+**GRAM / USDT · TON (в зависимости от валюты и формата кошелька)**
+
+```text
+UQCEcONYCy9zd86SxLkFmVECCEtwTOUtjhgGOz8pvDS9u5lP
+```
+
+**BTC · Bitcoin (native SegWit)**
+
+```text
+bc1qd82dr7sru37znp9s8r9hdrujctqsdzs5eea5sf
+```
 
 !!! warning "Проверь сеть перед отправкой"
     USDT в Tron, BNB Smart Chain, Solana и TON - разные способы перевода. USDC указан только для Solana, Bitcoin - только для сети Bitcoin. Отправка в неверной сети может привести к безвозвратной потере средств.
