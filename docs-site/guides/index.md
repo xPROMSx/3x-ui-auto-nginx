@@ -16,7 +16,7 @@ hide:
 
 | Что нужно сделать | Инструкция |
 | --- | --- |
-| Перенести клиентов и подписки | [Перенос клиентов](https://github.com/xPROMSx/3x-ui-auto-nginx#client-restore) |
+| Перенести клиентов и подписки | [Перенос клиентов](https://github.com/xPROMSx/3x-ui-auto-nginx#восстановление-клиентов-и-подписок) |
 | Создать или восстановить Backup | [Backup / Restore](https://github.com/xPROMSx/3x-ui-auto-nginx#backup--restore) |
 | Настроить AdGuard Home и DNS | [AdGuard Home](https://github.com/xPROMSx/3x-ui-auto-nginx#6--adguard-home--dns-over-https) |
 | Сменить домены панели и REALITY | [Смена доменов](https://github.com/xPROMSx/3x-ui-auto-nginx#change-domains) |
