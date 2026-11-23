@@ -39,8 +39,9 @@ def changed_paths(data):
 
 def allowed(path):
     p = PurePosixPath(path)
-    return (path in READMES or path in INSTRUCTIONS or (p.parts[0] == 'docs' and p.suffix == '.md')
-            or (p.parts[0] == 'docs-site' and p.suffix in ('.md', '.png'))
+    return (path in READMES or path in INSTRUCTIONS or path == 'zensical.toml'
+            or (p.parts[0] == 'docs' and p.suffix == '.md')
+            or (p.parts[0] == 'docs-site' and p.suffix in ('.md', '.png', '.css'))
             or (p.parts[:2] == ('assets', 'support') and p.suffix == '.png'))
 
 
