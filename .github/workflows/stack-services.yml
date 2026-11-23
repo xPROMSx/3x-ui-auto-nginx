@@ -118,7 +118,7 @@ jobs:
           DISTRO: ${{ matrix.distro }}
         run: |
           . tests/ci_retry.sh
-          ca=(--secret id=proxy_ca,src=/etc/ssl/certs/ca-certificates.crt)
+          ca=(--secret "id=proxy_ca,src=/etc/ssl/certs/ca-certificates.crt")
           if [[ "$DISTRO" == debian:13 ]]; then
             ci_retry docker build --build-arg "DISTRO=$DISTRO" --build-arg MINIMAL_DNS=1 -t xui-systemd-root -f tests/systemd/Dockerfile .
           else
