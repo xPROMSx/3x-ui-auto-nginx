@@ -1,4 +1,4 @@
-/* Task cards align their action links without adding a theme dependency. */
+/* Existing guide cards. */
 .md-typeset .guide-cards > ul > li {
   display: flex;
   flex-direction: column;
@@ -11,4 +11,213 @@
 .md-typeset .guide-cards > ul > li > p:last-child > a { font-weight: 600; }
 @media (max-width: 44.99em) {
   .md-typeset .guide-cards > ul > li { padding: .8rem .85rem; }
+}
+
+/* Landing page only: leave guides and article typography unchanged. */
+body:has(.landing-hero) .md-grid { max-width: 77rem; }
+
+.md-typeset .landing-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.56fr) minmax(19rem, .9fr);
+  gap: 1rem;
+  margin: .6rem 0 2.4rem;
+  align-items: stretch;
+}
+
+.md-typeset .landing-intro {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  padding: clamp(1.35rem, 3vw, 2.35rem);
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: .95rem;
+  background: var(--md-default-bg-color);
+  background: linear-gradient(125deg,
+      color-mix(in srgb, var(--md-primary-fg-color) 11%, var(--md-default-bg-color)) 0%,
+      var(--md-default-bg-color) 88%);
+}
+
+.md-typeset .landing-eyebrow {
+  display: block;
+  margin: 0 0 .6rem;
+  color: var(--md-primary-fg-color);
+  font-size: .67rem;
+  font-weight: 760;
+  letter-spacing: .045em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.md-typeset .landing-intro h1 {
+  max-width: 21ch;
+  margin: .45rem 0 .9rem;
+  color: var(--md-default-fg-color);
+  font-size: clamp(1.65rem, 3vw, 2.55rem);
+  font-weight: 790;
+  line-height: 1.17;
+  letter-spacing: -.028em;
+}
+
+.md-typeset .landing-intro > p:not(.landing-eyebrow, .landing-intro-foot) {
+  max-width: 57ch;
+  line-height: 1.65;
+}
+.md-typeset .landing-intro .md-button { margin: .3rem .45rem .25rem 0; }
+.md-typeset .landing-intro-foot {
+  margin: 1rem 0 0;
+  color: var(--md-default-fg-color--light);
+  font-size: .73rem;
+  line-height: 1.5;
+}
+
+.md-typeset .landing-hub {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+  padding: 1rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: .95rem;
+  background: var(--md-code-bg-color);
+}
+.md-typeset .landing-hub-heading { display: grid; gap: .05rem; }
+.md-typeset .landing-hub-heading .landing-eyebrow { margin: 0; }
+.md-typeset .landing-hub-heading > strong {
+  font-size: .94rem;
+  line-height: 1.35;
+}
+.md-typeset .landing-hub-items {
+  display: grid;
+  gap: .52rem;
+  flex: 1;
+}
+.md-typeset .landing-hub-card {
+  display: flex;
+  align-items: center;
+  gap: .62rem;
+  min-width: 0;
+  padding: .65rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: .65rem;
+  color: var(--md-default-fg-color);
+  background: var(--md-default-bg-color);
+  text-decoration: none;
+  transition: border-color .16s ease, transform .16s ease;
+}
+.md-typeset .landing-hub-card:hover,
+.md-typeset .landing-hub-card:focus-visible {
+  border-color: var(--md-primary-fg-color);
+  color: var(--md-default-fg-color);
+  transform: translateY(-1px);
+}
+.md-typeset .landing-hub-card:focus-visible {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: 2px;
+}
+.md-typeset .landing-hub-mark {
+  display: flex;
+  flex: 0 0 2.1rem;
+  align-items: center;
+  justify-content: center;
+  height: 2.1rem;
+  border-radius: .55rem;
+  background: color-mix(in srgb, var(--md-primary-fg-color) 12%, var(--md-default-bg-color));
+  color: var(--md-primary-fg-color);
+  font-size: .68rem;
+  font-weight: 760;
+}
+.md-typeset .landing-hub-copy {
+  display: grid;
+  min-width: 0;
+  gap: .12rem;
+  flex: 1;
+}
+.md-typeset .landing-hub-copy strong { font-size: .77rem; line-height: 1.32; }
+.md-typeset .landing-hub-copy small {
+  color: var(--md-default-fg-color--light);
+  font-size: .64rem;
+  line-height: 1.42;
+}
+.md-typeset .landing-hub-arrow {
+  color: var(--md-default-fg-color--light);
+  font-size: .9rem;
+}
+.md-typeset .landing-hub-note {
+  margin: 0;
+  color: var(--md-default-fg-color--light);
+  font-size: .65rem;
+  line-height: 1.45;
+}
+
+.md-typeset .landing-capabilities > ul > li,
+.md-typeset .landing-two-columns > ul > li,
+.md-typeset .landing-steps > ul > li {
+  border-radius: .7rem;
+  padding: 1rem 1.15rem;
+  line-height: 1.55;
+}
+.md-typeset .landing-capabilities > ul > li > p:last-child { margin-top: auto; }
+.md-typeset .landing-capabilities > ul > li > p:last-child a { font-weight: 700; }
+.md-typeset .landing-capabilities > ul > li,
+.md-typeset .landing-steps > ul > li { display: flex; flex-direction: column; }
+.md-typeset .landing-section-note {
+  display: block;
+  margin: -.6rem 0 .95rem;
+  color: var(--md-default-fg-color--light);
+  font-size: .78rem;
+  font-weight: 550;
+}
+.md-typeset .landing-route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .48rem;
+  margin: 1.1rem 0;
+  padding: .9rem 1.1rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: .65rem;
+  background: var(--md-code-bg-color);
+  font-weight: 650;
+  line-height: 1.55;
+}
+.md-typeset .landing-route span { color: var(--md-primary-fg-color); }
+.md-typeset .landing-endnote {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--md-default-fg-color--lightest);
+  color: var(--md-default-fg-color--light);
+  font-size: .75rem;
+  line-height: 1.6;
+}
+
+/* Distinct support page; payment details stay in the canonical support document. */
+.md-typeset .site-support-links > ul > li {
+  padding: 1rem 1.15rem;
+  border-radius: .7rem;
+}
+
+@media (max-width: 60em) {
+  .md-typeset .landing-hero { grid-template-columns: 1fr; margin-top: .3rem; }
+  .md-typeset .landing-hub { grid-column: 1; grid-row: 1; }
+  .md-typeset .landing-intro { grid-column: 1; grid-row: 2; }
+  .md-typeset .landing-hub-items { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .md-typeset .landing-hub-card { flex-wrap: wrap; align-content: flex-start; }
+  .md-typeset .landing-hub-copy { flex-basis: calc(100% - 2.75rem); }
+  .md-typeset .landing-hub-arrow { display: none; }
+}
+@media (max-width: 43em) {
+  .md-typeset .landing-hub { padding: .75rem; }
+  .md-typeset .landing-hub-items { grid-template-columns: 1fr; gap: .35rem; }
+  .md-typeset .landing-hub-card { flex-wrap: nowrap; padding: .48rem .6rem; }
+  .md-typeset .landing-hub-copy { flex-basis: auto; }
+  .md-typeset .landing-intro { padding: 1.25rem; }
+  .md-typeset .landing-intro h1 { font-size: clamp(1.55rem, 8vw, 2rem); }
+  .md-typeset .landing-hero { gap: .7rem; margin-bottom: 1.8rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .md-typeset .landing-hub-card { transition: none; }
+  .md-typeset .landing-hub-card:hover,
+  .md-typeset .landing-hub-card:focus-visible { transform: none; }
 }
