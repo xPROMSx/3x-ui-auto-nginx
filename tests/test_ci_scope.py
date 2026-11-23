@@ -132,10 +132,41 @@ class CIScope(unittest.TestCase):
                 self.commit()
                 self.assert_mode(self.check(), 'docs-only')
 
+    def test_zensical_config_and_stylesheets_are_docs_only(self):
+        cases = (
+            ('zensical.toml', '[project]\nsite_name = "Example"\n',
+             '[project]\nsite_name = "Updated"\n'),
+            ('docs-site/stylesheets/extra.css', 'body { color: black; }\n',
+             'body { color: navy; }\n'),
+        )
+        for name, original, _ in cases:
+            self.write(name, original)
+        self.base = self.commit()
+        for name, _, updated in cases:
+            with self.subTest(name=name):
+                self.git('reset', '--hard', self.base)
+                self.write(name, updated)
+                self.commit()
+                self.assert_mode(self.check(), 'docs-only')
+                self.assert_mode(self.check('push'), 'docs-only')
+
+        self.git('reset', '--hard', self.base)
+        for name, _, updated in cases:
+            self.write(name, updated)
+        self.write('README.md', '# Updated documentation\n')
+        self.commit()
+        self.assert_mode(self.check(), 'docs-only')
+
+        self.write('x-ui-latest.sh', '#!/bin/bash\nfalse\n')
+        self.commit()
+        self.assert_mode(self.check(), 'full')
+
     def test_site_smoke_rejects_invalid_content(self):
         for name, content in (
             ('docs-site/guides/index.md', '[Несуществующая страница](missing.md)\n'),
             ('docs-site/images/setup.png', b'not a png'),
+            ('zensical.toml', b'\xff'),
+            ('docs-site/stylesheets/extra.css', 'body {} \n'),
         ):
             with self.subTest(name=name):
                 self.git('reset', '--hard', self.base)
@@ -148,8 +179,8 @@ class CIScope(unittest.TestCase):
 
     def test_mixed_and_unknown_files_require_full(self):
         for path in ('x-ui-latest.sh', 'assets/helper.py', 'tests/test_fixture.py',
-                     '.github/workflows/example.yml', '.github/workflows/docs-site.yml', 'zensical.toml',
-                     'docs-site/logo.svg', 'docs-site/site.css', 'docs-site/script.js',
+                     '.github/workflows/example.yml', '.github/workflows/docs-site.yml',
+                     'docs-site/logo.svg', 'docs-site/script.js', 'docs/site.css',
                      'SECURITY.md', 'LICENSE', 'unknown.md', 'docs/run.sh', 'docs/data.yaml',
                      'assets/support/logo.svg', 'assets/support/file.bin', 'tests/ci_scope.py'):
             with self.subTest(path=path):

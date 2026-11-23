@@ -132,11 +132,12 @@ Never label the documentation exception as Full Fresh PASS.
 Every ordinary job and the final-stage check run `tests/ci_scope.py` after exact
 checkout with full history. A nonempty, reliable Git diff may use the lightweight
 mode only for the eight listed root README files, `AGENTS.md`, `CLAUDE.md`,
-`CONTRIBUTING.md`, Markdown under `docs/`, Markdown and PNG under `docs-site/`,
-and PNG images under `assets/support/`. `zensical.toml`, workflows, code, tests,
-unknown paths/types (including SVG), renames/copies, and mixed changes keep full
-CI. A PR uses the merge-base of the event base/head; main pushes use before/head
-across the entire change. Invalid or unavailable revisions fall back to full CI;
+`CONTRIBUTING.md`, Markdown under `docs/`, Markdown, PNG and CSS under
+`docs-site/`, PNG images under `assets/support/`, and the root `zensical.toml`.
+Workflows, code, tests, unknown paths/types (including JS and SVG), nonregular
+or executable files, renames/copies, and diffs containing any such change
+require full CI. A PR uses the merge-base of the event base/head; main pushes use
+before/head across the entire change. Invalid or unavailable revisions fall back to full CI;
 manual dispatch always runs full CI. Branch names, labels and commit messages do
 not classify it.
 
