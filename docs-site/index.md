@@ -122,7 +122,7 @@ hide:
 Для устройств мы настраиваем **DNS-over-HTTPS (DoH)** через HTTPS-домен твоего сервера. Случайный путь и индивидуальные ClientID помогают управлять доступом. На Android можно дополнительно использовать **«Частный DNS» через DoT** с собственным доменом. Пошаговые настройки и различия DoH и DoT разобраны в отдельном руководстве.
 
 [Подробная настройка личного DNS](guides/dns.md){ .md-button }
-[Как защитить DoH с ClientID](guides/dns.md#3-защити-doh-с-помощью-clientid){ .md-button }
+[Как защитить DoH с ClientID](guides/dns.md#doh-clientid){ .md-button }
 
 ## Полный Backup и сохранение клиентов {#client-transfer}
 
