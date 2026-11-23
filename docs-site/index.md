@@ -21,7 +21,7 @@ hide:
       <span class="landing-hub-copy"><strong>Сервер в России для каскада</strong><small>HSVDS · от 185,76 ₽/мес. · +20% к первому пополнению</small></span>
       <span class="landing-hub-arrow" aria-hidden="true">↗</span>
     </a>
-    <a class="landing-hub-card" href="support.md">
+    <a class="landing-hub-card" href="support/">
       <span class="landing-hub-mark" aria-hidden="true">♥</span>
       <span class="landing-hub-copy"><strong>Поддержать разработку</strong><small>Проект бесплатный. Поддержка добровольная</small></span>
       <span class="landing-hub-arrow" aria-hidden="true">→</span>
@@ -100,7 +100,7 @@ hide:
 
 Дополнительно при установке проект проверяет безопасность изменения firewall, а панель и подписки размещает за HTTPS и nginx с закрытыми для прямого доступа внутренними портами. **SSH-ключи остаются твоей ответственностью**: установщик не отключает вход по паролю автоматически.
 
-[Как включить и проверить защиту](start.md#3-почему-рекомендуется-усилить-безопасность-vps){ .md-button }
+[Как включить и проверить защиту](start.md){ .md-button }
 
 ## Защита и личный DNS {#personal-dns}
 
