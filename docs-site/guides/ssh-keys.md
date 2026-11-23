@@ -26,9 +26,10 @@ Test-Path "$env:USERPROFILE\.ssh\id_ed25519"
 
 Если ответ `True`, ключ уже есть. Используй его и переходи к шагу 3. **Не перезаписывай существующий ключ**: он может открывать доступ к другим серверам.
 
-Если ответ `False`, создай новую пару:
+Если ответ `False`, подготовь каталог и создай новую пару:
 
 ```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ssh" | Out-Null
 ssh-keygen -t ed25519 -a 64 -f "$env:USERPROFILE\.ssh\id_ed25519"
 ```
 
