@@ -15,6 +15,7 @@ SUITES = {
         'test_manager.Manager',
         'test_cover_sites.CoverResources',
         'test_release_asset.ReleaseAsset',
+        'test_telegram_release.TelegramRelease',
         'test_installer_compatibility.InstallerCompatibility',
         'test_ci_scope.CIScope',
         'test_ci_auto_rerun.CIAutoRerun',
