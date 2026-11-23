@@ -132,19 +132,33 @@ Never label the documentation exception as Full Fresh PASS.
 Every ordinary job and the final-stage check run `tests/ci_scope.py` after exact
 checkout with full history. A nonempty, reliable Git diff may use the lightweight
 mode only for the eight listed root README files, `AGENTS.md`, `CLAUDE.md`,
-`CONTRIBUTING.md`, `docs/**/*.md`, and PNG images under `assets/support/`. SVG,
-tests, workflows,
-unknown paths/types, renames/copies and mixed changes keep full CI. A PR uses the
-merge-base of the event base/head; main pushes use before/head across the entire
-change. Invalid or unavailable revisions fall back to full CI; manual dispatch
-always runs full CI. Branch names, labels and commit messages do not classify it.
+`CONTRIBUTING.md`, Markdown under `docs/`, Markdown and PNG under `docs-site/`,
+and PNG images under `assets/support/`. `zensical.toml`, workflows, code, tests,
+unknown paths/types (including SVG), renames/copies, and mixed changes keep full
+CI. A PR uses the merge-base of the event base/head; main pushes use before/head
+across the entire change. Invalid or unavailable revisions fall back to full CI;
+manual dispatch always runs full CI. Branch names, labels and commit messages do
+not classify it.
 
 The stdlib-only smoke validates changed regular paths, UTF-8, the PNG signature
 and a 16 MiB size limit, local file/image references within the checkout, and diff whitespace.
 It checks new/touched references and tolerates unrelated pre-existing broken links;
 it does not contact external sites or enforce Markdown style. Corrupt documents
-fail the job. No APT, binary downloads, test suites, Docker or QEMU run in docs mode.
-All jobs still execute a real scope/smoke step and report what ran.
+fail the job. The ordinary jobs and final-stage check still run the scope/smoke
+step and report what ran. In docs-only mode they skip APT installs, binary
+downloads, test suites, Docker and QEMU.
+
+The separate `Documentation website` workflow runs `zensical build --strict --clean`
+on PRs targeting `main` and on pushes to `main`, independently of the docs-only
+decision. To build locally, install `zensical==0.1.3` in a Python 3.12 virtual
+environment and run the same command from the repository root. The output goes to
+`site/`.
+
+After the repository owner approves publication, select **GitHub Actions** as
+the source in **Settings → Pages** and set the repository Actions variable
+`DOCS_PAGES_ENABLED` to `true`. Run `Documentation website` manually on `main`
+for the first deployment. Later pushes to `main` publish automatically while the
+variable is `true`.
 
 The protected check names stay unchanged. A verified
 documentation-only final check states exactly:

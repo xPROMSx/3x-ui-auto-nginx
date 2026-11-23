@@ -111,9 +111,45 @@ class CIScope(unittest.TestCase):
         self.assertEqual(summary.strip(), 'DOCS-ONLY: Full Fresh E2E not executed; documentation scope verified.')
         self.assertNotIn('Full Fresh PASS', summary)
 
+    def test_site_markdown_and_png_are_docs_only(self):
+        for name, content in (
+            ('docs-site/index.md', '[Инструкции](guides/index.md)\n'),
+            ('docs-site/guides/index.md', '![Схема](../images/setup.png)\n'),
+            ('docs-site/images/setup.png', png(b'\xff\0\0')),
+        ):
+            self.write(name, content)
+        self.commit()
+        self.assert_mode(self.check(), 'docs-only')
+        self.assert_mode(self.check('push'), 'docs-only')
+
+        for name, content in (
+            ('docs-site/guides/index.md', '# Инструкции\n![Схема](../images/setup.png)\n'),
+            ('docs-site/images/setup.png', png(b'\0\0\0')),
+        ):
+            with self.subTest(name=name):
+                self.base = self.git('rev-parse', 'HEAD')
+                self.write(name, content)
+                self.commit()
+                self.assert_mode(self.check(), 'docs-only')
+
+    def test_site_smoke_rejects_invalid_content(self):
+        for name, content in (
+            ('docs-site/guides/index.md', '[Несуществующая страница](missing.md)\n'),
+            ('docs-site/images/setup.png', b'not a png'),
+        ):
+            with self.subTest(name=name):
+                self.git('reset', '--hard', self.base)
+                self.write(name, content)
+                self.commit()
+                result = self.check()
+                self.assertIn('CI MODE: docs-only', result.stdout)
+                self.assertIn('DOCS SMOKE: FAIL', result.stderr)
+                self.assertEqual(result.returncode, 1)
+
     def test_mixed_and_unknown_files_require_full(self):
         for path in ('x-ui-latest.sh', 'assets/helper.py', 'tests/test_fixture.py',
-                     '.github/workflows/example.yml',
+                     '.github/workflows/example.yml', '.github/workflows/docs-site.yml', 'zensical.toml',
+                     'docs-site/logo.svg', 'docs-site/site.css', 'docs-site/script.js',
                      'SECURITY.md', 'LICENSE', 'unknown.md', 'docs/run.sh', 'docs/data.yaml',
                      'assets/support/logo.svg', 'assets/support/file.bin', 'tests/ci_scope.py'):
             with self.subTest(path=path):
