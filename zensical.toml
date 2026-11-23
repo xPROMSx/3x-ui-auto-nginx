@@ -15,6 +15,12 @@ nav = [
   { "Поддержать проект" = "support/index.md" },
   { "Инструкции" = [
     { "Все инструкции" = "guides/index.md" },
+    { "Безопасность VPS" = "guides/security.md" },
+    { "SSH-ключи" = "guides/ssh-keys.md" },
+    { "Личный DNS" = "guides/dns.md" },
+    { "Backup и перенос клиентов" = "guides/backup.md" },
+    { "Смена доменов" = "guides/domains.md" },
+    { "Подключения и nginx" = "guides/connections.md" },
     { "Каскад из двух VPS" = "guides/cascade.md" },
   ] },
 ]
