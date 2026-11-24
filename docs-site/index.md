@@ -79,6 +79,12 @@ hide:
 
     [Как устроен каскад](#cascade)
 
+-   :material-send:{ .lg .middle } **Telegram WEB-прокси с HTTPS**
+
+    Установи собственный Telegram-прокси через меню: настоящий HTTPS, Telemt и полноценный многостраничный сайт на том же nginx. Для российского VPS можно использовать уже настроенный каскад.
+
+    [Как настроить Telegram WEB-прокси](guides/telegram-web-proxy.md)
+
 </div>
 
 ## Расширенная безопасность VPS {#vps-security}
@@ -165,6 +171,17 @@ Cloudflare WARP - отдельная возможность для маршру�
 
 [Полный гайд по каскаду](guides/cascade.md){ .md-button }
 [Подробнее о подключениях и nginx](guides/connections.md){ .md-button }
+
+### Собственный Telegram WEB-прокси {#telegram-web-proxy}
+
+Telegram WEB Proxy использует настоящий HTTPS для передачи трафика мессенджера. Наш отдельный проект **Telegram Web Proxy Manager (TWPM)** устанавливает Telemt, выпускает сертификат и создаёт полноценный сайт-прикрытие с несколькими страницами и индивидуальным оформлением.
+
+Обычный посетитель видит сайт в браузере, а Telegram с секретом доступа использует прокси на том же домене. Всё работает через уже настроенный nginx на TCP/443: не нужен дополнительный VPS или веб-сервер.
+
+Если Telegram недоступен напрямую с российского VPS, можно направить Telemt через существующий каскад 3X-UI AUTO NGINX. Для этого достаточно локального входящего подключения Xray и одного правила маршрутизации.
+
+[Установить Telegram WEB-прокси](guides/telegram-web-proxy.md){ .md-button }
+[Настроить на российском каскаде](guides/telegram-web-proxy.md#cascade-socks){ .md-button }
 
 ## От чистого VPS до своего подключения {#getting-started}
 

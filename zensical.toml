@@ -27,6 +27,7 @@ nav = [
     { "Подключения и nginx" = "guides/connections.md" },
     { "Резервные копии и клиенты" = "guides/backup.md" },
     { "Смена доменов" = "guides/domains.md" },
+    { "Телеграм: собственный WEB-прокси" = "guides/telegram-web-proxy.md" },
     { "Условия использования материалов" = "terms.md" },
   ] },
 ]

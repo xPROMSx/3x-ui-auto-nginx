@@ -151,6 +151,7 @@ reboot
 
 - **2 - Смена доменов**: [замена доменов панели и REALITY](guides/domains.md) без переустановки.
 - **3 - Резервные копии**: [полный Backup / Restore и перенос клиентов](guides/backup.md) в новую установку.
+- **4 - Telegram Web Proxy Manager**: [собственный Telegram WEB-прокси с HTTPS](guides/telegram-web-proxy.md), в том числе на входном VPS каскада.
 - **5 - Каскад**: [пошаговая настройка двух VPS](guides/cascade.md).
 - **6 - Данные моего сервера**: просмотр доступных адресов и сведений о сервере.
 
