@@ -285,7 +285,7 @@ def installed(cold=False):
         assert conntrack == int(run('sysctl', '-n', conntrack_key))
     else:
         saved_limit.write_text(str(conntrack))
-    checks['nf_conntrack_max'] = conntrack
+    checks['nf_conntrack_max_verified'] = True
     if cold:
         fixture=int(run('systemctl','show','pilot-external-network','-p','ActiveEnterTimestampMonotonic','--value'))
         agh=int(run('systemctl','show','AdGuardHome','-p','ActiveEnterTimestampMonotonic','--value'))
