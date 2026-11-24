@@ -23,6 +23,7 @@ nav = [
     { "Ключи SSH" = "guides/ssh-keys.md" },
     { "Личный DNS" = "guides/dns.md" },
     { "Маршрутизация трафика" = "guides/routing.md" },
+    { "Отключение входа по паролю SSH" = "guides/ssh-password.md" },
     { "Подключения и nginx" = "guides/connections.md" },
     { "Резервные копии и клиенты" = "guides/backup.md" },
     { "Смена доменов" = "guides/domains.md" },
