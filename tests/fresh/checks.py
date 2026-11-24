@@ -274,6 +274,18 @@ def installed(cold=False):
         time.sleep(0.5)
     for unit in units:run('systemctl','is-enabled','--quiet',unit)
     checks['services_enabled_active']=True
+    conntrack_key = 'net.netfilter.nf_conntrack_max'
+    conntrack = int(run('sysctl', '-n', conntrack_key))
+    # The acceptance guest has 4 GiB, including reserved memory.
+    assert conntrack >= 131072
+    saved_limit = root/'first-conntrack-max'
+    if cold:
+        assert conntrack == int(saved_limit.read_text())
+        run('ufw', 'reload')
+        assert conntrack == int(run('sysctl', '-n', conntrack_key))
+    else:
+        saved_limit.write_text(str(conntrack))
+    checks['nf_conntrack_max'] = conntrack
     if cold:
         fixture=int(run('systemctl','show','pilot-external-network','-p','ActiveEnterTimestampMonotonic','--value'))
         agh=int(run('systemctl','show','AdGuardHome','-p','ActiveEnterTimestampMonotonic','--value'))
@@ -1043,6 +1055,7 @@ def restore_before_domains():
     digest=hashlib.sha256(archive.read_bytes()).hexdigest()
     source=Path(tempfile.mkdtemp(prefix='before-domains-sqlite-',dir=ROOT))
     with tarfile.open(archive) as saved:
+        assert not any('3x-ui-conntrack' in name for name in saved.getnames())
         for suffix in ('','-wal','-shm'):
             try:member=saved.extractfile('files/etc/x-ui/x-ui.db'+suffix)
             except KeyError:
@@ -1066,6 +1079,7 @@ def restore_before_domains():
     mtr_packages()
     env={**os.environ,**json.loads((ROOT/'environment.json').read_text())}
     log=ROOT/'restore-before-domains.private.log'
+    run('sysctl', '-q', '-w', 'net.netfilter.nf_conntrack_max=7680')
     with log.open('wb',buffering=0) as output:
         result=subprocess.run(['bash','-c','source "$1"; backup_action restore','fixture',str(ROOT/'x-ui-latest.sh')],
                               input=(str(archive)+'\nn\nn\nYES\n').encode(),stdout=output,stderr=subprocess.STDOUT,
@@ -1073,6 +1087,7 @@ def restore_before_domains():
         os.fsync(output.fileno())
     assert result.returncode==0,'Pre-Change Domains Restore failed; private log retained'
     assert 'Restore: SUCCESS' in log.read_text() and 'Overall: SUCCESS' in log.read_text()
+    assert int(run('sysctl', '-n', 'net.netfilter.nf_conntrack_max')) >= 131072
     actual=database('/etc/x-ui/x-ui.db')
     assert actual.keys()==expected.keys()
     for table,rows in expected.items():

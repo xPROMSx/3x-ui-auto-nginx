@@ -349,11 +349,22 @@ elif name == 'tar':
     sys.exit(result)
 elif name == 'id':
     sys.exit(1 if os.environ.get('MTR_ABSENT') else 0)
+elif name == 'systemd-sysctl':
+    assert args == ['--cat-config', '--no-pager']
+    files = root / 'etc/sysctl.d'
+    for path in sorted(files.glob('*.conf')):
+        print(f'# {path}')
+        print(path.read_text(), end='')
 elif name == 'sysctl':
     if args[0] == '-p' and os.environ.get('FAIL_SYSCTL'): fault(); sys.exit(1)
     state=root/'runtime-sysctl.json'
     values=json.loads(state.read_text()) if state.exists() else {}
     if args[0] == '-n': print(values.get(args[1],'1'))
+    elif args[:2] == ['-q', '-w']:
+        key, value = args[2].split('=', 1)
+        if key == 'net.netfilter.nf_conntrack_max':
+            if os.environ.get('FAIL_CONNTRACK_WRITE'): sys.exit(1)
+            (root/'proc/sys/net/netfilter/nf_conntrack_max').write_text(value + '\n')
     elif args[0] == '-p':
         if '.rollback-' in args[1] and os.environ.get('FAIL_SYSCTL_RECOVERY'): sys.exit(1)
         for line in pathlib.Path(args[1]).read_text().splitlines():
@@ -391,6 +402,11 @@ class PersonalBackup(unittest.TestCase):
         (self.bin / 'sqlite3').symlink_to(sqlite)
         self.script = Path(self.temp.name) / 'backup.sh'
         script=relocated(SOURCE, self.root)
+        systemd_sysctl = self.root / 'usr/lib/systemd/systemd-sysctl'
+        systemd_sysctl.parent.mkdir(parents=True)
+        systemd_sysctl.write_text((self.bin/'sysctl').read_text())
+        systemd_sysctl.chmod(0o755)
+        script = script.replace("'/usr/lib/systemd/systemd-sysctl'", repr(str(systemd_sysctl)))
         lock=re.search(r'^acquire_stack_lock\(\) \{.*?^\}',script,re.M|re.S)[0]
         script=script.replace(lock,lock.replace(str(self.root)+'/proc','/proc').replace('/run/3x-ui-auto-nginx',str(self.root)+'/run/3x-ui-auto-nginx'))
         (self.root/'run').mkdir()
@@ -1572,6 +1588,129 @@ confirm_destructive_reinstall && preflight_vision_artifacts && clean_previous_in
         result = self.run_tool('restore', archive, PANEL_LISTENER='missing')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(json.loads((self.root/'services.json').read_text())['x-ui'], 'inactive')
+
+    def run_conntrack(self, **env):
+        return subprocess.run(['bash', '-c', 'source "$1"; tune_conntrack', 'fixture', str(self.script)],
+                              env={**self.env, **env}, capture_output=True, text=True, check=True)
+
+    def test_conntrack_thresholds_and_repeat_keep_the_runtime_limit(self):
+        config = self.path('/etc/sysctl.d/60-3x-ui-conntrack.conf')
+        key = '/proc/sys/net/netfilter/nf_conntrack_max'
+        for kib, minimum in ((524288, 32768), (973107, 32768), (1048576, 32768), (1048577, 131072),
+                             (2097152, 131072), (4194304, 131072), (4194305, 262144), (8388608, 262144)):
+            with self.subTest(kib=kib):
+                self.write('/proc/meminfo', f'MemTotal: {kib} kB\n')
+                self.write(key, '7680\n')
+                result = self.run_conntrack()
+                self.assertEqual(self.path(key).read_text().strip(), str(minimum), result.stderr)
+                self.assertTrue(config.read_text().endswith(f'= {minimum}\n'))
+                self.assertEqual((config.stat().st_uid, config.stat().st_gid, stat.S_IMODE(config.stat().st_mode)),
+                                 (0, 0, 0o644))
+        self.write(key, '300000\n')
+        (self.root/'commands').write_text('')
+        self.run_conntrack()
+        self.assertTrue(config.read_text().endswith('= 300000\n'))
+        modified = config.stat().st_mtime_ns
+        self.run_conntrack()
+        self.assertEqual(config.stat().st_mtime_ns, modified)
+        self.assertEqual(self.path(key).read_text(), '300000\n')
+        self.assertFalse(any(c[0] == 'sysctl' for c in self.commands()))
+
+    def test_conntrack_respects_administrator_sysctl_sources(self):
+        key = '/proc/sys/net/netfilter/nf_conntrack_max'
+        config = self.path('/etc/sysctl.d/60-3x-ui-conntrack.conf')
+        rule = self.path('/etc/udev/rules.d/60-3x-ui-conntrack.rules')
+        self.write('/proc/meminfo', 'MemTotal: 973107 kB\n')
+        self.write('/etc/default/ufw', f'IPT_SYSCTL="{self.path("/etc/ufw/local.conf")}"\n')
+        for file, value in (
+            ('/etc/sysctl.d/10-admin.conf', '-net/netfilter/nf_conntrack_max = 8192'),
+            ('/etc/sysctl.d/10-admin.conf', 'net.netfilter.nf_conntrack_*max = 8192'),
+            ('/etc/sysctl.conf', 'net.nf_conntrack_max = 8192'),
+            ('/etc/ufw/local.conf', 'net.netfilter.nf_conntrack_max=8192'),
+        ):
+            with self.subTest(file=file, value=value):
+                self.write(key, '7680\n')
+                self.run_conntrack()
+                self.assertTrue(config.is_file())
+                self.assertTrue(rule.is_file())
+                self.write(key, '8192\n')
+                self.write(file, value + '\n')
+                result = self.run_conntrack()
+                self.assertIn('administrator sysctl setting preserved', result.stdout)
+                self.assertEqual(self.path(key).read_text(), '8192\n')
+                self.assertEqual(self.path(file).read_text(), value + '\n')
+                self.assertFalse(config.exists())
+                self.assertFalse(rule.exists())
+                self.path(file).unlink()
+
+    def test_conntrack_unavailable_and_write_failures_report_no_success(self):
+        key = '/proc/sys/net/netfilter/nf_conntrack_max'
+        config = self.path('/etc/sysctl.d/60-3x-ui-conntrack.conf')
+        rule = self.path('/etc/udev/rules.d/60-3x-ui-conntrack.rules')
+        for failure, message in (
+            ('missing parameter', 'nf_conntrack_max'),
+            ('bad MemTotal', 'cannot determine MemTotal'),
+            ('sysctl write', 'returned non-zero exit status'),
+            ('persistence', 'sysctl.d'),
+        ):
+            with self.subTest(failure=failure):
+                if failure != 'missing parameter':
+                    self.write(key, '7680\n')
+                self.write('/proc/meminfo', 'MemTotal: ' + ('bad' if failure == 'bad MemTotal' else '973107 kB') + '\n')
+                if failure == 'persistence':
+                    shutil.rmtree(config.parent)
+                result = self.run_conntrack(FAIL_CONNTRACK_WRITE='1' if failure == 'sysctl write' else '')
+                self.assertIn('[WARN] Conntrack:', result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(result.stdout, '')
+                self.assertFalse(config.exists())
+                self.assertFalse(rule.exists())
+
+    def test_full_restore_raises_conntrack_floor_for_target_memory(self):
+        key = '/proc/sys/net/netfilter/nf_conntrack_max'
+        self.write('/proc/meminfo', 'MemTotal:         973107 kB\n')
+        self.write(key, '7680\n')
+        archive = self.backup()
+        self.assertEqual(self.path(key).read_text().strip(), '7680')
+
+        result = self.run_tool('restore', archive)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.path(key).read_text().strip(), '32768')
+
+    def test_conntrack_is_local_to_committed_full_restore(self):
+        key = '/proc/sys/net/netfilter/nf_conntrack_max'
+        config = self.path('/etc/sysctl.d/60-3x-ui-conntrack.conf')
+        self.write('/proc/meminfo', 'MemTotal: 8388608 kB\n')
+        self.write(key, '7680\n')
+        self.run_conntrack()
+        self.assertTrue(config.read_text().endswith('= 262144\n'))
+        archive = self.backup()
+        with tarfile.open(archive) as bundle:
+            self.assertFalse(any('3x-ui-conntrack' in name for name in bundle.getnames()))
+        config.unlink()
+        self.write('/proc/meminfo', 'MemTotal: 973107 kB\n')
+        self.write(key, '7680\n')
+        for args in (('inspect', archive), ('list',), ('extract', archive, self.root/'extract')):
+            with self.subTest(args=args[0]):
+                result = self.run_tool(*args)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(self.path(key).read_text(), '7680\n')
+                self.assertFalse(config.exists())
+        failed = self.run_tool('restore', archive, FAIL_SYSCTL='1')
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(self.path(key).read_text(), '7680\n')
+        self.assertFalse(config.exists())
+
+        restored = self.run_tool('restore', archive, FAIL_CONNTRACK_WRITE='1')
+        self.assertEqual(restored.returncode, 0, restored.stdout + restored.stderr)
+        self.assertIn('Restore completed successfully.', restored.stdout)
+        self.assertIn('[WARN] Conntrack:', restored.stderr)
+        self.assertEqual(self.path(key).read_text(), '7680\n')
+        self.assertFalse(config.exists())
+
+        restored = self.run_tool('restore', archive)
+        self.assertEqual(restored.returncode, 0, restored.stdout + restored.stderr)
+        self.assertTrue(config.read_text().endswith('= 32768\n'))
 
     def test_round_trip_cron_firewall_diagnostics_and_sysctl(self):
         self.write('/var/www/acme/.well-known/acme-challenge/stale', 'stale challenge must not be archived')

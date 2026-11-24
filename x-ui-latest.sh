@@ -3712,6 +3712,9 @@ main() {
     fi
     if [[ "$CORE_RESULT" == configured ]]; then
         write_managed_state || { msg_err "$(ui_text 'Managed-state could not be recorded; core data retained.' 'Не удалось записать сведения об управляемой установке; данные основного стека сохранены.')"; install_result=1; }
+        # The Backup helper is already installed from PROJECT_REF. Keep its shell state private.
+        ( . /usr/local/bin/x-ui-backup && tune_conntrack ) ||
+            msg_warn 'Conntrack: shared tuning helper could not run.'
     fi
     show_results "$install_result"
     finish_initial_reboot "$install_result" || install_result=1
