@@ -349,12 +349,6 @@ elif name == 'tar':
     sys.exit(result)
 elif name == 'id':
     sys.exit(1 if os.environ.get('MTR_ABSENT') else 0)
-elif name == 'systemd-sysctl':
-    assert args == ['--cat-config', '--no-pager']
-    files = root / 'etc/sysctl.d'
-    for path in sorted(files.glob('*.conf')):
-        print(f'# {path}')
-        print(path.read_text(), end='')
 elif name == 'sysctl':
     if args[0] == '-p' and os.environ.get('FAIL_SYSCTL'): fault(); sys.exit(1)
     state=root/'runtime-sysctl.json'
@@ -402,11 +396,6 @@ class PersonalBackup(unittest.TestCase):
         (self.bin / 'sqlite3').symlink_to(sqlite)
         self.script = Path(self.temp.name) / 'backup.sh'
         script=relocated(SOURCE, self.root)
-        systemd_sysctl = self.root / 'usr/lib/systemd/systemd-sysctl'
-        systemd_sysctl.parent.mkdir(parents=True)
-        systemd_sysctl.write_text((self.bin/'sysctl').read_text())
-        systemd_sysctl.chmod(0o755)
-        script = script.replace("'/usr/lib/systemd/systemd-sysctl'", repr(str(systemd_sysctl)))
         lock=re.search(r'^acquire_stack_lock\(\) \{.*?^\}',script,re.M|re.S)[0]
         script=script.replace(lock,lock.replace(str(self.root)+'/proc','/proc').replace('/run/3x-ui-auto-nginx',str(self.root)+'/run/3x-ui-auto-nginx'))
         (self.root/'run').mkdir()
@@ -1594,7 +1583,7 @@ confirm_destructive_reinstall && preflight_vision_artifacts && clean_previous_in
                               env={**self.env, **env}, capture_output=True, text=True, check=True)
 
     def test_conntrack_thresholds_and_repeat_keep_the_runtime_limit(self):
-        config = self.path('/etc/sysctl.d/60-3x-ui-conntrack.conf')
+        config = self.path('/etc/sysctl.d/zz-3x-ui-conntrack.conf')
         key = '/proc/sys/net/netfilter/nf_conntrack_max'
         for kib, minimum in ((524288, 32768), (973107, 32768), (1048576, 32768), (1048577, 131072),
                              (2097152, 131072), (4194304, 131072), (4194305, 262144), (8388608, 262144)):
@@ -1616,36 +1605,32 @@ confirm_destructive_reinstall && preflight_vision_artifacts && clean_previous_in
         self.assertEqual(self.path(key).read_text(), '300000\n')
         self.assertFalse(any(c[0] == 'sysctl' for c in self.commands()))
 
-    def test_conntrack_respects_administrator_sysctl_sources(self):
+    def test_conntrack_floor_also_applies_to_persistent_limits(self):
         key = '/proc/sys/net/netfilter/nf_conntrack_max'
-        config = self.path('/etc/sysctl.d/60-3x-ui-conntrack.conf')
-        rule = self.path('/etc/udev/rules.d/60-3x-ui-conntrack.rules')
-        self.write('/proc/meminfo', 'MemTotal: 973107 kB\n')
-        self.write('/etc/default/ufw', f'IPT_SYSCTL="{self.path("/etc/ufw/local.conf")}"\n')
-        for file, value in (
-            ('/etc/sysctl.d/10-admin.conf', '-net/netfilter/nf_conntrack_max = 8192'),
-            ('/etc/sysctl.d/10-admin.conf', 'net.netfilter.nf_conntrack_*max = 8192'),
-            ('/etc/sysctl.conf', 'net.nf_conntrack_max = 8192'),
-            ('/etc/ufw/local.conf', 'net.netfilter.nf_conntrack_max=8192'),
+        config = self.path('/etc/sysctl.d/zz-3x-ui-conntrack.conf')
+        for kib, current, limit, file in (
+            (973107, 500, 32768, '/etc/sysctl.conf'),
+            (1048576, 8192, 32768, '/etc/sysctl.d/99-host.conf'),
+            (2097152, 65536, 131072, '/etc/sysctl.d/99-host.conf'),
+            (4194304, 1048576, 1048576, '/etc/sysctl.d/99-host.conf'),
         ):
-            with self.subTest(file=file, value=value):
-                self.write(key, '7680\n')
-                self.run_conntrack()
-                self.assertTrue(config.is_file())
-                self.assertTrue(rule.is_file())
-                self.write(key, '8192\n')
-                self.write(file, value + '\n')
+            with self.subTest(kib=kib, current=current):
+                assignment = f'net.netfilter.nf_conntrack_max = {current}\n'
+                self.write(file, assignment)
+                self.write('/proc/meminfo', f'MemTotal: {kib} kB\n')
+                self.write(key, f'{current}\n')
+                (self.root/'commands').write_text('')
                 result = self.run_conntrack()
-                self.assertIn('administrator sysctl setting preserved', result.stdout)
-                self.assertEqual(self.path(key).read_text(), '8192\n')
-                self.assertEqual(self.path(file).read_text(), value + '\n')
-                self.assertFalse(config.exists())
-                self.assertFalse(rule.exists())
+                self.assertEqual(self.path(file).read_text(), assignment)
+                self.assertEqual(self.path(key).read_text(), f'{limit}\n', result.stderr)
+                self.assertTrue(config.read_text().endswith(f'net.netfilter.nf_conntrack_max = {limit}\n'))
+                writes = [call for call in self.commands() if call[:3] == ['sysctl', '-q', '-w']]
+                self.assertEqual(len(writes), int(current < limit))
                 self.path(file).unlink()
 
     def test_conntrack_unavailable_and_write_failures_report_no_success(self):
         key = '/proc/sys/net/netfilter/nf_conntrack_max'
-        config = self.path('/etc/sysctl.d/60-3x-ui-conntrack.conf')
+        config = self.path('/etc/sysctl.d/zz-3x-ui-conntrack.conf')
         rule = self.path('/etc/udev/rules.d/60-3x-ui-conntrack.rules')
         for failure, message in (
             ('missing parameter', 'nf_conntrack_max'),
@@ -1679,7 +1664,7 @@ confirm_destructive_reinstall && preflight_vision_artifacts && clean_previous_in
 
     def test_conntrack_is_local_to_committed_full_restore(self):
         key = '/proc/sys/net/netfilter/nf_conntrack_max'
-        config = self.path('/etc/sysctl.d/60-3x-ui-conntrack.conf')
+        config = self.path('/etc/sysctl.d/zz-3x-ui-conntrack.conf')
         self.write('/proc/meminfo', 'MemTotal: 8388608 kB\n')
         self.write(key, '7680\n')
         self.run_conntrack()

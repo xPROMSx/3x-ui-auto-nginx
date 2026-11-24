@@ -2530,24 +2530,22 @@ recover_restore_target() {
 # Shared with fresh installation via the installed, sourceable Backup helper.
 tune_conntrack() {
     python3 -I - <<'PYCONNTRACK'
-from fnmatch import fnmatchcase
 import os
 from pathlib import Path
 import re
-import shlex
 import subprocess
 import sys
 from tempfile import NamedTemporaryFile
 
 key = 'net/netfilter/nf_conntrack_max'
-aliases = (key, 'net/nf_conntrack_max')
+sysctl_key = key.replace('/', '.')
 parameter = Path('/proc/sys') / key
-config = Path('/etc/sysctl.d/60-3x-ui-conntrack.conf')
+# Apply the floor after the usual distro and host sysctl drop-ins.
+config = Path('/etc/sysctl.d/zz-3x-ui-conntrack.conf')
 rule = Path('/etc/udev/rules.d/60-3x-ui-conntrack.rules')
 systemd_sysctl = '/usr/lib/systemd/systemd-sysctl'
 marker = '# Managed by 3X-UI AUTO NGINX\n'
-# A single-key glob lets an explicit systemd-sysctl setting win in any file.
-assignment = '-net/netfilter/nf_conntrack_ma[x] = '
+assignment = f'{sysctl_key} = '
 rule_text = marker + ('ACTION=="add", SUBSYSTEM=="module", KERNEL=="nf_conntrack", '
                       f'RUN+="{systemd_sysctl} --prefix=/{key}"\n')
 
@@ -2557,23 +2555,6 @@ def read_optional(path):
         return path.read_text()
     except FileNotFoundError:
         return ''
-
-
-def defines_limit(text):
-    for line in text.splitlines():
-        name, equals, _ = line.strip().partition('=')
-        name = name.rstrip()
-        if not name or name.startswith(('#', ';')) or not (equals or name.startswith('-')):
-            continue
-        name = name.removeprefix('-').strip()
-        if re.match(r'^[^/.]*\.', name):
-            name = name.translate(str.maketrans('./', '/.'))
-        parts = name.strip('/').split('/')
-        for alias in aliases:
-            target = alias.split('/')
-            if len(parts) == len(target) and all(fnmatchcase(a, b) for a, b in zip(target, parts)):
-                return True
-    return False
 
 
 def save(path, text):
@@ -2598,35 +2579,16 @@ def tune():
     minimum = 32768 if kib <= 1048576 else 131072 if kib <= 4194304 else 262144
 
     previous = read_optional(config)
-    owned = not config.is_symlink() and re.fullmatch(rf'{re.escape(marker + assignment)}[0-9]+\n', previous)
-    if not owned and (config.is_symlink() or config.exists()):
+    if config.is_symlink() or (config.exists() and not re.fullmatch(
+            rf'{re.escape(marker + assignment)}[0-9]+\n', previous)):
         raise ValueError(f'{config} belongs to the administrator')
     existing_rule = read_optional(rule)
     if rule.is_symlink() or (rule.exists() and existing_rule != rule_text):
         raise ValueError(f'{rule} belongs to the administrator')
 
-    settings = subprocess.run([systemd_sysctl, '--cat-config', '--no-pager'],
-                              check=True, stdout=subprocess.PIPE, text=True).stdout
-    if owned:
-        settings = settings.replace(f'# {config}\n{previous}', '', 1)
-    legacy = read_optional(Path('/etc/sysctl.conf'))
-    # UFW can override sysctl.d at startup and reload, even if it is inactive now.
-    defaults = '\n'.join(read_optional(Path(file)) for file in ('/etc/default/ufw', '/etc/ufw/ufw.conf'))
-    ufw = re.findall(r'^[ \t]*(?:export[ \t]+)?IPT_SYSCTL=(.*)$', defaults, re.M)
-    ufw_files = shlex.split(ufw[-1], comments=True) if ufw else []
-    if any(not path.startswith('/') or '$' in path or '\x60' in path for path in ufw_files):
-        raise ValueError('cannot resolve UFW IPT_SYSCTL as a file path')
-    if defines_limit(settings) or defines_limit(legacy) or any(defines_limit(read_optional(Path(path))) for path in ufw_files):
-        if owned:
-            config.unlink()
-        if existing_rule:
-            rule.unlink()
-        print('[INFO] Conntrack: administrator sysctl setting preserved.')
-        return
-
     limit = max(current, minimum)
     if current < limit:
-        subprocess.run(['sysctl', '-q', '-w', f'{key.replace("/", ".")}={limit}'], check=True)
+        subprocess.run(['sysctl', '-q', '-w', f'{sysctl_key}={limit}'], check=True)
         if int(parameter.read_text()) != limit:
             raise ValueError(f'{key} did not retain {limit}')
     if not existing_rule:
