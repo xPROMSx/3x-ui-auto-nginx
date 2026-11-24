@@ -227,3 +227,12 @@ Permission denied (publickey).
 - [Параметры sshd_config для Ubuntu 26.04](https://manpages.ubuntu.com/manpages/resolute/man5/sshd_config.5.html)
 
 [Добавить SSH-ключ](ssh-keys.md) · [Расширенная безопасность VPS](security.md) · [Все инструкции](index.md)
+
+!!! note "Авторство и использование материалов"
+    **© 2026 xPROMSx contributors · 3X-UI AUTO NGINX**
+
+    Копирование и распространение нашего материала разрешено на условиях GNU GPL-3.0-only с сохранением авторства и ссылки на оригинал.
+
+    **Первоисточник:** [https://xpromsx.github.io/3x-ui-auto-nginx/guides/ssh-password/](https://xpromsx.github.io/3x-ui-auto-nginx/guides/ssh-password/)
+
+    [Условия использования материалов](../terms.md)

@@ -59,3 +59,12 @@ nginx автоматически выполняет несколько зада�
 WARP - отдельная маршрутизация сервера; устройство по-прежнему подключается к выбранному профилю 3x-ui.
 
 [Первый запуск](../start.md) · [Каскад из двух VPS](cascade.md) · [Импорт VLESS REALITY](import-reality.md) · [Маршрутизация](routing.md) · [Резервный VPS](balancer.md) · [Личный DNS](dns.md)
+
+!!! note "Авторство и использование материалов"
+    **© 2026 xPROMSx contributors · 3X-UI AUTO NGINX**
+
+    Копирование и распространение нашего материала разрешено на условиях GNU GPL-3.0-only с сохранением авторства и ссылки на оригинал.
+
+    **Первоисточник:** [https://xpromsx.github.io/3x-ui-auto-nginx/guides/connections/](https://xpromsx.github.io/3x-ui-auto-nginx/guides/connections/)
+
+    [Условия использования материалов](../terms.md)

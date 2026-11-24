@@ -115,3 +115,12 @@ curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x
 Режим переноса клиентов **добавляет данные в уже созданную панель**; он не является заменой полного Restore. При необходимости верни исходное состояние новой установки из отдельно сохранённой резервной копии.
 
 [Первый запуск](../start.md) · [Смена доменов](domains.md) · [Все инструкции](index.md)
+
+!!! note "Авторство и использование материалов"
+    **© 2026 xPROMSx contributors · 3X-UI AUTO NGINX**
+
+    Копирование и распространение нашего материала разрешено на условиях GNU GPL-3.0-only с сохранением авторства и ссылки на оригинал.
+
+    **Первоисточник:** [https://xpromsx.github.io/3x-ui-auto-nginx/guides/backup/](https://xpromsx.github.io/3x-ui-auto-nginx/guides/backup/)
+
+    [Условия использования материалов](../terms.md)

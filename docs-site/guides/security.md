@@ -72,3 +72,12 @@ apt list --upgradable
 Эта команда только показывает список. Обновления безопасности установит настроенный таймер.
 
 [Первый запуск](../start.md) · [Добавить SSH-ключ](ssh-keys.md) · [Личный DNS](dns.md)
+
+!!! note "Авторство и использование материалов"
+    **© 2026 xPROMSx contributors · 3X-UI AUTO NGINX**
+
+    Копирование и распространение нашего материала разрешено на условиях GNU GPL-3.0-only с сохранением авторства и ссылки на оригинал.
+
+    **Первоисточник:** [https://xpromsx.github.io/3x-ui-auto-nginx/guides/security/](https://xpromsx.github.io/3x-ui-auto-nginx/guides/security/)
+
+    [Условия использования материалов](../terms.md)

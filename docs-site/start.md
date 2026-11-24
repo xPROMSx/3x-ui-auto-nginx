@@ -160,3 +160,12 @@ reboot
 [Другие инструкции](guides/index.md){ .md-button }
 [SSH-ключи для Ubuntu](guides/ssh-keys.md){ .md-button }
 [Последний стабильный релиз](https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest){ .md-button }
+
+!!! note "Авторство и использование материалов"
+    **© 2026 xPROMSx contributors · 3X-UI AUTO NGINX**
+
+    Копирование и распространение нашего материала разрешено на условиях GNU GPL-3.0-only с сохранением авторства и ссылки на оригинал.
+
+    **Первоисточник:** [https://xpromsx.github.io/3x-ui-auto-nginx/start/](https://xpromsx.github.io/3x-ui-auto-nginx/start/)
+
+    [Условия использования материалов](terms.md)

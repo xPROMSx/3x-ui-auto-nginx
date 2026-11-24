@@ -666,3 +666,12 @@ timeout 5 bash -c 'echo > /dev/tcp/ИМЯ_ДОМЕНА/443' && echo "TCP 443 д�
 - [Сообщить об ошибке](https://github.com/xPROMSx/3x-ui-auto-nginx/issues)
 
 Инструкция составлена для **3X-UI AUTO NGINX v2.8.0 / 3x-ui v3.11.0 / Xray 26.10.21**. При использовании других версий сверяй названия меню и доступные функции с документацией своего релиза.
+
+!!! note "Авторство и использование материалов"
+    **© 2026 xPROMSx contributors · 3X-UI AUTO NGINX**
+
+    Копирование и распространение нашего материала разрешено на условиях GNU GPL-3.0-only с сохранением авторства и ссылки на оригинал.
+
+    **Первоисточник:** [https://xpromsx.github.io/3x-ui-auto-nginx/guides/cascade/](https://xpromsx.github.io/3x-ui-auto-nginx/guides/cascade/)
+
+    [Условия использования материалов](../terms.md)

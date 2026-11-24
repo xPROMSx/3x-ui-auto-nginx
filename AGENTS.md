@@ -74,6 +74,7 @@ Do not edit AGENTS.md or CLAUDE.md unless the owner's task says so.
   No per-file fallback to main.
 - Panel and Xray versions: read verified_panel_release() in x-ui-latest.sh. Do not copy them elsewhere.
 - Keep attribution and licenses (lineage GFW4Fun/x-ui-pro -> mozaroc/x-ui-pro -> mozaroc/3x-ui-pro, MHSanaei/3x-ui, LibreSpeed LGPL, GPL-3.0-only notices, additional terms in docs/NOTICE.md). Keep the credit line from docs/NOTICE.md in the installer start screen and main menu.
+- For every original website article (including `docs-site/start.md` and individual guides under `docs-site/guides/`), keep a visible attribution notice in the Markdown source at the end of the article: copyright and authorship, the original public article URL derived from `site_url` in `zensical.toml`, and a link to the website's terms page (`docs-site/terms.md`). Follow the existing article notice format. `docs/NOTICE.md` is the source of the additional legal terms; the website terms page explains them in Russian. Do not replace the original public URL with a preview URL or add copy restrictions or clipboard modifications. Preserve attribution of third-party material and do not extend our terms to material we cannot license.
 - Historical identifiers (/usr/local/lib/3x-ui-pro, personal-v* releases) are not renamed.
 - README.md is the Russian source; the other language files stay semantically aligned.
 - Architecture description: docs/ARCHITECTURE.md. Release process and local commands: CONTRIBUTING.md.

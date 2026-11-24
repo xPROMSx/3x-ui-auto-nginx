@@ -179,3 +179,12 @@ CASCADE - EXIT → cascade-failover
 ---
 
 [Импорт третьего сервера](import-reality.md) · [Маршрутизация](routing.md) · [Каскад из двух VPS](cascade.md)
+
+!!! note "Авторство и использование материалов"
+    **© 2026 xPROMSx contributors · 3X-UI AUTO NGINX**
+
+    Копирование и распространение нашего материала разрешено на условиях GNU GPL-3.0-only с сохранением авторства и ссылки на оригинал.
+
+    **Первоисточник:** [https://xpromsx.github.io/3x-ui-auto-nginx/guides/balancer/](https://xpromsx.github.io/3x-ui-auto-nginx/guides/balancer/)
+
+    [Условия использования материалов](../terms.md)

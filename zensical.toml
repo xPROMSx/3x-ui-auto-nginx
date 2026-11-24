@@ -5,7 +5,7 @@ site_url = "https://xpromsx.github.io/3x-ui-auto-nginx/"
 site_author = "xPROMSx contributors"
 repo_url = "https://github.com/xPROMSx/3x-ui-auto-nginx"
 repo_name = "GitHub"
-copyright = "© xPROMSx · github.com/xPROMSx/3x-ui-auto-nginx"
+copyright = '© xPROMSx · github.com/xPROMSx/3x-ui-auto-nginx · <a href="https://xpromsx.github.io/3x-ui-auto-nginx/terms/">Условия использования материалов</a>'
 docs_dir = "docs-site"
 site_dir = "site"
 extra_css = ["stylesheets/extra.css"]
@@ -27,6 +27,7 @@ nav = [
     { "Подключения и nginx" = "guides/connections.md" },
     { "Резервные копии и клиенты" = "guides/backup.md" },
     { "Смена доменов" = "guides/domains.md" },
+    { "Условия использования материалов" = "terms.md" },
   ] },
 ]
 

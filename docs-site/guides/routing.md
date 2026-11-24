@@ -168,3 +168,12 @@ geosite:youtube
 ---
 
 [Импорт VLESS REALITY](import-reality.md) · [Резервный сервер для каскада](balancer.md) · [Каскад из двух VPS](cascade.md)
+
+!!! note "Авторство и использование материалов"
+    **© 2026 xPROMSx contributors · 3X-UI AUTO NGINX**
+
+    Копирование и распространение нашего материала разрешено на условиях GNU GPL-3.0-only с сохранением авторства и ссылки на оригинал.
+
+    **Первоисточник:** [https://xpromsx.github.io/3x-ui-auto-nginx/guides/routing/](https://xpromsx.github.io/3x-ui-auto-nginx/guides/routing/)
+
+    [Условия использования материалов](../terms.md)
