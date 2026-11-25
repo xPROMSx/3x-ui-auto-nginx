@@ -2033,7 +2033,10 @@ server {{
         '    location / {','    error_page 404 /404.html;\n    location / {',1)
     redirect_cover_site=cover_site.replace('    error_page 404 /404.html;',
         '    absolute_redirect off;\n    error_page 404 /404.html;',1)
-    if not site.is_file() or site.read_text() not in (expected_site,cover_site,redirect_cover_site): raise ValueError('Unsafe Vision fallback site')
+    limited_cover_site=redirect_cover_site.replace(
+        'location / { try_files $uri $uri/ =404; }', 'include snippets/xui-cover-static.conf;')
+    if site.read_text() not in (expected_site,cover_site,redirect_cover_site,limited_cover_site):
+        raise ValueError('Unsafe Vision fallback site')
     streamtext=staged(nginx+'/stream-enabled/stream.conf').read_text()
     upstreams=re.findall(r'^upstream vision \{ server 127\.0\.0\.1:(\d+); \}$',streamtext,re.M)
     if (streamtext.count(f'    {vision} vision;')!=1 or

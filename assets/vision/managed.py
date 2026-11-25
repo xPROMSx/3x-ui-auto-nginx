@@ -92,9 +92,11 @@ def inbound(domain, port, fallback, cert, key, flag="🌐"):
             'sniffing': {'enabled': True, 'destOverride': ['http', 'tls'], 'routeOnly': False}}
 
 
-def fallback_config(domain, port, root='/var/www/html'):
+def fallback_config(domain, port, root='/var/www/html', *, rate_limit=False):
     domain_name(domain)
     errors = '    absolute_redirect off;\n    error_page 404 /404.html;\n' if root == '/var/www/html/cover-vision' else ''
+    location = ('    include snippets/xui-cover-static.conf;' if rate_limit else
+                '    location / { try_files $uri $uri/ =404; }')
     return MARKER + f'''server {{
     listen 127.0.0.1:{port} proxy_protocol;
     server_name {domain};
@@ -104,7 +106,7 @@ def fallback_config(domain, port, root='/var/www/html'):
     real_ip_header proxy_protocol;
     set_real_ip_from 127.0.0.1;
     if ($host != {domain}) {{ return 404; }}
-{errors}    location / {{ try_files $uri $uri/ =404; }}
+{errors}{location}
 }}
 '''
 
@@ -116,18 +118,23 @@ def ipv6_available():
         return False
 
 
-def acme_config(domain, ipv6=None, legacy=False):
+def acme_config(domain, ipv6=None, legacy=False, *, rate_limit=True):
     domain_name(domain)
     if ipv6 is None: ipv6 = ipv6_available()
     listener = '    listen [::]:80;\n' if ipv6 else ''
     escaped = domain.replace('.', r'\.')
     guard = '' if legacy else f'    server_tokens off;\n    if ($host !~* ^{escaped}$) {{ return 404; }}\n'
     target = '$host' if legacy else domain
+    root = ''
+    redirect = f'    location / {{ return 301 https://{target}$request_uri; }}'
+    if rate_limit and not legacy:
+        root = '    root /var/www/html/cover-vision;\n'
+        redirect = '    include snippets/xui-cover-redirect.conf;'
     return MARKER + f'''server {{
     listen 80;
 {listener}    server_name {domain};
-{guard}    location ^~ /.well-known/acme-challenge/ {{ root /var/www/acme; try_files $uri =404; }}
-    location / {{ return 301 https://{target}$request_uri; }}
+{guard}{root}    location ^~ /.well-known/acme-challenge/ {{ root /var/www/acme; try_files $uri =404; }}
+{redirect}
 }}
 '''
 
@@ -149,13 +156,16 @@ def nginx_artifact_domain(site, acme):
             roots = re.findall(r'^    root ([^;]+);$', text, re.M)
             if len(roots) != 1 or roots[0] not in ('/var/www/html','/var/www/html/cover-vision'):
                 raise ValueError('Unknown Vision static root')
-            expected = render(name[1], int(port[1]), root=roots[0])
+            previous = render(name[1], int(port[1]), root=roots[0])
+            expected = [previous]
+            if roots[0] == '/var/www/html/cover-vision':
+                expected.extend((previous.replace('    absolute_redirect off;\n', '', 1),
+                                 render(name[1], int(port[1]), root=roots[0], rate_limit=True)))
         else:
-            expected = render(name[1], ipv6=True)
-        if (text != expected and not (render is acme_config and text in
-                (render(name[1], ipv6=ipv6, legacy=legacy) for ipv6 in (False,True) for legacy in (False,True))) and
-                not (render is fallback_config and roots[0] == '/var/www/html/cover-vision' and
-                     text == expected.replace('    absolute_redirect off;\n','',1))):
+            expected = [render(name[1], ipv6=ipv6, legacy=legacy, rate_limit=rate_limit)
+                        for ipv6 in (False, True)
+                        for legacy, rate_limit in ((True, False), (False, False), (False, True))]
+        if text not in expected:
             raise ValueError('Modified Vision nginx configuration; preserved')
         names.add(name[1])
     if len(names) > 1:
@@ -213,7 +223,8 @@ def configure(panel, domain, port, fallback, stream, site, enabled, cert, key, f
         panel.request('panel/api/hosts/add', {'inboundIds': [iid], 'remark': 'vision', 'hosts': [domain],
                       'port': 443, 'security': 'same', 'sni': domain, 'alpn': ['http/1.1'], 'allowInsecure': False})
         stage = 'writing Vision nginx fallback and SNI route'
-        site.write_text(fallback_config(domain, fallback, root='/var/www/html/cover-vision')); site.chmod(0o644)
+        site.write_text(fallback_config(domain, fallback, root='/var/www/html/cover-vision', rate_limit=True))
+        site.chmod(0o644)
         enabled.symlink_to(site)
         stream.write_text(patched)
         stage = 'validating nginx configuration'

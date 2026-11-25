@@ -62,7 +62,7 @@ def legacy_hysteria_source(source=SOURCE):
 
 def template(target, source=SOURCE):
     """Extract one original heredoc; never execute its surrounding function."""
-    matches = re.findall(r"^\s*" + re.escape(target) + r" <<EOF\n(.*?)^EOF$", source, re.M | re.S)
+    matches = re.findall(r"^\s*" + re.escape(target) + r" <<(?:EOF|'EOF')\n(.*?)^EOF$", source, re.M | re.S)
     if len(matches) != 1:
         raise AssertionError(f"Expected one heredoc for {target}, found {len(matches)}")
     return matches[0]
@@ -122,6 +122,17 @@ def inbounds(**variables):
 
 SHARED = "cat > /etc/nginx/snippets/includes.conf"
 MAIN = 'cat > "/etc/nginx/sites-available/${domain}"'
+ACME = 'cat > /etc/nginx/sites-available/80.conf'
+
+
+def cover_rate_snippets(nginx_root):
+    """Stage the actual includes next to a private nginx.conf and return the zone declarations."""
+    directory = nginx_root / 'snippets'
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in ('limit', 'error', 'static', 'redirect'):
+        filename = f'xui-cover-{name}.conf'
+        (directory / filename).write_text(template(f'cat > /etc/nginx/snippets/{filename}'))
+    return '\n'.join(line for line in render(ACME).splitlines() if line.startswith('limit_req_zone '))
 
 
 class PersonalXHTTP(unittest.TestCase):
@@ -185,7 +196,11 @@ main
         base = subprocess.check_output(['git', 'show', '661b9f6fd3629efe5cc1187e0bc2bc1a15dbb04e:x-ui-latest.sh'],
                                        cwd=ROOT, text=True)
         selected = {'INSTALL_WS_GRPC': 'y'}
-        self.assertEqual(render(SHARED, **selected), render(SHARED, base))
+        current_proxies, separator, cover = render(SHARED, **selected).partition('\n    location = /__xui_cover_backend_error {')
+        baseline_proxies = render(SHARED, base).rsplit('\n    location / {', 1)[0]
+        self.assertEqual(current_proxies, baseline_proxies)
+        self.assertTrue(separator)
+        self.assertIn('include snippets/xui-cover-static.conf;', cover)
         seed(group_id=True, expected_group_ids=5, **selected)
         for group_id in (False, True):
             groups = {'gid_col': '"group_id",'} if group_id else {}
@@ -864,8 +879,9 @@ sleep() { :; }
             with socket.socket() as reserved:
                 reserved.bind(('127.0.0.1',0)); unavailable=reserved.getsockname()[1]
             config=root/'nginx.conf'; includes=root/'includes.conf'
+            zones=cover_rate_snippets(root)
             temp_paths=''.join(f'{kind}_temp_path {root}/{kind};\n' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
-            config.write_text(f'pid {root}/nginx.pid; error_log {root}/error.log info; events {{}} http {{ access_log {root}/access.log; '+temp_paths+f'map $http_user_agent $serve_clash_yaml {{ default 0; ~Mihomo 1; }} server {{ listen 127.0.0.1:{public}; set $hack 0; error_page 400 401 403 500 502 503 504 =404 /404; location = /404 {{ return 404; }} include {includes}; }} }}')
+            config.write_text(f'pid {root}/nginx.pid; error_log {root}/error.log info; events {{}} http {{ access_log {root}/access.log; '+temp_paths+zones+f'\nmap $http_user_agent $serve_clash_yaml {{ default 0; ~Mihomo 1; }} server {{ listen 127.0.0.1:{public}; set $hack 0; error_page 400 401 403 500 502 503 504 =404 /404; location = /404 {{ return 404; }} include {includes}; }} }}')
             def update(sub,clash):
                 shared=render(SHARED,sub_port=str(sub))
                 main=render(MAIN,mtr_backend_port=str(clash))
@@ -946,11 +962,12 @@ sleep() { :; }
                     public_port = reserved.getsockname()[1]
                 shared = render(SHARED, source, ws_port=port, ws_path="websocket", ws_route=f"/{port}/websocket")
                 (root / "includes.conf").write_text(shared)
+                zones = cover_rate_snippets(root)
                 temp_paths = "".join(f"{kind}_temp_path {root}/{kind};\n" for kind in ("client_body", "proxy", "fastcgi", "uwsgi", "scgi"))
                 config = root / "nginx.conf"
                 config.write_text(
                     f"pid {root}/nginx.pid;\nerror_log stderr;\nevents {{ worker_connections 32; }}\n"
-                    "http { access_log off;\n" + temp_paths +
+                    "http { access_log off;\n" + temp_paths + zones + "\n" +
                     f"server {{ listen 127.0.0.1:{public_port}; server_name deploy.example cover.example;\n"
                     f"root {root}; set $hack 0; set $serve_clash_yaml 0; include {root}/includes.conf; }} }}\n"
                 )
@@ -1288,7 +1305,7 @@ curl() {
             ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             source = SOURCE
             (root / "includes.conf").write_text(render(SHARED, source))
-            fragments = [render("cat > /etc/nginx/sites-available/00-maps.conf", source)]
+            fragments = [cover_rate_snippets(root), render("cat > /etc/nginx/sites-available/00-maps.conf", source)]
             for target in (MAIN, 'cat > "/etc/nginx/sites-available/${reality_domain}"'):
                 fragment = render(target, source, **http2)
                 fragment = re.sub(r"/etc/letsencrypt/live/[^/]+/fullchain.pem", str(root / "cert.pem"), fragment)

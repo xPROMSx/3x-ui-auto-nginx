@@ -2,6 +2,7 @@
 import copy
 import ctypes
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -261,7 +262,7 @@ if sys.argv[1]=='cert':
         self.assertIn('systemctl try-restart x-ui',calls)
 
     def test_real_nginx_verified_https_api_token_and_tls_subscriptions(self):
-        from test_personal_xhttp import render, SHARED, MAIN
+        from test_personal_xhttp import cover_rate_snippets, render, SHARED, MAIN
         nginx = os.environ.get('NGINX_BIN') or shutil.which('nginx')
         self.assertIsNotNone(nginx, 'real nginx is required')
         with tempfile.TemporaryDirectory() as tmp:
@@ -279,6 +280,9 @@ if sys.argv[1]=='cert':
             class Backend(BaseHTTPRequestHandler):
                 def do_GET(self):
                     requests.append((self.server.kind, self.path, self.headers.get('Authorization'), self.headers.get('Host')))
+                    if self.server.kind == 'panel-https' and self.path == '/panel/unavailable':
+                        self.send_error(503)
+                        return
                     # Model the exact v3.9.0 enabled JSON :subid route, not an unconditional 200.
                     if self.server.kind == 'sub-https':
                         path = urlsplit(self.path).path
@@ -331,7 +335,7 @@ if sys.argv[1]=='cert':
             reality = re.sub(r'/etc/letsencrypt/live/[^/]+/privkey.pem', str(root/'key.pem'), reality)
             reality = reality.replace('/etc/nginx/snippets/includes.conf',str(root/'includes.conf')).replace('/var/www/html/',str(root/'site')+'/')
             (root/'site').mkdir(); (root/'site/index.html').write_text('camouflage')
-            maps = render('cat > /etc/nginx/sites-available/00-maps.conf')
+            maps = cover_rate_snippets(root) + '\n' + render('cat > /etc/nginx/sites-available/00-maps.conf')
             temp_paths = '\n'.join(f'{kind}_temp_path {root}/{kind};'
                                    for kind in ('client_body', 'proxy', 'fastcgi', 'uwsgi', 'scgi'))
             (root/'nginx.conf').write_text(f'pid {root}/nginx.pid; error_log {root}/error.log; events {{}} http {{ access_log off; {temp_paths}\n{maps}\n{vhost}\n{reality}\n}}')
@@ -353,6 +357,26 @@ if sys.argv[1]=='cert':
                 self.assertEqual(result.returncode,0,result.stderr)
                 self.assertEqual(json.loads(result.stdout), {'backend':kind,'path':path})
                 self.assertEqual(requests[-1], (kind,path,'Bearer fixture-api-token','deploy.example'))
+            context=ssl.create_default_context(cafile=str(root/'cert.pem'))
+            connection=http.client.HTTPConnection('127.0.0.1',public_port,timeout=5)
+            connection.sock=context.wrap_socket(socket.create_connection(('127.0.0.1',public_port),timeout=5),
+                                                server_hostname='deploy.example')
+            try:
+                def get(path):
+                    connection.request('GET',path,headers={'Host':'deploy.example'})
+                    response=connection.getresponse()
+                    return response.status,response.read()
+
+                backend_error=get('/panel/unavailable')
+                self.assertEqual(backend_error[0],404)
+                self.assertEqual([get('/absent-static')[0] for _ in range(60)],[404]*60)
+                self.assertIn(429,[get('/absent-static')[0] for _ in range(140)])
+                for _ in range(12):
+                    self.assertEqual(get('/panel/unavailable'),backend_error)
+                    self.assertEqual(requests[-1][:2],('panel-https','/panel/unavailable'))
+                self.assertIn(429,[get('/404')[0] for _ in range(12)])
+            finally:
+                connection.close()
             # Clash/Mihomo gets the full template; its provider URL must bypass that rewrite.
             for user_agent in ('Clash','Mihomo'):
                 before = list(requests)

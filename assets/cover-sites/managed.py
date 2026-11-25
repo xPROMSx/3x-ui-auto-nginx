@@ -66,9 +66,10 @@ def prepare(stage, state, roles):
     """Generate only missing roles; an existing selection is never re-rendered."""
     data = read_state(state)
     generator, checker = module('generate'), module('check')
+    template_files = ('index.html', 'static/site.css', 'favicon.svg', *sorted(checker.ERROR_PAGES))
     for code in ('A1','A2','A3','B1','B2','B3'):
         origin = ROOT/'templates'/code
-        for name in ('index.html','404.html','static/site.css','favicon.svg'):
+        for name in template_files:
             if not (origin/name).is_file(): raise ValueError('Missing cover source: '+code+'/'+name)
     parents(stage.parent); stage.mkdir(mode=0o700)
     selections = dict(data)
@@ -86,7 +87,7 @@ def prepare(stage, state, roles):
         # Only generated public content leaves this private stage.
         for path in (site, *site.rglob('*')):
             if path.is_symlink() or not (path.is_dir() or path.is_file()): raise ValueError('Unsafe generated cover')
-        for name in ('index.html','404.html','static/site.css','static/hero.svg','favicon.ico'):
+        for name in ('index.html','static/site.css','static/hero.svg','favicon.ico'):
             if not (site/name).is_file(): raise ValueError('Missing cover resource: '+name)
     write_state(stage/'selection.json', selections)
 

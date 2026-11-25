@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f5f1e9" data-variant="{{VARIANT_NONCE}}">
+  <meta name="description" content="Too many requests. Please try again later.">
+  <title>Too Many Requests | {{BRAND}}</title>
+  <style>
+    body { margin: 0; background: #f5f1e9; color: #242823; font: 1rem/1.7 "Helvetica Neue", Arial, sans-serif; }
+    main { max-width: 52rem; padding: clamp(3rem, 13vh, 8rem) 0; margin: 0 clamp(1.25rem, 7vw, 7rem); }
+    .brand { padding-bottom: 1rem; border-bottom: 1px solid #d9d4c8; font: 500 1.5rem Georgia, serif; }
+    .code { margin-top: 2.5rem; color: {{ACCENT2}}; font-size: .8rem; font-weight: 700; letter-spacing: .15em; }
+    h1 { margin: .5rem 0; font: 400 clamp(2.2rem, 8vw, 5rem)/1.15 Georgia, serif; letter-spacing: -.04em; }
+    a { display: inline-block; margin-top: 1rem; padding: .45rem .75rem; border: 1px solid {{ACCENT2}}; color: #242823; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="brand">{{BRAND}}</p>
+    <p class="code" aria-hidden="true">429</p>
+    <h1>Too Many Requests</h1>
+    <p>Please try again later.</p>
+    <a href="/">Return to overview ↗</a>
+  </main>
+</body>
+</html>

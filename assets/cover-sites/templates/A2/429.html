@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0c1728" data-variant="{{VARIANT_NONCE}}">
+  <meta name="description" content="Too many requests. Please try again later.">
+  <title>Too Many Requests | {{BRAND}}</title>
+  <style>
+    html { color-scheme: dark; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0c1728; color: #e8f1f7; font: 1rem/1.65 Inter, system-ui, sans-serif; }
+    main { box-sizing: border-box; width: min(38rem, calc(100% - 2rem)); padding: clamp(1.5rem, 5vw, 2.5rem); border: 1px solid #27394e; border-radius: 1rem; background: #13233a; }
+    .brand { color: {{ACCENT}}; font: 700 .8rem/1.4 ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .code { margin: .35rem 0 0; font-size: clamp(4rem, 14vw, 7rem); font-weight: 800; letter-spacing: -.1em; line-height: 1; }
+    h1 { margin: .6rem 0; font-size: clamp(1.8rem, 5vw, 2.75rem); line-height: 1.14; }
+    main p:last-of-type { color: #afc5d7; }
+    a { color: {{ACCENT}}; text-underline-offset: .25em; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="brand">{{BRAND}}</p>
+    <p class="code" aria-hidden="true">429</p>
+    <h1>Too Many Requests</h1>
+    <p>Please try again later.</p>
+    <a href="/">Go to overview →</a>
+  </main>
+</body>
+</html>

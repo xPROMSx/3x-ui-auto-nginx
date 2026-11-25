@@ -154,26 +154,33 @@ class CoverPublication(unittest.TestCase):
 
     def test_new_sites_backup_restore_preserves_bytes_and_selection(self):
         from test_personal_backup import PersonalBackup, relocated
-        for vision,legacy_redirect in ((False,False),(True,False),(True,True)):
-            with self.subTest(vision=vision,legacy_redirect=legacy_redirect):
+        for vision,rate_limit in ((False,True),(True,True),(True,False)):
+            with self.subTest(vision=vision,rate_limit=rate_limit):
                 fixture=PersonalBackup('runTest');fixture.setUp()
                 try:
                     if vision:fixture.seed_vision()
-                    stage=self.root/('stage-'+str(vision)+'-'+str(legacy_redirect));web=fixture.path('/var/www/html');state=fixture.path('/etc/x-ui/cover-sites.json')
+                    stage=self.root/('stage-'+str(vision)+'-'+str(rate_limit));web=fixture.path('/var/www/html');state=fixture.path('/etc/x-ui/cover-sites.json')
                     roles=['panel','reality']+(['vision'] if vision else [])
                     self.m.prepare(stage,state,roles);self.m.publish(stage,web,state,roles)
-                    if vision:
+                    if rate_limit:
+                        fixture.seed_cover_rate(vision=vision)
+                    else:
                         from test_integrated_features import helper as feature
-                        site=feature('vision').fallback_config('vision.example.com',12001,root='/var/www/html/cover-vision')
-                        if legacy_redirect:site=site.replace('    absolute_redirect off;\n','')
+                        site=feature('vision').fallback_config('vision.example.com',12001,root='/var/www/html/cover-vision').replace(
+                            '    absolute_redirect off;\n','')
                         fixture.write('/etc/nginx/sites-available/vision.conf',relocated(site,fixture.root))
+                        for role in roles:(web/('cover-'+role)/'429.html').unlink()
+                    rate_path=fixture.path('/etc/nginx/snippets/xui-cover-limit.conf')
+                    saved_policy=rate_path.read_bytes() if rate_limit else None
                     before={r:self.m.tree(web/('cover-'+r)) for r in roles};selection=state.read_bytes()
                     archive=fixture.backup();original=archive.read_bytes()
+                    if rate_limit:rate_path.write_bytes(saved_policy+b'# local edit before Restore\n')
                     for r in roles:shutil.rmtree(web/('cover-'+r))
                     state.unlink()
                     result=fixture.run_tool('restore',str(archive))
                     self.assertEqual(result.returncode,0,result.stderr)
                     self.assertTrue(state.read_bytes()==selection,'Selection changed on Restore')
                     self.assertEqual({r:self.m.tree(web/('cover-'+r)) for r in roles},before)
+                    self.assertEqual(rate_path.read_bytes() if rate_path.exists() else None,saved_policy)
                     self.assertTrue(archive.read_bytes()==original,'Source archive changed')
                 finally:fixture.doCleanups()

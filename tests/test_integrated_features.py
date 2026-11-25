@@ -1095,9 +1095,9 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
             root=Path(temporary);site=root/'vision.conf';acme=root/'vision-acme.conf'
             site.write_text(vision.fallback_config('vision.example',14501))
             for ipv6 in (False,True):
-                for legacy in (False,True):
-                    with self.subTest(ipv6=ipv6,legacy=legacy):
-                        text=vision.acme_config('vision.example',ipv6,legacy=legacy)
+                for legacy,rate_limit in ((True,False),(False,False),(False,True)):
+                    with self.subTest(ipv6=ipv6,legacy=legacy,rate_limit=rate_limit):
+                        text=vision.acme_config('vision.example',ipv6,legacy=legacy,rate_limit=rate_limit)
                         acme.write_text(text)
                         self.assertEqual(vision.nginx_artifact_domain(site,acme),'vision.example')
                         self.assertEqual('server_tokens off;' in text,not legacy)
@@ -1105,7 +1105,9 @@ show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_usern
             text=vision.acme_config('vision.example',False)
             for text in (text.replace('server_tokens off;','server_tokens on;'),
                          text.replace('^vision\\.example$','^vision.example$'),
-                         text.replace('https://vision.example','https://$host')):
+                         text.replace('snippets/xui-cover-redirect.conf','snippets/foreign.conf'),
+                         vision.acme_config('vision.example',False,rate_limit=False).replace(
+                             'https://vision.example','https://$host')):
                 acme.write_text(text)
                 with self.assertRaises(ValueError):vision.nginx_artifact_domain(site,acme)
 

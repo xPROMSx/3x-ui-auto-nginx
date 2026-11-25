@@ -788,22 +788,64 @@ setup_acme_http() {
     local ipv6_listen=''
     if ipv6_available; then ipv6_listen='listen [::]:80;'; fi
     prepare_acme_webroot || return 1
-    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled || return 1
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/snippets || return 1
+    cat > /etc/nginx/snippets/xui-cover-limit.conf <<'EOF'
+limit_req zone=xui_cover_ip burst=80 nodelay;
+limit_req zone=xui_cover_site burst=200 nodelay;
+limit_req_status 429;
+limit_req_log_level info;
+error_page 429 /__xui_cover_rate_error;
+EOF
+    [[ $? == 0 ]] || return 1
+    cat > /etc/nginx/snippets/xui-cover-error.conf <<'EOF'
+location = /__xui_cover_rate_error {
+    internal;
+    add_header Cache-Control no-store always;
+    try_files /429.html =429;
+}
+EOF
+    [[ $? == 0 ]] || return 1
+    cat > /etc/nginx/snippets/xui-cover-static.conf <<'EOF'
+location / {
+    include snippets/xui-cover-limit.conf;
+    error_page 404 /404.html;
+    try_files $uri $uri/ =404;
+}
+include snippets/xui-cover-error.conf;
+EOF
+    [[ $? == 0 ]] || return 1
+    cat > /etc/nginx/snippets/xui-cover-redirect.conf <<'EOF'
+location / {
+    include snippets/xui-cover-limit.conf;
+    # try_files runs after preaccess. A return here would skip limit_req.
+    try_files "" @xui_cover_redirect;
+}
+location @xui_cover_redirect { return 301 https://$host$request_uri; }
+include snippets/xui-cover-error.conf;
+EOF
+    [[ $? == 0 ]] || return 1
     cat > /etc/nginx/sites-available/80.conf <<EOF
 # 253-byte DNS key plus 64-bit hash entry/sentinel; nginx aligns to cache lines.
 server_names_hash_bucket_size 272;
+# \$host is normalized by nginx and validated by the managed vhosts.
+limit_req_zone \$host:\$binary_remote_addr zone=xui_cover_ip:10m rate=20r/s;
+limit_req_zone \$host zone=xui_cover_site:1m rate=200r/s;
 server {
     listen 80;
     ${ipv6_listen}
     server_name ${domain} ${reality_domain};
     server_tokens off;
     if (\$host !~* ^(${domain//./\\.}|${reality_domain//./\\.})\$) { return 404; }
+    # The first server_name is the main domain. This also works after Change Domains.
+    set \$xui_cover_root /var/www/html/cover-reality;
+    if (\$server_name = \$host) { set \$xui_cover_root /var/www/html/cover-panel; }
+    root \$xui_cover_root;
     location ^~ /.well-known/acme-challenge/ {
         root /var/www/acme;
         default_type text/plain;
         try_files \$uri =404;
     }
-    location / { return 301 https://\$host\$request_uri; }
+    include snippets/xui-cover-redirect.conf;
 }
 EOF
     [[ $? == 0 ]] || return 1
@@ -1025,7 +1067,12 @@ $(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then cat <<WS_GRPC_NGINX
 WS_GRPC_NGINX
 fi)
 
-    location / { error_page 404 /404.html; try_files \$uri \$uri/ =404; }
+    location = /__xui_cover_backend_error {
+        # An intercepted proxy error must never enter the public static location.
+        internal;
+        try_files /404 =404;
+    }
+    include snippets/xui-cover-static.conf;
 EOF
     [[ $? -eq 0 ]] || return 1
 
@@ -1089,7 +1136,7 @@ server {
     if (\$host !~* ^${domain//./\\.}\$) { return 404; }
     if (\$ssl_server_name !~* ^${domain//./\\.}\$) { return 421; }
     if (\$request_uri ~ "(\"|'|\`|~|,|:|;|%|\\$|&&|\?\?|0x00|0X00|\||\\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set \$hack 1; }
-    error_page 400 401 402 403 500 501 502 503 504 =404 /404;
+    error_page 400 401 402 403 500 501 502 503 504 =404 /__xui_cover_backend_error;
     proxy_intercept_errors on;
 
     location /${panel_path}/ {
@@ -1275,7 +1322,7 @@ server {
     if (\$host !~* ^${reality_domain//./\\.}\$) { return 404; }
     if (\$ssl_server_name !~* ^${reality_domain//./\\.}\$) { return 421; }
     if (\$request_uri ~ "(\"|'|\`|~|,|:|;|%|\\$|&&|\?\?|0x00|0X00|\||\\|\{|\}|\[|\]|<|>|\.\.\.|\.\.\/|\/\/\/)") { set \$hack 1; }
-    error_page 400 401 402 403 500 501 502 503 504 =404 /404;
+    error_page 400 401 402 403 500 501 502 503 504 =404 /__xui_cover_backend_error;
     proxy_intercept_errors on;
 
     include /etc/nginx/snippets/includes.conf;

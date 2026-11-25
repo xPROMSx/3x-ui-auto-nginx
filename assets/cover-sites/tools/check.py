@@ -55,6 +55,7 @@ class Page(HTMLParser):
 MONTHS = ('January', 'February', 'March', 'April', 'May', 'June',
           'July', 'August', 'September', 'October', 'November', 'December')
 UNRESOLVED = re.compile(r'\{\{[A-Z][A-Z_0-9]*\}\}')
+ERROR_PAGES = {'404.html', '429.html'}
 
 
 def _ico_problems(blob):
@@ -138,7 +139,7 @@ def _html_dates(content):
 def check_site(root):
     problems=[];count=0
     html_pages=sorted(root.rglob('*.html'))
-    if len(html_pages)>14:problems.append(f'Site has {len(html_pages)} HTML pages, limit 14')
+    if len(html_pages)>15:problems.append(f'Site has {len(html_pages)} HTML pages, limit 15')
     if not html_pages: problems.append('No HTML pages')
     titles={}; descriptions={}; variants=set(); parsed={}
     for page in html_pages:
@@ -161,7 +162,7 @@ def check_site(root):
         if len(item.theme_variants)!=1 or not re.fullmatch(r'[0-9a-fA-F]{24}', item.theme_variants[0] if item.theme_variants else ''):
             problems.append(f'{relative}: missing or invalid 24-char data-variant')
         else:variants.add(item.theme_variants[0])
-        if page.name!='404.html' and len(item.words)<250:
+        if relative not in ERROR_PAGES and len(item.words)<250:
             problems.append(f'{relative}: only {len(item.words)} visible words, minimum 250')
         if item.h1_count!=1:
             problems.append(f'{relative}: expected one h1, got {item.h1_count}')
@@ -201,8 +202,7 @@ def check_site(root):
                 problems.append(f'{page.relative_to(root)}: nonlocal URL: {ref}')
     if len(variants)>1:
         problems.append('HTML pages have different data-variant values within one build')
-    # A published HTML document must be accessible by following local links
-    # from the homepage. The 404 document is served on errors, not linked.
+    # Published content is reachable from the homepage. Error documents are served on demand.
     reachable={'index.html'};waiting=['index.html']
     while waiting:
         page_name=waiting.pop()
@@ -219,7 +219,7 @@ def check_site(root):
             except ValueError:continue
             if relative in parsed and relative not in reachable:
                 reachable.add(relative);waiting.append(relative)
-    for unreachable in sorted(set(parsed)-reachable-{'404.html'}):
+    for unreachable in sorted(set(parsed)-reachable-ERROR_PAGES):
         problems.append(f'{unreachable}: not reachable from index.html by local links')
     for stylesheet in root.rglob('*.css'):
         content=stylesheet.read_text(encoding='utf-8')
@@ -240,7 +240,8 @@ def check_site(root):
     for svg in root.rglob('*.svg'):
         try:ET.parse(svg)
         except ET.ParseError as e:problems.append(f'{svg.relative_to(root)}: malformed SVG: {e}')
-    if not (root/'404.html').exists():problems.append('Missing custom 404.html')
+    for page in sorted(ERROR_PAGES):
+        if page not in parsed:problems.append(f'Missing custom {page}')
     if not (root/'favicon.ico').exists():
         problems.append('Missing favicon.ico')
     else:

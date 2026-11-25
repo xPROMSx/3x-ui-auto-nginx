@@ -201,7 +201,8 @@ class RealServices(unittest.TestCase):
 
     def start_nginx(self, foreign_acme=()):
         snippet=self.adguard_snippet()
-        from test_personal_xhttp import render
+        from test_personal_xhttp import cover_rate_snippets, render
+        cover_rate_snippets(self.root)
         acme=render('cat > /etc/nginx/sites-available/80.conf',domain=self.domain,reality_domain=self.reality)
         self.assertIn('listen 80;',acme)
         acme=acme.replace('listen 80;',f'listen 127.0.0.1:{self.http};').replace('    listen [::]:80;\n','')

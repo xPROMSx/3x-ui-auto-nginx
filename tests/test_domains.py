@@ -21,7 +21,7 @@ import unittest
 from unittest.mock import patch
 
 from certificate_fixtures import function
-from test_personal_xhttp import ROOT, MAIN, SHARED, render, seed
+from test_personal_xhttp import ROOT, MAIN, SHARED, cover_rate_snippets, render, seed
 from test_integrated_features import helper
 
 SOURCE = 'b'*40
@@ -70,6 +70,8 @@ class DomainFixture:
                            ('/etc/nginx/sites-available/'+self.panel, render(MAIN,self.source)),
                            ('/etc/nginx/sites-available/'+self.reality, render('cat > "/etc/nginx/sites-available/${reality_domain}"',self.source))):
             self.write(name, text)
+        if not (legacy or historical):
+            cover_rate_snippets(self.p('/etc/nginx'))
         for name in (self.panel, self.reality, '80.conf'):
             self.p('/etc/nginx/sites-enabled/'+name).symlink_to('/etc/nginx/sites-available/'+name)
         self.write('/etc/nginx/nginx.conf', 'load_module /usr/lib/nginx/modules/ngx_stream_module.so;\n'

@@ -1,4 +1,5 @@
 """Execute guard, Certbot and deploy-hook paths only on private fixtures."""
+import http.client
 import os
 from pathlib import Path
 import re
@@ -522,13 +523,14 @@ COPY
     def test_real_nginx_acme_precedence_self_test_and_redirect(self):
         nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')
         if not nginx:self.skipTest('nginx binary not available')
-        from test_personal_xhttp import render
+        from test_personal_xhttp import cover_rate_snippets, render
         with socket.socket() as s:
             s.bind(('127.0.0.1',0));port=s.getsockname()[1]
         self.root.chmod(0o755)
+        cover_rate_snippets(self.root)
         fragment=render('cat > /etc/nginx/sites-available/80.conf')
         fragment=fragment.replace('listen 80;',f'listen 127.0.0.1:{port};').replace('    listen [::]:80;\n','')
-        fragment=fragment.replace('/var/www/acme',str(self.root/'var/www/acme'))
+        fragment=relocate(fragment,self.root)
         (self.root/'var/www/acme/.well-known/acme-challenge').mkdir(parents=True)
         temp_paths='\n'.join(f'{kind}_temp_path {self.root}/{kind};' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
         conf=self.root/'nginx.conf';conf.write_text(f'pid {self.root}/nginx.pid;\nerror_log stderr;\nevents {{}}\nhttp {{ access_log off;\n{temp_paths}\n{fragment}\n}}\n')
@@ -546,6 +548,28 @@ COPY
             result=subprocess.run(['bash','-eu','-c',script+'\ncheck_acme_http deploy.example cover.example'],text=True,capture_output=True)
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(list((self.root/'var/www/acme/.well-known/acme-challenge').iterdir()),[])
+            challenge=self.root/'var/www/acme/.well-known/acme-challenge/probe'
+            challenge.write_text('challenge')
+            connection=http.client.HTTPConnection('127.0.0.1',port,timeout=3)
+            try:
+                def request(path, host='deploy.example'):
+                    connection.request('GET',path,headers={'Host':host})
+                    response=connection.getresponse()
+                    return response.status,dict(response.getheaders()),response.read()
+
+                path='/missing?q=one%20two'
+                status,headers,_=request(path)
+                self.assertEqual((status,headers['Location']),(301,'https://deploy.example'+path))
+                responses=[request(path) for _ in range(140)]
+                rejected=[headers for status,headers,_ in responses if status==429]
+                self.assertTrue(rejected,'Port 80 redirects must pass through limit_req')
+                self.assertTrue(all(headers.get('Cache-Control')=='no-store' for headers in rejected))
+                self.assertEqual(request(path,'cover.example')[0],301)
+                status,_,body=request('/.well-known/acme-challenge/probe')
+                self.assertEqual((status,body),(200,b'challenge'))
+                self.assertEqual(request(path,'foreign.example')[0],404)
+            finally:
+                connection.close()
         finally:
             proc.terminate();proc.communicate(timeout=5)
 

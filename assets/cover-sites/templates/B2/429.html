@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f6f8f7" data-variant="{{VARIANT_NONCE}}">
+  <meta name="description" content="Too many requests. Please try again later.">
+  <title>Too Many Requests | {{BRAND}}</title>
+  <style>
+    body { margin: 0; background: #f6f8f7; color: #253d45; font: 1rem/1.78 system-ui, "Segoe UI", sans-serif; }
+    main { box-sizing: border-box; width: min(44rem, calc(100% - 2rem)); margin: clamp(2rem, 14vh, 8rem) auto; padding: clamp(1rem, 5vw, 2.2rem); border-top: 1px solid {{ACCENT}}; }
+    .brand, .code { font: .85rem/1.4 ui-monospace, Consolas, monospace; }
+    .brand { color: {{ACCENT2}}; }
+    .code { color: #435e65; }
+    h1 { margin: .6rem 0; font: 400 clamp(2.3rem, 8vw, 4rem)/1.15 Georgia, serif; letter-spacing: -.06em; }
+    a { color: {{ACCENT2}}; text-underline-offset: .25em; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="brand">{{BRAND}}</p>
+    <p class="code" aria-hidden="true">429</p>
+    <h1>Too Many Requests</h1>
+    <p>Please try again later.</p>
+    <a href="/">Reference overview →</a>
+  </main>
+</body>
+</html>

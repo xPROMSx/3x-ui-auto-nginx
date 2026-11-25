@@ -30,7 +30,7 @@ def main():
                 generate(code,base,indexes,rng=random.Random(f'content-{code}-{copy_index}'),now=date(2026,11,17))
                 problems,pages,size=check_site(base)
                 assert not problems,(code,problems)
-                assert 9<=pages<=14 and size<400*1024
+                assert 10<=pages<=15 and size<400*1024
                 current_paths=tuple(sorted(p.relative_to(base).as_posix() for p in base.rglob('*.html')))
                 if page_paths is None:page_paths=current_paths
                 assert page_paths==current_paths,(code,'page addresses depend on text selection')

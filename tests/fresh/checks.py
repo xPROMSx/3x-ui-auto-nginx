@@ -1,6 +1,7 @@
 """Installed-stack, Backup UI and actual subscription consumer checks in the guest."""
 import base64
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -255,6 +256,27 @@ def adguard_state(rewrite=None):
     return {'upstreams':{k:dns[k] for k in ('upstream_dns','bootstrap_dns','fallback_dns','upstream_mode') if k in dns},
             'rewrites':request('rewrite/list')}
 
+def cover_rate_limits(domains):
+    connection=http.client.HTTPConnection('127.0.0.1',80,timeout=5,source_address=('127.0.0.42',0))
+    path='/rate-limit-probe?fresh=1'
+    try:
+        def request(domain):
+            connection.request('GET',path,headers={'Host':domain})
+            response=connection.getresponse()
+            return response.status,dict(response.getheaders()),response.read()
+
+        for role,domain in domains.items():
+            status,headers,_=request(domain)
+            assert status==301 and headers['Location']=='https://'+domain+path
+            expected=(Path('/var/www/html')/('cover-'+role)/'429.html').read_bytes()
+            responses=[request(domain) for _ in range(140)]
+            rejected=[(headers,body) for status,headers,body in responses if status==429]
+            assert rejected and all(headers.get('Cache-Control')=='no-store' and body==expected
+                                    for headers,body in rejected)
+    finally:
+        connection.close()
+
+
 def installed(cold=False):
     root=ROOT; checks={}
     boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip().replace('-','')
@@ -354,6 +376,8 @@ def installed(cold=False):
         assert 'text/css' in run(*args,'-f','-I','https://'+domain+'/static/site.css')
         assert run(*args,'-o','/dev/null','-w','%{http_code}','https://'+domain+'/absent-cover-page') == '404'
     checks['independent_static_cover_sites']=True
+    cover_rate_limits(dict(panel='panel.example.test',reality='reality.example.test',vision='vision.example.test'))
+    checks['cover_rate_limits']=True
     log=re.sub(r'\x1b\[[0-9;]*m','',(root/'installer.raw.log').read_text())
     username=re.search(r'^ +Username: +(\S+)$',log,re.M)[1];password=re.search(r'^ +Password: +(\S+)$',log,re.M)[1]
     with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
@@ -800,6 +824,7 @@ def change_domains(single=False, panel_target='panel-next.example.test'):
                '/usr/local/x-ui/x-ui','/usr/bin/x-ui')
     protected += ('/etc/x-ui/cover-sites.json',) + tuple(str(path) for role in ('panel','reality','vision')
         for path in (Path('/var/www/html')/('cover-'+role)).rglob('*') if path.is_file())
+    protected += tuple(map(str,Path('/etc/nginx/snippets').glob('xui-cover-*.conf')))
     def hashes():return {name:hashlib.sha256(Path(name).read_bytes()).hexdigest() for name in protected}
     def database():
         with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
@@ -881,6 +906,7 @@ def change_domains(single=False, panel_target='panel-next.example.test'):
         assert hashes()==original_hashes and adguard_state()==agh,'Vision, binaries, SSH/firewall or AGH state changed'
         assert json.loads(agh_metadata.read_text())==dict(original_metadata,domain=new_panel)
         assert hashlib.sha256(agh_snippet.read_bytes()).hexdigest()==original_snippet
+        cover_rate_limits(marker['domains'])
         if choice=='1':core_enable(True,panel_domain=new_panel)
         transports(panel_domain=new_panel,positive_only=True)
         panel,reality=new_panel,new_reality;before=database();result['domains_'+choice]=True

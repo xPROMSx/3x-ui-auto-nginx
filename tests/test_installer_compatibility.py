@@ -17,7 +17,7 @@ import unittest
 from unittest.mock import patch
 from urllib.parse import urlencode
 
-from test_personal_xhttp import SOURCE, function, render
+from test_personal_xhttp import SOURCE, cover_rate_snippets, function, render
 from test_integrated_features import helper
 
 
@@ -63,13 +63,14 @@ def http_name_configs(root, names, ipv6, ports):
                'http2_listen':'' if modern else ' http2','http2_on':'http2 on;' if modern else '',
                'ipv6_listen':'listen [::]:80;' if ipv6 else ''}
     (root/'includes.conf').write_text(render(SHARED,**variables))
+    cover_rate_snippets(root)
     acme=render('cat > /etc/nginx/sites-available/80.conf',**variables)
     core=render('cat > /etc/nginx/sites-available/00-maps.conf',**variables)
     for target in (MAIN,'cat > "/etc/nginx/sites-available/${reality_domain}"'):
         core+=render(target,**variables)
     vision=helper('vision')
     vision_acme=vision.acme_config(names[2],ipv6=ipv6)
-    fallback=vision.fallback_config(names[2],31236)
+    fallback=vision.fallback_config(names[2],31236,'/var/www/html/cover-vision',rate_limit=True)
     temporary='\n'.join(f'{kind}_temp_path {root}/{kind};' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
     result={}
     for stage,text in (('initial',acme),('core',acme+core),
@@ -127,7 +128,7 @@ install() { local -a args=(); while (($#)); do case \"$1\" in -o|-g) shift 2;; *
         config=config.replace('listen 80;',f'listen 127.0.0.1:{port};').replace('/var/www/acme',str(root/'var/www/acme'))
         token=root/'var/www/acme/.well-known/acme-challenge/check';token.write_bytes(b'IPv4 ACME OK')
         temporary='\n'.join(f'{kind}_temp_path {root}/{kind};' for kind in ('client_body','proxy','fastcgi','uwsgi','scgi'))
-        conf=root/'test.conf';conf.write_text(f'load_module /usr/lib/nginx/modules/ngx_stream_module.so; pid {root}/pid; error_log stderr; events {{}} stream {{{stream}}} http {{ access_log off; {temporary}\n{main}\n{config}\n}}')
+        conf=root/'etc/nginx/test.conf';conf.write_text(f'load_module /usr/lib/nginx/modules/ngx_stream_module.so; pid {root}/pid; error_log stderr; events {{}} stream {{{stream}}} http {{ access_log off; {temporary}\n{main}\n{config}\n}}')
         command=[nginx,'-e','stderr','-p',str(root)+'/', '-c',str(conf)]
         subprocess.run([*command,'-t'],check=True,capture_output=True,timeout=10)
         with (root/'private.log').open('wb') as log:
@@ -340,7 +341,8 @@ install() { local -a args=(); while (($#)); do case "$1" in -o|-g) shift 2;; *) 
                     root=Path(directory); http_name_certificate(root)
                     (root/'acme/.well-known/acme-challenge').mkdir(parents=True)
                     (root/'acme/.well-known/acme-challenge/check').write_bytes(b'ACME exact bytes')
-                    (root/'html').mkdir(); (root/'html/index.html').write_bytes(b'Vision fallback exact bytes')
+                    (root/'html/cover-vision').mkdir(parents=True)
+                    (root/'html/cover-vision/index.html').write_bytes(b'Vision fallback exact bytes')
                     # Keep sockets open during allocation so this fixture's TCP ports are distinct.
                     with socket.socket() as a,socket.socket() as b,socket.socket() as c,socket.socket() as d:
                         for listener in (a,b,c,d): listener.bind(('127.0.0.1',0))

@@ -519,6 +519,28 @@ class PersonalBackup(unittest.TestCase):
     def member(self, path):
         return 'files/' + str(self.path(path)).lstrip('/')
 
+    def seed_cover_rate(self, *, vision=False):
+        from test_personal_xhttp import ACME, cover_rate_snippets, render
+
+        nginx = self.path('/etc/nginx/nginx.conf')
+        cover_rate_snippets(nginx.parent)
+        acme = relocated(render(ACME, domain='example.com', reality_domain='reality.example.com',
+                                ipv6_listen=''), self.root)
+        self.write('/etc/nginx/sites-available/80.conf', acme)
+        includes = ['sites-available/80.conf']
+        if vision:
+            from test_integrated_features import helper
+
+            renderer = helper('vision')
+            domain = 'vision.example.com'
+            self.write('/etc/nginx/sites-available/vision.conf', relocated(
+                renderer.fallback_config(domain, 12001, '/var/www/html/cover-vision', rate_limit=True), self.root))
+            self.write('/etc/nginx/sites-available/vision-acme.conf', relocated(
+                renderer.acme_config(domain, ipv6=False), self.root))
+            includes.extend(('sites-enabled/vision.conf', 'sites-available/vision-acme.conf'))
+        directives=''.join(f'include {name};\n' for name in includes)
+        nginx.write_text(nginx.read_text().replace('http {','http {\n'+directives,1))
+
     def seed_telemt(self, includes=False, layout='legacy', modern=False, manifest=False, site_port=18081):
         from telemt_fixtures import VHOSTS, ACME, HOOK
         from test_personal_xhttp import render, legacy_hysteria_source
@@ -1122,6 +1144,7 @@ class PersonalBackup(unittest.TestCase):
         db_path = self.path('/etc/x-ui/x-ui.db')
         core_db = db_path.read_bytes()
         self.seed_vision(extra=('telegram.example.com',))
+        self.seed_cover_rate(vision=True)
         _, awg = self.seed_amneziawg()
         self.write('/etc/x-ui/auto-nginx-managed.json', json.dumps({
             'format': 1, 'layout': 'nginx-stream-v1',
@@ -2198,7 +2221,7 @@ confirm_destructive_reinstall && preflight_vision_artifacts && clean_previous_in
                        ','.join('?' for _ in columns)+')', [record[column] for column in columns])
 
     def test_backup_inspect_restore_installer_layout_without_ws_grpc(self):
-        from test_personal_xhttp import MAIN, SHARED, render, seed
+        from test_personal_xhttp import MAIN, SHARED, cover_rate_snippets, render, seed
 
         self.seed_hysteria_cover()
         variables = dict(domain='example.com', reality_domain='reality.example.com', sub_port='10003', INSTALL_WS_GRPC='n')
@@ -2208,7 +2231,9 @@ confirm_destructive_reinstall && preflight_vision_artifacts && clean_previous_in
         self.write('/etc/nginx/snippets/includes.conf', shared)
         self.write('/etc/nginx/sites-available/example.com', relocated(render(MAIN, **variables), self.root))
         nginx = self.path('/etc/nginx/nginx.conf')
-        nginx.write_text(nginx.read_text().replace('server { listen', 'server { set $hack 0; set $serve_clash_yaml 0; listen', 1))
+        zones=cover_rate_snippets(nginx.parent)
+        nginx.write_text(nginx.read_text().replace('http {',f'http {{\n{zones}\n',1)
+                         .replace('server { listen','server { set $hack 0; set $serve_clash_yaml 0; listen',1))
         path = self.path('/etc/x-ui/x-ui.db')
         with sqlite3.connect(path) as db:
             db.execute('DELETE FROM hosts')

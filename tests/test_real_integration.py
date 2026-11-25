@@ -1,9 +1,12 @@
 """Offline loopback integration with authenticated official binaries, never host services."""
 import base64
 import copy
-from contextlib import ExitStack
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack, contextmanager
 import gzip
 import hashlib
+import http.client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -28,7 +31,7 @@ from unittest.mock import patch
 import uuid
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urljoin, urlsplit
 
-from test_personal_xhttp import ROOT, FIXTURE, render, seed, SHARED, MAIN, function as installer_function
+from test_personal_xhttp import ACME, ROOT, FIXTURE, cover_rate_snippets, render, seed, SHARED, MAIN, function as installer_function
 from release_contract import selection, verify, validate_layout
 
 MIHOMO_VERSION = 'v1.19.32'
@@ -364,6 +367,8 @@ class RealIntegration(unittest.TestCase):
             self.passed.append('Config validation')
 
     def nginx_config(self, ws_grpc='y'):
+        zones = cover_rate_snippets(self.root)
+        http_site = getattr(self, 'http_site', '')
         shared = render(SHARED, sub_port=str(self.backends['sub']), ws_port=str(self.backends['ws']),
                         trojan_port=str(self.backends['trojan-grpc']), INSTALL_WS_GRPC=ws_grpc)
         # Match backend relationship while keeping the seeded public paths unchanged.
@@ -414,7 +419,7 @@ class RealIntegration(unittest.TestCase):
 worker_processes 1; daemon off; pid {self.root}/nginx.pid; error_log {self.root}/nginx-error.log;
 events {{ worker_connections 256; }}
 stream {{ {stream} }}
-http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$proxy_protocol_addr'; access_log {getattr(self, 'http_access_log', 'off')}; {temp} {maps} {main} {cover} {hy_cover} {getattr(self, 'vision_site', '')} {getattr(self, 'http_site', '')} }}
+http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$proxy_protocol_addr'; access_log {getattr(self, 'http_access_log', 'off')}; {temp} {zones if not http_site else ''} {maps} {main} {cover} {hy_cover} {getattr(self, 'vision_site', '')} {http_site} }}
 '''
         path = self.root/'nginx.conf';path.write_text(config)
         result = subprocess.run([self.nginx,'-t','-p',str(self.root)+'/', '-c',path],text=True,capture_output=True,timeout=15)
@@ -422,6 +427,58 @@ http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$p
         process = self.launch([self.nginx,'-p',str(self.root)+'/', '-c',path],'nginx')
         self.ready(process,('127.0.0.1',self.public))
         return process
+
+    def configure_http_site(self, vision):
+        listener = port(self.allocated_ports)
+        self.http_site = (render(ACME, ipv6_listen='') + vision.acme_config('vision.example', ipv6=False)).replace(
+            'listen 80;', f'listen 127.0.0.1:{listener};').replace('/var/www', str(self.root/'www'))
+        return listener
+
+    @contextmanager
+    def cover_connection(self, domain, *, source='127.0.0.1', http_port=None, ca=None):
+        # Bind a real source address so native PROXY forwarding is part of the test.
+        context = ssl.create_default_context(cafile=str(ca or self.cert)) if http_port is None else None
+        if context:
+            context.set_alpn_protocols(['http/1.1'])
+
+        class Connection(http.client.HTTPConnection):
+            def connect(self):
+                super().connect()
+                if context:
+                    self.sock = context.wrap_socket(self.sock, server_hostname=domain)
+
+        connection = Connection('127.0.0.1', http_port or self.public, timeout=5, source_address=(source, 0))
+        try:
+            connection.connect()
+
+            def request(path='/missing-cover-resource', method='GET'):
+                connection.request(method, path, headers={'Host': domain})
+                response = connection.getresponse()
+                return response.status, dict(response.getheaders()), response.read()
+
+            yield request
+        finally:
+            connection.close()
+
+    @contextmanager
+    def saturated_cover(self, domain='deploy.example', ca=None):
+        stopped, rejected = threading.Event(), threading.Event()
+
+        def traffic():
+            with self.cover_connection(domain, ca=ca) as request:
+                while not stopped.is_set():
+                    if request()[0] == 429:
+                        rejected.set()
+                        stopped.wait(.005)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(traffic)
+            try:
+                self.assertTrue(rejected.wait(5), 'Cover traffic did not exhaust the IP burst')
+                yield
+            finally:
+                stopped.set()
+                future.result(timeout=6)
 
     def client(self, name, negative=False, server_log="xray-server.log", expect_success=True):
         config = copy.deepcopy(self.clients[name])
@@ -490,7 +547,9 @@ http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$p
             '-subj','/CN=deploy.example','-addext','subjectAltName=DNS:deploy.example,DNS:cover.example,DNS:vision.example',
             '-keyout',str(self.key),'-out',str(self.cert)],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
         self.vision_module=feature('vision');self.vision_port=port(self.allocated_ports);fallback=port(self.allocated_ports)
-        self.vision_site=self.vision_module.fallback_config('vision.example',fallback,'/var/www/html/cover-vision').replace('/var/www/html',str(self.root/'www/html'))
+        self.vision_site=self.vision_module.fallback_config(
+            'vision.example',fallback,'/var/www/html/cover-vision',rate_limit=True).replace('/var/www/html',str(self.root/'www/html'))
+        http_port=self.configure_http_site(self.vision_module)
         config=copy.deepcopy(self.server)
         config['inbounds'].append(self.vision_module.inbound('vision.example',self.vision_port,fallback,str(self.cert),str(self.key)))
         self.nginx_config()
@@ -539,7 +598,60 @@ http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$p
         # /assets is still owned by the native subscription backend, not a cover.
         code,_,body=request('deploy.example','/assets/unknown-cover-asset')
         self.assertEqual(code,404);self.assertNotEqual(body,(self.root/'www/html/cover-panel/404.html').read_bytes())
-        self.client('reality',server_log='cover-server.log');self.client('xhttp',server_log='cover-server.log')
+        hostname='deploy.example'
+        home=self.root/'www/html/cover-panel/index.html'
+        resources=('/', *re.findall(r'(?:href|src)="(/[^"]+\.(?:css|svg|ico|js))"',home.read_text()))
+
+        def parallel_loads(visitors, paths, same_ip=False):
+            started=threading.Barrier(visitors,timeout=10)
+
+            def load(index):
+                source='127.0.0.10' if same_ip else f'127.0.0.{20+index}'
+                with self.cover_connection(hostname,source=source) as visit:
+                    started.wait()
+                    return [visit(path)[0] for path in paths]
+
+            with ThreadPoolExecutor(max_workers=visitors) as workers:
+                return Counter(code for result in workers.map(load,range(visitors)) for code in result)
+
+        time.sleep(1.1)
+        self.assertEqual(parallel_loads(10,resources,same_ip=True),{200:10*len(resources)})
+        time.sleep(1.1)
+        self.assertEqual(parallel_loads(30,resources),{200:30*len(resources)})
+        time.sleep(1.1)
+        distributed=parallel_loads(30,('/',)*20)
+        self.assertEqual(set(distributed),{200,429},distributed)
+        print('Cover load: cold visits 10 same-IP / 30 distinct-IP without 429; '
+              f'distributed HTTP 200={distributed[200]}, 429={distributed[429]}', flush=True)
+        time.sleep(1.1)
+
+        # Fill the IP burst on port 80, then verify the same budget over native TLS.
+        for role,domain in (('panel',hostname),('reality','cover.example'),('vision','vision.example')):
+            with self.subTest(role=role), self.cover_connection(domain,http_port=http_port) as redirect:
+                expected=(self.root/'www/html'/('cover-'+role)/'429.html').read_bytes()
+                responses=[redirect('/missing?q=1') for _ in range(140)]
+                rejected=[(headers,body) for status,headers,body in responses if status==429]
+                self.assertTrue(rejected,domain)
+                self.assertTrue(all(headers.get('Cache-Control')=='no-store' and body==expected
+                                    for headers,body in rejected),role)
+                with self.cover_connection(domain) as tls:
+                    secure_responses=[tls() for _ in range(20)]
+                    heads=[tls(method='HEAD') for _ in range(12)]
+                secure_rejected=[(headers,body) for status,headers,body in secure_responses if status==429]
+                self.assertTrue(secure_rejected,role)
+                self.assertTrue(all(headers.get('Cache-Control')=='no-store' and body==expected
+                                    for headers,body in secure_rejected),role)
+                self.assertTrue(any(status==429 and headers.get('Cache-Control')=='no-store' and not body
+                                    for status,headers,body in heads),role)
+                if role=='panel':
+                    self.assertEqual(request('cover.example','/')[0],200)
+                time.sleep(.2)
+                self.assertEqual(request(domain,'/')[0],200)
+
+        with self.saturated_cover(hostname), self.saturated_cover('cover.example'):
+            self.client('reality',server_log='cover-server.log')
+            self.client('xhttp',server_log='cover-server.log')
+            self.client('hysteria2',server_log='cover-server.log')
         self.passed.append('Three personalized covers: native SNI / TLS / PROXY / GET+HEAD / MIME / true 404 / assets / XHTTP')
 
     def test_reality(self): self.transport('reality')
@@ -745,12 +857,9 @@ EOF
 
     def test_native_public_http_authorities_and_subscription_assets(self):
         from test_integrated_features import helper
-        http_port=port(self.allocated_ports)
-        acme=self.root/'acme/.well-known/acme-challenge'; acme.mkdir(parents=True)
+        http_port=self.configure_http_site(helper('vision'))
+        acme=self.root/'www/acme/.well-known/acme-challenge'; acme.mkdir(parents=True)
         (acme/'probe').write_text('http-01-probe')
-        self.http_site=(render('cat > /etc/nginx/sites-available/80.conf',ipv6_listen='')+
-                        helper('vision').acme_config('vision.example',ipv6=False)).replace(
-                            'listen 80;',f'listen 127.0.0.1:{http_port};').replace('/var/www/acme',str(self.root/'acme'))
         self.nginx_config()
         env={**os.environ,'XUI_DB_FOLDER':str(self.root/'db'),
              'XUI_BIN_FOLDER':str(self.root/'bin'),'XUI_LOG_FOLDER':str(self.root/'logs')}
@@ -830,6 +939,14 @@ EOF
                 self.assertEqual(code,404)
                 self.assertFalse(b'location:' in headers.lower())
                 self.assertFalse(re.search(rb'(?im)^server: nginx/',headers))
+        with self.saturated_cover():
+            for protocol in ('--http1.1','--http2'):
+                self.assertIn(429, [request('deploy.example','/missing',protocol)[0] for _ in range(8)])
+                self.assertEqual(request('deploy.example','/panel/',protocol)[0],200)
+                self.assertEqual(request('deploy.example','/subscription/fixture',protocol)[0],200)
+                self.assertEqual(request('deploy.example','/jsonsub/fixture',protocol)[0],200)
+                self.assertEqual(request('deploy.example',root_asset,protocol)[0],200)
+            self.assertEqual(request('deploy.example','/.well-known/acme-challenge/probe',http=True)[2],b'http-01-probe')
         self.passed.append('Public HTTP: exact Host/SNI, h1/h2, scoped assets, native HTML/RAW/JSON, HTTP-01')
 
     def test_diagnostics_cookie_requires_real_panel_session(self):
@@ -1130,8 +1247,9 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
             config=dict(inbounds=[dict(listen='127.0.0.1',port=socks,protocol='socks',settings=dict(udp=False))],outbounds=[outgoing])
             process=self.launch([self.xray,'run','-c',self.validate(config,'cdn-client')],'cdn-client')
             self.ready(process,('127.0.0.1',socks))
-            transfer=subprocess.run(['curl','-fsS','--noproxy','','--socks5-hostname',f'127.0.0.1:{socks}',
-                '--max-time','20',f'http://127.0.0.1:{self.origin.server_port}/cdn-get-cookie'],capture_output=True,timeout=25)
+            with self.saturated_cover():
+                transfer=subprocess.run(['curl','-fsS','--noproxy','','--socks5-hostname',f'127.0.0.1:{socks}',
+                    '--max-time','20',f'http://127.0.0.1:{self.origin.server_port}/cdn-get-cookie'],capture_output=True,timeout=25)
             self.assertEqual(transfer.returncode,0,'Real packet-up GET/cookie transfer failed')
             self.assertEqual(transfer.stdout,self.marker.encode())
             stop(process)
@@ -1368,9 +1486,14 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
                                .replace('https://vision.example/',f'https://vision.example:{self.public}/') for arg in args)
                     args+=('--cacert',str(self.cert if wrong_trust[0] else vision_cert))
                 subprocess.run(args,check=True,capture_output=True,timeout=40)
+            render_fallback=self.vision_module.fallback_config
+
+            def private_fallback(*args, **kwargs):
+                return render_fallback(*args, **kwargs).replace('/var/www/html/cover-vision',str(cover_root)).replace(
+                    '    server_tokens off;',f'    access_log {self.root}/vision-access.log;\n    server_tokens off;')
+
             with patch.object(self.vision_module,'run',side_effect=production_run), \
-                 patch.object(self.vision_module,'fallback_config',return_value=self.vision_module.fallback_config('vision.example',fallback,str(cover_root)).replace(
-                     '    server_tokens off;',f'    access_log {self.root}/vision-access.log;\n    server_tokens off;')):
+                 patch.object(self.vision_module,'fallback_config',side_effect=private_fallback):
                 original_stream=self.vision_artifacts[0].read_bytes()
                 with self.assertRaises(self.vision_module.Failure) as failed:
                     self.vision_module.configure(api,'vision.example',self.vision_port,fallback,
@@ -1471,8 +1594,9 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
             config={'inbounds':[{'listen':'127.0.0.1','port':socks,'protocol':'socks','settings':{'auth':'noauth'}}], 'outbounds':[outbound]}
             process=self.launch([self.xray,'run','-c',self.validate(config,'vision-client')],'vision-client')
             self.ready(process,('127.0.0.1',socks))
-            delivered=subprocess.run(['curl','-fsS','--noproxy','','--socks5-hostname',f'127.0.0.1:{socks}',
-                '--connect-timeout','5','--max-time','15',f'http://127.0.0.1:{self.origin.server_port}/vision'],capture_output=True,text=True,timeout=20)
+            with self.saturated_cover('vision.example',ca=vision_cert):
+                delivered=subprocess.run(['curl','-fsS','--noproxy','','--socks5-hostname',f'127.0.0.1:{socks}',
+                    '--connect-timeout','5','--max-time','15',f'http://127.0.0.1:{self.origin.server_port}/vision'],capture_output=True,text=True,timeout=20)
             self.assertEqual(delivered.returncode,0,delivered.stderr); self.assertEqual(delivered.stdout,self.marker)
             stop(process)
             # A wrong UUID must not carry a proxied request to the internal origin.
@@ -1934,6 +2058,8 @@ for includes in (True,):
         f = PersonalBackup('runTest'); f.setUp()
         try:
             f.seed_telemt(includes)
+            if not historical:
+                f.seed_cover_rate()
             module = types.ModuleType('telemt_backup_acceptance')
             sys.modules[module.__name__] = module
             exec(compile(relocated(source.decode(),f.root),'authenticated-telemt-safety.py','exec'),module.__dict__)
