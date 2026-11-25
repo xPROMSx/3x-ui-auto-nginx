@@ -913,7 +913,10 @@ class Operation:
         names = self.http_names(http)
         allowed = {old['panel'], old['reality'], *((context['manifest'] or {}).get('retained_domains', {}))}
         require(set(names) <= allowed and {old['panel'], old['reality']} <= set(names), 'Unknown names in the project HTTP-01 vhost.')
-        updated_names = list(dict.fromkeys([*names, panel, reality]))
+        # The limited HTTP vhost selects the panel's 429 document via $server_name.
+        managed_redirect = '    include snippets/xui-cover-redirect.conf;'
+        ordered_names = [panel, reality, *names] if managed_redirect in http.splitlines() else [*names, panel, reality]
+        updated_names = list(dict.fromkeys(ordered_names))
         if re.search(r'^    if \(\$host', http, re.M):
             before = '    if ($host !~* ^('+'|'.join(name.replace('.',r'\.') for name in names)+')$) { return 404; }'
             after = '    if ($host !~* ^('+'|'.join(name.replace('.',r'\.') for name in updated_names)+')$) { return 404; }'
