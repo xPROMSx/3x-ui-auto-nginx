@@ -558,9 +558,10 @@ http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$p
         panel=self.launch([self.xui],'cover-panel',{**os.environ,'XUI_DB_FOLDER':str(self.root/'db'),
             'XUI_BIN_FOLDER':str(self.root/'bin'),'XUI_LOG_FOLDER':str(self.root/'logs')})
         self.ready(panel,('127.0.0.1',self.backends['panel']))
-        def request(domain,path,head=False):
+        def request(domain,path,head=False,headers=()):
             args=['curl','-q','-sS','--noproxy','*','--cacert',str(self.cert),'--resolve',
                 f'{domain}:{self.public}:127.0.0.1','--max-time','10','-w','\\n%{http_code}|%{content_type}',
+                *[part for header in headers for part in ('-H',header)],
                 f'https://{domain}:{self.public}'+path]
             if head:args.insert(1,'-I')
             result=subprocess.check_output(args,timeout=15);body,_,meta=result.rpartition(b'\n')
@@ -588,6 +589,11 @@ http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$p
                     self.assertEqual(followed,200);self.assertEqual(body,(directory/'index.html').read_bytes())
             code,_,headers=request(domain,'/',True)
             self.assertEqual(code,200);self.assertNotIn(b'<!doctype',headers.lower())
+            modified=re.search(rb'(?im)^last-modified: ([^\r\n]+)',headers)
+            self.assertIsNotNone(modified)
+            self.assertNotIn(b'cache-control: no-store',headers.lower())
+            code,_,body=request(domain,'/',headers=['If-Modified-Since: '+modified[1].decode()])
+            self.assertEqual((code,body),(304,b''))
             for relative in ('static/site.css','static/hero.svg','favicon.ico','favicon.svg',
                              *[str(p.relative_to(site)) for p in (site/'static').glob('*.js')]):
                 code,mime,body=request(domain,'/'+relative)
@@ -649,9 +655,8 @@ http {{ include /etc/nginx/mime.types; log_format reality_probe '$remote_addr|$p
                 self.assertEqual(request(domain,'/')[0],200)
 
         with self.saturated_cover(hostname), self.saturated_cover('cover.example'):
-            self.client('reality',server_log='cover-server.log')
-            self.client('xhttp',server_log='cover-server.log')
-            self.client('hysteria2',server_log='cover-server.log')
+            for transport in ('reality','xhttp','hysteria2','ws','trojan-grpc'):
+                self.client(transport,server_log='cover-server.log')
         self.passed.append('Three personalized covers: native SNI / TLS / PROXY / GET+HEAD / MIME / true 404 / assets / XHTTP')
 
     def test_reality(self): self.transport('reality')
@@ -1003,19 +1008,20 @@ EOF
                                      'integration',self.auth,self.root,options)
         self.assertEqual(request('/panel/diag',api.cookie,'--http2')[0],302)
         self.assertTrue('\tdiag_key\t' in api.cookie.read_text(),'Authenticated SSO did not issue diagnostics access')
-        for protocol in ('--http1.1','--http2'):
-            code,headers,body,_=request('/diagnostics/',api.cookie,protocol)
-            self.assertEqual(code,200)
-            self.assertFalse(b'diag_key=' in headers,'Diagnostics page must not mint or renew its cookie')
-            self.assertTrue(b'Network Diagnostics' in body)
-            for file in ('speedtest.js','speedtest_worker.js','testfiles/probe.bin'):
-                self.assertEqual(request('/diagnostics/'+file,api.cookie,protocol)[0],200)
-            self.assertEqual(request('/diagnostics/api/st/ping',api.cookie,protocol)[0],200)
-            self.assertEqual(request('/diagnostics/api/st/getip',api.cookie,protocol)[2],b'127.0.0.1')
-            self.assertEqual(request('/diagnostics/api/st/up',api.cookie,protocol,'POST')[0],200)
-        code,_,body,_=request('/diagnostics/api/mtr',api.cookie,'--http2','POST')
-        self.assertEqual(code,400)  # Real backend still rejects the local/private MTR destination.
-        self.assertTrue('error' in json.loads(body),'Expected bounded MTR validation response')
+        with self.saturated_cover():
+            for protocol in ('--http1.1','--http2'):
+                code,headers,body,_=request('/diagnostics/',api.cookie,protocol)
+                self.assertEqual(code,200)
+                self.assertFalse(b'diag_key=' in headers,'Diagnostics page must not mint or renew its cookie')
+                self.assertTrue(b'Network Diagnostics' in body)
+                for file in ('speedtest.js','speedtest_worker.js','testfiles/probe.bin'):
+                    self.assertEqual(request('/diagnostics/'+file,api.cookie,protocol)[0],200)
+                self.assertEqual(request('/diagnostics/api/st/ping',api.cookie,protocol)[0],200)
+                self.assertEqual(request('/diagnostics/api/st/getip',api.cookie,protocol)[2],b'127.0.0.1')
+                self.assertEqual(request('/diagnostics/api/st/up',api.cookie,protocol,'POST')[0],200)
+            code,_,body,_=request('/diagnostics/api/mtr',api.cookie,'--http2','POST')
+            self.assertEqual(code,400)  # Real backend still rejects the local/private MTR destination.
+            self.assertTrue('error' in json.loads(body),'Expected bounded MTR validation response')
         self.passed.append('Diagnostics: anonymous deny / real panel SSO / LibreSpeed and MTR boundaries')
 
     def test_fresh_secret_lengths_native_panel_bootstrap_and_login(self):

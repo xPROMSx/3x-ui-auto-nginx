@@ -2,6 +2,7 @@
 import base64
 import errno
 import hashlib
+import http.client
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -301,6 +302,21 @@ location / {{ return 404; }} }}\n'''
         self.assertEqual(status,200);self.assertEqual(json.loads(body)['version'],AGH_VERSION)
         status,_,_=self.request('/'+self.prefix+'/control/status',options=('-H','Cookie: agh_session=invalid'))
         self.assertIn(status,(401,403))
+        connection=http.client.HTTPConnection('127.0.0.1',self.http,timeout=5)
+        try:
+            def redirect():
+                connection.request('GET','/cover-probe',headers={'Host':self.domain})
+                response=connection.getresponse()
+                response.read()
+                return response.status
+
+            self.assertIn(429,[redirect() for _ in range(140)])
+            status,body,_=self.request(self.doh_path,query,('-H','Content-Type: application/dns-message'))
+            self.assertEqual(status,200);self.dns_answer(query,body)
+            self.assertEqual(self.request('/'+self.prefix+'/control/status',options=('-b',jar))[0],200)
+            self.assertIn(429,[redirect() for _ in range(32)])
+        finally:
+            connection.close()
 
     def test_adguard_bad_config_and_listener_contract(self):
         original=self.config.read_text()
