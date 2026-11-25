@@ -865,7 +865,7 @@ curl() {
                                     path.write_text(path.read_text().replace('/etc/letsencrypt/',str(f.p('/etc/letsencrypt'))+'/'))
                             return subprocess.check_output([nginx,*map(str,args[1:])],stderr=subprocess.STDOUT,timeout=15)
                         render_runtime()
-                        validation=runtime/'validation.conf'
+                        validation=config.with_name('validation.conf')
                         validation.write_text(config.read_text().replace(str(pid),str(runtime/'validation.pid')))
                         result=subprocess.check_output([nginx,args[1],'-p',str(runtime)+'/', '-c',str(validation)],stderr=subprocess.STDOUT,timeout=15)
                         return result.replace(str(tree).encode(),b'/etc/nginx')
