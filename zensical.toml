@@ -18,11 +18,12 @@ nav = [
     # Остальные пункты в русском алфавитном порядке.
     { "Балансировщик и резервный VPS" = "guides/balancer.md" },
     { "Безопасность VPS" = "guides/security.md" },
-    { "Импорт VLESS REALITY" = "guides/import-reality.md" },
+    { "Исходящие подключения" = "guides/import-reality.md" },
     { "Каскад из двух VPS" = "guides/cascade.md" },
     { "Ключи SSH" = "guides/ssh-keys.md" },
     { "Личный DNS" = "guides/dns.md" },
     { "Маршрутизация трафика" = "guides/routing.md" },
+    { "Обновление проекта и переход на новую версию" = "guides/update.md" },
     { "Отключение входа по паролю SSH" = "guides/ssh-password.md" },
     { "Подключения и nginx" = "guides/connections.md" },
     { "Резервные копии и клиенты" = "guides/backup.md" },

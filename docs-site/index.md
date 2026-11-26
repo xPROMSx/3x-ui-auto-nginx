@@ -144,6 +144,7 @@ hide:
 
 [Полный Backup и Restore на другом VPS](guides/backup.md){ .md-button }
 [Перенос клиентов и подписок](guides/backup.md#import-clients){ .md-button }
+[Переход на новую версию](guides/update.md){ .md-button }
 
 ## Домен можно сменить, сервер не обязательно переустанавливать {#domain-change}
 
