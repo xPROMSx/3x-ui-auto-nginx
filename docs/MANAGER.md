@@ -141,9 +141,10 @@ continue to select Installation directly; Change Domains does not reinstall or
 update 3x-ui.
 
 Point all new A/AAAA records to this VPS and keep TCP/80 reachable for Let's
-Encrypt HTTP-01. Domains must remain distinct from each other and Vision.
-Neither new domain may take the other role's current name. Unknown DNS identity,
-foreign/ambiguous lineages, certificate or SNI overrides, custom SQLite storage,
+Encrypt HTTP-01. Old names may already point elsewhere or be absent from DNS.
+Domains must remain distinct from each other and Vision.
+Neither new domain may take the other role's current name.
+Foreign/ambiguous lineages, certificate or SNI overrides, custom SQLite storage,
 unknown service/layout or contradictory manifest cause refusal before switching.
 Known local SQLite layouts are 3x-ui **v3.10.2/v3.11.0** on the supported OSes.
 
@@ -306,8 +307,9 @@ Manager is already installed. An existing launcher at the fixed path
 
 On first installation only, the entry point requires root, Ubuntu 24.04/26.04,
 the local 3X-UI database and Nginx configuration, active x-ui/nginx and successful
-`nginx -t -q`. Consent defaults to No; cancellation/EOF downloads nothing and
-returns to the main menu. Existing installations require root and launcher
+`nginx -t -q`. Press Enter or type `y` or `Y` to continue at the `[Y/n]` prompt.
+Cancellation or EOF returns to the main menu without downloading the bootstrap.
+Existing installations require root and launcher
 safety checks, without an additional confirmation or active-stack requirement.
 
 The current official bootstrap is downloaded over verified HTTPS from

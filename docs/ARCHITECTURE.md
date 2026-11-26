@@ -74,7 +74,7 @@ Panel credentials, client UUIDs/passwords/keys, API sessions/tokens, subscriptio
 
 ## Telegram Web Proxy Manager companion
 
-[Telegram Web Proxy Manager](https://github.com/xPROMSx/telegram-web-proxy-manager) is a companion, not an automatically installed or conflict-free component. Main-menu option 4 downloads its official bootstrap from current `main` on every launch (trusting GitHub HTTPS and that branch). Existing launchers must be root-owned regular 0755 files without symlinks; option 4 does not execute them directly or fall back to them. First installation requires the Ubuntu/working-stack preflight and default-No consent. The bootstrap owns SHA selection, validation, updates and recovery. No stack lock is held while it runs; pending Change Domains recovery still runs before menu actions.
+[Telegram Web Proxy Manager](https://github.com/xPROMSx/telegram-web-proxy-manager) is a companion, not an automatically installed or conflict-free component. Main-menu option 4 downloads its official bootstrap from current `main` on every launch (trusting GitHub HTTPS and that branch). Existing launchers must be root-owned regular 0755 files without symlinks; option 4 does not execute them directly or fall back to them. First installation requires the Ubuntu/working-stack preflight and confirmation at a `[Y/n]` prompt. The bootstrap owns SHA selection, validation, updates and recovery. No stack lock is held while it runs; pending Change Domains recovery still runs before menu actions.
 
 ## CI
 
