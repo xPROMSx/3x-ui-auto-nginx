@@ -21,6 +21,7 @@ import pwd
 import re
 import shutil
 import signal
+import socket
 import sqlite3
 import ssl
 import stat
