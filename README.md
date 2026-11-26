@@ -2,21 +2,17 @@
 
 🇷🇺 **Русский** · [🇬🇧 English](README_EN.md) · [🇪🇬 العربية](README_AR.md) · [🇮🇷 فارسی](README_FA.md) · [🇨🇳 简体中文](README_ZH_CN.md) · [🇪🇸 Español](README_ES.md) · [🇹🇷 Türkçe](README_TR.md)
 
-<h1 align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="460"></h1>
+<h1 align="center"><img src="assets/branding/logo.png" alt="3X-UI AUTO NGINX" width="300"></h1>
 
 <a id="automated-deployment-of-3x-ui--xray-core-on-your-own-vps"></a>
 <a id="автоматическое-развёртывание-3x-ui--xray-core-на-собственном-vps"></a>
 
-### Ваш собственный 3x-ui / Xray сервер за несколько минут
+<img src="docs-site/assets/readme/architecture.png" width="900" alt="3X-UI AUTO NGINX. Готовый прокси-сервер на базе 3x-ui и nginx. Простая установка, защита и удобное управление. REALITY, XHTTP и Hysteria2">
 
-**REALITY · XHTTP · HYSTERIA2 · КАСКАД · ADGUARD HOME · BACKUP / RESTORE**
-
-[![Установить](https://img.shields.io/badge/%D0%A3%D1%81%D1%82%D0%B0%D0%BD%D0%BE%D0%B2%D0%B8%D1%82%D1%8C-177F73?style=for-the-badge)](#installation)
+[![Установить](https://img.shields.io/badge/%D0%A3%D1%81%D1%82%D0%B0%D0%BD%D0%BE%D0%B2%D0%B8%D1%82%D1%8C-F57833?style=for-the-badge)](#installation)
 [![Обновить](https://img.shields.io/badge/%D0%9E%D0%B1%D0%BD%D0%BE%D0%B2%D0%B8%D1%82%D1%8C-356FA8?style=for-the-badge)](#installation-vs-update)
-[![Документация](https://img.shields.io/badge/%D0%94%D0%BE%D0%BA%D1%83%D0%BC%D0%B5%D0%BD%D1%82%D0%B0%D1%86%D0%B8%D1%8F-355A78?style=for-the-badge)](https://xpromsx.github.io/3x-ui-auto-nginx/)
+[![Документация](https://img.shields.io/badge/%D0%94%D0%BE%D0%BA%D1%83%D0%BC%D0%B5%D0%BD%D1%82%D0%B0%D1%86%D0%B8%D1%8F-7046A8?style=for-the-badge)](https://xpromsx.github.io/3x-ui-auto-nginx/)
 [![Поддержать проект](https://img.shields.io/badge/%D0%9F%D0%BE%D0%B4%D0%B4%D0%B5%D1%80%D0%B6%D0%B0%D1%82%D1%8C_%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82-EA4AAA?style=for-the-badge)](#support-development)
-
-<img src="docs-site/assets/readme/architecture.png" width="900" alt="Устройства подключаются к вашему VPS с nginx и Xray, а через него выходят в интернет">
 
 [![Releases](https://img.shields.io/github/v/release/xPROMSx/3x-ui-auto-nginx)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
 [![Downloads](https://img.shields.io/github/downloads/xPROMSx/3x-ui-auto-nginx/total?label=Downloads)](https://github.com/xPROMSx/3x-ui-auto-nginx/releases)
@@ -57,7 +53,13 @@
 - **Защита VPS.** Панель и подписки доступны по HTTPS без открытия внутренних служебных портов. UFW учитывает SSH-доступ, а nginx ограничивает интенсивные запросы к публичным сайтам, не затрагивая прокси-подключения. Дополнительно можно включить Fail2ban, шифрованный системный DNS и автоматические обновления безопасности.
 - **Личный DNS и Telegram WEB-прокси.** AdGuard Home помогает блокировать рекламу и отслеживание на ваших устройствах через DoH и дополнительный DoT. Отдельный Telegram Web Proxy Manager доступен прямо из главного меню, в том числе для установки с выходом через каскад.
 
-**Проект полностью бесплатный.** Все функции доступны без обязательных подписок и платных ограничений. Поддержка помогает оплачивать тестовые VPS, проверять новые версии компонентов и развивать проект. Если он экономит ваше время, [поддержите его развитие](#support-development).
+**Проект полностью бесплатный.** Все функции доступны без обязательных подписок и платных ограничений.
+
+<p align="center">
+<a href="#support-development"><img src="docs-site/assets/readme/support.png" alt="Поддержите развитие проекта. Ваша поддержка помогает оплачивать тестовые VPS, проверять новые версии компонентов, выпускать новые функции и поддерживать документацию." width="586"></a>
+</p>
+
+[Способы поддержки проекта](#support-development)
 
 ## 📚 С чего начать
 
