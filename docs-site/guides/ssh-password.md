@@ -174,14 +174,6 @@ EOF
 
 ### 2. Убедись, что вход по паролю запрещён
 
-Сначала на VPS от root повтори проверку:
-
-```bash
-sshd -T | grep -E '^(pubkeyauthentication|passwordauthentication|kbdinteractiveauthentication) '
-```
-
-Ожидается `pubkeyauthentication yes`, `passwordauthentication no` и `kbdinteractiveauthentication no`.
-
 !!! warning "Не повторяй неудачные подключения много раз"
     Если при установке 3X-UI AUTO NGINX ты включил расширенную безопасность VPS, Fail2ban может временно заблокировать твой IP-адрес за неудачные попытки SSH-входа. Одной проверки достаточно. Не перебирай пароли и не повторяй команду, если сервер уже ответил отказом. Сохраняй старый рабочий сеанс.
 
