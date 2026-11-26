@@ -534,7 +534,7 @@ x-ui-backup extract /path/to/archive.tar.gz ./recovered-backup
 **Настройка и расширение каскада:**
 
 - [Каскад из двух VPS](https://xpromsx.github.io/3x-ui-auto-nginx/guides/cascade/) - от подготовки двух серверов до проверки работы.
-- [Исходящие подключения](https://xpromsx.github.io/3x-ui-auto-nginx/guides/import-reality/) - добавьте другой сервер через VLESS REALITY или XHTTP как дополнительный выход в интернет.
+- [Добавляем исходящий сервер](https://xpromsx.github.io/3x-ui-auto-nginx/guides/import-reality/) - добавьте другой сервер через VLESS REALITY или XHTTP как дополнительный выход в интернет.
 - [Маршрутизация в 3x-ui](https://xpromsx.github.io/3x-ui-auto-nginx/guides/routing/) - направляйте отдельные сайты, клиентов или подключения через нужный VPS.
 - [Резервный сервер и балансировщик](https://xpromsx.github.io/3x-ui-auto-nginx/guides/balancer/) - настройте переключение на резервный выход при недоступности основного.
 

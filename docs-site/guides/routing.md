@@ -167,7 +167,7 @@ geosite:youtube
 
 ---
 
-[Исходящие подключения](import-reality.md) · [Резервный сервер для каскада](balancer.md) · [Каскад из двух VPS](cascade.md)
+[Добавляем исходящий сервер](import-reality.md) · [Резервный сервер для каскада](balancer.md) · [Каскад из двух VPS](cascade.md)
 
 !!! note "Авторство и использование материалов"
     **© 2026 xPROMSx contributors · 3X-UI AUTO NGINX**

@@ -18,7 +18,7 @@ nav = [
     # Остальные пункты в русском алфавитном порядке.
     { "Балансировщик и резервный VPS" = "guides/balancer.md" },
     { "Безопасность VPS" = "guides/security.md" },
-    { "Исходящие подключения" = "guides/import-reality.md" },
+    { "Добавляем исходящий сервер" = "guides/import-reality.md" },
     { "Каскад из двух VPS" = "guides/cascade.md" },
     { "Ключи SSH" = "guides/ssh-keys.md" },
     { "Личный DNS" = "guides/dns.md" },
