@@ -165,7 +165,11 @@ def validate_credentials(rows, email):
             raise ValueError('Missing, disabled or duplicate inbound client')
         client = matches[0]
         stream = object_value(row.get('streamSettings') or {})
-        vision = row['protocol'] == 'vless' and stream.get('network') in ('tcp', 'raw') and stream.get('security') in ('tls', 'reality')
+        settings = object_value(row['settings'])
+        eligible = (stream.get('network') in ('tcp', 'raw') and stream.get('security') in ('tls', 'reality')
+                    or any(settings.get(key) not in (None, '', 'none') for key in ('encryption', 'decryption')))
+        vision = (row['protocol'] == 'vless' and not row.get('disableFlow')
+                  and stream.get('network') != 'xdrive' and eligible)
         if client.get('flow', '') != ('xtls-rprx-vision' if vision else ''):
             raise ValueError('Wrong per-inbound flow: ' + row['protocol'] + '/' + stream.get('network', 'none'))
         if row['protocol'] == 'vless':

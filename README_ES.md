@@ -239,6 +239,8 @@ La configuración y la regla del cortafuegos están incluidas en **Backup / Rest
 
 > `Add an additional CDN-compatible XHTTP connection? [y/N]:`
 
+Por defecto se activa el cifrado adicional VLESS ML-KEM-768 native entre el cliente y Xray, compatible con Vision. El núcleo del cliente debe admitir VLESS Encryption; se puede desactivar en el panel.
+
 *Conexión adicional · No se instala por defecto (`N`)*
 
 Se crea una conexión VLESS independiente con transporte XHTTP en modo packet-up, preparada para usarla a través de una CDN. La conexión se crea desactivada en 3X-UI.

@@ -80,6 +80,15 @@ def configure(panel, domain, port, path, flag, snippet):
         raise ValueError('Conflicting XHTTP CDN endpoint')
     iid = None
     try:
+        auths = panel.request('panel/api/server/getNewVlessEnc')['obj']['auths']
+        matches = [item for item in auths if isinstance(item, dict) and item.get('id') == 'mlkem768']
+        if len(matches) != 1 or any(
+                not isinstance(matches[0].get(key), str) or
+                not re.fullmatch(r'mlkem768x25519plus\.native\.[^.]+\.[^.]+', matches[0][key])
+                for key in ('encryption', 'decryption')):
+            raise ValueError('VLESS encryption key generation failed')
+        expected['settings'].pop('fallbacks')  # Xray forbids even empty fallbacks with decryption.
+        expected['settings'].update({key: matches[0][key] for key in ('encryption', 'decryption')})
         row = panel.request('panel/api/inbounds/add', expected)['obj']; iid = row['id']
         if any(row.get(k) != expected[k] for k in ('enable', 'listen', 'port', 'protocol', 'tag', 'streamSettings')):
             raise ValueError('Unexpected XHTTP CDN API configuration')

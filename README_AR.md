@@ -239,6 +239,8 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 > `Add an additional CDN-compatible XHTTP connection? [y/N]:`
 
+يُفعّل افتراضيًا تشفير VLESS ML-KEM-768 native الإضافي بين العميل وXray مع دعم Vision. يجب أن تدعم نواة العميل VLESS Encryption؛ ويمكن تعطيله من اللوحة.
+
 *اتصال إضافي · لا يُثبّت افتراضيًا (`N`)*
 
 يُنشأ اتصال VLESS مستقل يستخدم نقل XHTTP في وضع packet-up، بإعدادات خادم مهيأة للاستخدام عبر CDN. يُنشأ الاتصال معطّلًا في لوحة 3X-UI.

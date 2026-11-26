@@ -239,6 +239,8 @@ Yapılandırma ve gerekli güvenlik duvarı kuralı **Backup / Restore v3** kaps
 
 > `Add an additional CDN-compatible XHTTP connection? [y/N]:`
 
+İstemci ile Xray arasında ek VLESS ML-KEM-768 native şifrelemesi varsayılan olarak etkindir ve Vision destekler. İstemci çekirdeği VLESS Encryption desteklemelidir; şifreleme panelden kapatılabilir.
+
 *Ek bağlantı · Varsayılan olarak kurulmaz (`N`)*
 
 CDN üzerinden kullanıma önceden hazırlanmış, packet-up modunda XHTTP taşımasını kullanan ayrı bir VLESS bağlantısı oluşturulur. Bağlantı 3X-UI panelinde devre dışı bırakılmış olarak oluşturulur.

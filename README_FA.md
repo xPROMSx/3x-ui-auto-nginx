@@ -239,6 +239,8 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 > `Add an additional CDN-compatible XHTTP connection? [y/N]:`
 
+رمزنگاری اضافی VLESS ML-KEM-768 native بین کلاینت و Xray به‌طور پیش‌فرض فعال است و از Vision پشتیبانی می‌کند. هستهٔ کلاینت باید از VLESS Encryption پشتیبانی کند؛ می‌توان آن را در پنل غیرفعال کرد.
+
 *اتصال اضافی · به‌صورت پیش‌فرض نصب نمی‌شود (`N`)*
 
 یک اتصال مستقل VLESS با انتقال XHTTP در حالت packet-up ساخته می‌شود که تنظیمات سرور آن برای استفاده از CDN آماده شده است. این اتصال در پنل 3X-UI به‌صورت غیرفعال ساخته می‌شود.

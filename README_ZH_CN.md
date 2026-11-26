@@ -239,6 +239,8 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 
 > `Add an additional CDN-compatible XHTTP connection? [y/N]:`
 
+默认启用客户端与 Xray 之间的 VLESS ML-KEM-768 native 附加加密，并支持 Vision。客户端内核必须支持 VLESS Encryption；可在面板中关闭加密。
+
 *附加连接 · 默认不安装（`N`）*
 
 创建一个独立的 VLESS 连接，使用 packet-up 模式的 XHTTP 传输，并预先配置好用于 CDN 的服务端参数。该连接在 3X-UI 面板中创建时处于禁用状态。

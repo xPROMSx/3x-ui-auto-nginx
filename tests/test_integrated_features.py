@@ -65,7 +65,7 @@ class IntegratedFeatures(unittest.TestCase):
     def test_xhttp_cdn_failure_removes_only_its_new_disabled_inbound_and_route(self):
         import copy
         cdn=helper('xhttp-cdn')
-        for stage in ('create-response','host','nginx-test','nginx-reload','none','rollback'):
+        for stage in ('generation','missing','wrong-mode','create-response','host','nginx-test','nginx-reload','none','rollback'):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
                 previous={'id':1,'tag':'core','port':8443}
                 rows=[previous];calls=[];used=False
@@ -73,6 +73,14 @@ class IntegratedFeatures(unittest.TestCase):
                     def request(self,path,data=None):
                         nonlocal used
                         if path.endswith('/list'):return {'obj':copy.deepcopy(rows)}
+                        if path.endswith('/getNewVlessEnc'):
+                            calls.append(('generation',))
+                            if stage == 'generation': raise ValueError('API failure')
+                            pair = dict(id='mlkem768', encryption='mlkem768x25519plus.native.0rtt.public',
+                                        decryption='mlkem768x25519plus.native.600s.private')
+                            if stage == 'missing': pair.pop('decryption')
+                            if stage == 'wrong-mode': pair['encryption'] = 'mlkem768x25519plus.xorpub.0rtt.public'
+                            return {'obj': {'auths': [dict(id='mlkem768_random'), pair]}}
                         if path.endswith('/inbounds/add'):
                             rows.append({'id':2,**copy.deepcopy(data)})
                             if stage=='create-response':raise ValueError('Private API response omitted')
@@ -96,9 +104,32 @@ class IntegratedFeatures(unittest.TestCase):
                     result=cdn.configure(Panel(),'panel.example',12345,'/Independent12345/cookie','🇫🇮',route)
                 self.assertEqual(result,'configured' if stage=='none' else 'failed_unverified' if stage=='rollback' else 'failed_rolled_back')
                 self.assertEqual(rows[0],previous)
+                self.assertEqual(calls.count(('generation',)), 1)
+                if stage == 'none':
+                    self.assertNotIn('fallbacks', rows[1]['settings'])
+                    self.assertEqual(rows[1]['settings']['encryption'], 'mlkem768x25519plus.native.0rtt.public')
+                    self.assertEqual(rows[1]['settings']['decryption'], 'mlkem768x25519plus.native.600s.private')
                 if stage not in ('none','rollback'):
                     self.assertEqual(rows,[previous]);self.assertFalse(route.exists())
                 if stage=='none':self.assertIs(rows[1]['enable'],False)
+
+    def test_validate_credentials_vision_eligibility(self):
+        client = helper('client')
+        identity = {'email': 'test', 'enable': True, 'id': '00000000-0000-4000-8000-000000000001'}
+        for network, security, encryption, disabled, vision in (
+                ('xhttp', 'none', 'none', False, False),
+                ('xhttp', 'none', 'mlkem768x25519plus.native.0rtt.key', False, True),
+                ('tcp', 'reality', 'none', False, True),
+                ('xhttp', 'none', 'encrypted', True, False),
+                ('xdrive', 'none', 'encrypted', False, False)):
+            with self.subTest(network=network, disabled=disabled):
+                row = {'protocol': 'vless', 'disableFlow': disabled,
+                       'settings': {'clients': [{**identity, 'flow': 'xtls-rprx-vision' if vision else ''}],
+                                    'encryption': encryption},
+                       'streamSettings': {'network': network, 'security': security}}
+                client.validate_credentials([row], 'test')
+                row['settings']['clients'][0]['flow'] = '' if vision else 'xtls-rprx-vision'
+                with self.assertRaises(ValueError): client.validate_credentials([row], 'test')
 
     def test_xhttp_cdn_preflight_uses_independent_random_path_and_reserved_free_port(self):
         import socket

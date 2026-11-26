@@ -239,6 +239,8 @@ The configuration and necessary firewall rule are included in **Backup / Restore
 
 > `Add an additional CDN-compatible XHTTP connection? [y/N]:`
 
+VLESS ML-KEM-768 native encryption between the client and Xray is enabled by default and supports Vision. The client core must support VLESS Encryption; it can be disabled in the panel.
+
 *Additional connection · Not installed by default (`N`)*
 
 Creates a separate VLESS connection using XHTTP in packet-up mode, preconfigured for use through a CDN. The connection is created disabled in 3X-UI.

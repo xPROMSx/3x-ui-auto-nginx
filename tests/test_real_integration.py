@@ -1187,8 +1187,10 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
         with sqlite3.connect(self.root/'db/x-ui.db') as db:
             db.execute("UPDATE inbounds SET enable=0 WHERE protocol='trojan' OR json_extract(stream_settings,'$.network')='ws'")
             for key,value in {'subURI':f'https://deploy.example:{self.public}/subscription/',
-                              'subJsonURI':f'https://deploy.example:{self.public}/jsonsub/'}.items():
-                db.execute('UPDATE settings SET value=? WHERE key=?',(value,key))
+                              'subJsonURI':f'https://deploy.example:{self.public}/jsonsub/',
+                              'subClashEnable':'true', 'subClashAutoDetect':'true'}.items():
+                if not db.execute('UPDATE settings SET value=? WHERE key=?',(value,key)).rowcount:
+                    db.execute('INSERT INTO settings (key,value) VALUES (?,?)',(key,value))
         self.nginx_config()
         env={**os.environ,'XUI_DB_FOLDER':str(self.root/'db'),'XUI_BIN_FOLDER':str(self.root/'bin'),'XUI_LOG_FOLDER':str(self.root/'logs')}
         server=self.launch([self.xui],'cdn-panel',env)
@@ -1209,6 +1211,11 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
             row=next(r for r in rows if r['port']==local_port)
             self.assertIs(row['enable'],False);self.assertEqual(row['remark'],'🇫🇮 xhttp CDN')
             self.assertEqual(row['streamSettings'],cdn.inbound(local_port,path,'🇫🇮')['streamSettings'])
+            settings=client.object_value(row['settings'])
+            encryption=settings['encryption']
+            self.assertTrue('.native.' in encryption and '.native.' in settings['decryption'],
+                            'Generated encryption must use native mode')
+            self.assertEqual(settings['clients'],[])
             sniffing=json.loads(row['sniffing']) if isinstance(row['sniffing'],str) else row['sniffing']
             self.assertEqual(sniffing,dict(enabled=True,destOverride=['http','tls','quic','fakedns'],routeOnly=False))
             with sqlite3.connect(self.root/'db/x-ui.db') as db:
@@ -1221,6 +1228,8 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
             disabled_json=json.loads(client.fetch(api,f'https://deploy.example:{self.public}/jsonsub/'+initial['subId']))
             self.assertFalse(any(o.get('streamSettings',{}).get('xhttpSettings',{}).get('path')==path
                                  for config in disabled_json for o in config.get('outbounds',[])))
+            disabled_clash=client.fetch(api,initial['url']+'?provider=1',user_agent='Clash')
+            self.assertNotIn(path.encode(),disabled_clash)
             record=api.request('panel/api/clients/get/'+initial['email'])['obj']
             self.assertNotIn(row['id'],record['inboundIds'])
             # Simulate the user's explicit panel actions, not installer attachment logic.
@@ -1232,6 +1241,12 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
             link=next(link for link in links if parse_qs(urlsplit(link).query).get('path')==[path])
             query=parse_qs(urlsplit(link).query)
             self.assertEqual(query['sni'],['deploy.example']);self.assertEqual(query['fp'],['firefox'])
+            self.assertTrue(query.get('encryption') == [encryption], 'RAW encryption mismatch')
+            self.assertEqual(query['flow'],['xtls-rprx-vision'])
+            clash=client.fetch(api,initial['url']+'?provider=1',user_agent='Clash').decode()
+            self.assertTrue(encryption in clash, 'Clash encryption mismatch')
+            self.assertIn('xtls-rprx-vision',clash)
+            self.assertIn(path,clash)
             extra=json.loads(query['extra'][0])
             self.assertNotIn('xmux',extra)
             for key in ('mode','uplinkHTTPMethod','uplinkDataPlacement','uplinkDataKey','scMaxEachPostBytes',
@@ -1245,6 +1260,9 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
                 if key in cdn.PARAMETERS:
                     self.assertEqual(outgoing['streamSettings']['xhttpSettings'][key],cdn.PARAMETERS[key])
             destination=outgoing['settings']['servers'][0] if 'servers' in outgoing['settings'] else outgoing['settings']
+            user=destination.get('users',[destination])[0]
+            self.assertTrue(user.get('encryption') == encryption, 'JSON encryption mismatch')
+            self.assertEqual(user['flow'],'xtls-rprx-vision')
             self.assertEqual((destination['address'],destination['port']),('deploy.example',443))
             destination.update(address='127.0.0.1',port=self.public)
             outgoing['streamSettings']['tlsSettings'].update(serverName='deploy.example',allowInsecure=False,
@@ -1259,6 +1277,9 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
             self.assertEqual(transfer.returncode,0,'Real packet-up GET/cookie transfer failed')
             self.assertEqual(transfer.stdout,self.marker.encode())
             stop(process)
+            another=client.create(api)
+            client.validate_credentials(client.active_inbounds(api),another['email'])
+            self.assertIn(row['id'],api.request('panel/api/clients/get/'+another['email'])['obj']['inboundIds'])
             code=subprocess.check_output(['curl','-q','-sS','--noproxy','*',*api.options,'--max-time','10',
                  '-o','/dev/null','-w','%{http_code}',f'https://deploy.example:{self.public}'+path],timeout=15)
             self.assertEqual(code,b'307')
