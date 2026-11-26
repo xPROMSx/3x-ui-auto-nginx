@@ -7,7 +7,7 @@
 <a id="automated-deployment-of-3x-ui--xray-core-on-your-own-vps"></a>
 <a id="автоматическое-развёртывание-3x-ui--xray-core-на-собственном-vps"></a>
 
-<img src="docs-site/assets/readme/architecture.png" width="900" alt="3X-UI AUTO NGINX. Готовый прокси-сервер на базе 3x-ui и nginx. Простая установка, защита и удобное управление. REALITY, XHTTP и Hysteria2">
+<img src="docs-site/assets/readme/architecture.png" width="900" alt="3X-UI AUTO NGINX. Готовый прокси-сервер на вашем VPS">
 
 [![Установить](https://img.shields.io/badge/%D0%A3%D1%81%D1%82%D0%B0%D0%BD%D0%BE%D0%B2%D0%B8%D1%82%D1%8C-F57833?style=for-the-badge)](#installation)
 [![Обновить](https://img.shields.io/badge/%D0%9E%D0%B1%D0%BD%D0%BE%D0%B2%D0%B8%D1%82%D1%8C-356FA8?style=for-the-badge)](#installation-vs-update)
@@ -56,10 +56,8 @@
 **Проект полностью бесплатный.** Все функции доступны без обязательных подписок и платных ограничений.
 
 <p align="center">
-<a href="#support-development"><img src="docs-site/assets/readme/support.png" alt="Поддержите развитие проекта. Ваша поддержка помогает оплачивать тестовые VPS, проверять новые версии компонентов, выпускать новые функции и поддерживать документацию." width="586"></a>
+<a href="docs/SUPPORT.md"><img src="docs-site/assets/readme/support.png" alt="Поддержите развитие проекта. Ваша поддержка помогает оплачивать тестовые VPS, проверять новые версии компонентов, выпускать новые функции и поддерживать документацию." width="586"></a>
 </p>
-
-[Способы поддержки проекта](#support-development)
 
 ## 📚 С чего начать
 
@@ -343,8 +341,8 @@ x-ui-backup extract /path/to/archive.tar.gz ./recovered-backup
 ## 🔗 Каскад из двух серверов
 
 <p align="center">
-<img src="docs-site/assets/readme/cascade-routing.png" width="900" alt="Устройства соединяются с входным VPS. Один маршрут ведёт через выходной VPS в интернет, второй напрямую в интернет">
-<br><sub>Бирюзовый маршрут - через выходной VPS; синий - напрямую через входной.</sub>
+<img src="docs-site/assets/readme/cascade-routing.png" width="900" alt="Устройства подключаются к входному VPS. Оранжевый сплошной маршрут: через выходной VPS. Голубой пунктирный маршрут: российские ресурсы напрямую через входной VPS.">
+<br><sub>Маршрутизация по умолчанию: оранжевый сплошной маршрут - через выходной VPS, голубой пунктирный - напрямую к российским ресурсам.</sub>
 </p>
 
 Соедините два VPS в цепочку. Устройства продолжают подключаться к входному серверу, а Xray выбирает дальнейший маршрут. По умолчанию российские домены и IP из геобаз идут напрямую, остальной подходящий трафик - через выходной VPS. Настройка доступна из пункта **5 - Каскад**.
