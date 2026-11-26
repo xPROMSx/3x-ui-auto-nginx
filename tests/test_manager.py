@@ -830,27 +830,40 @@ telegram_manager_action
             marker.unlink(missing_ok=True);network.unlink(missing_ok=True)
             return subprocess.run(['bash','-c',setup],input=answer,text=True,capture_output=True,
                                   env={**os.environ,'MARKER':str(marker),'NETWORK':str(network),**env})
-        for answer in ('','\n','n\n'):
-            self.assertEqual(run(answer).returncode,0);self.assertFalse(network.exists());self.assertFalse(marker.exists())
-        self.assertEqual(run().returncode,0);self.assertEqual(marker.read_text(),'bootstrap')
+        for answer in ('\n','y\n','Y\n'):
+            with self.subTest(answer=answer):
+                self.assertEqual(run(answer).returncode,0)
+                self.assertTrue(network.exists())
+                self.assertEqual(marker.read_text(),'bootstrap')
         self.assertNotIn('--version',network.read_text())
+        for answer in ('','y','n\n','N\n','unexpected\n'):
+            with self.subTest(answer=answer):
+                self.assertEqual(run(answer).returncode,0)
+                self.assertFalse(network.exists())
+                self.assertFalse(marker.exists())
         self.assertNotIn('nginx-success-noise',run().stdout)
         failure=run(NGINX_EXIT='1')
         self.assertNotEqual(failure.returncode,0);self.assertIn('nginx-real-error',failure.stderr)
         entry=root/'tty-entry'
         entry.write_text(setup.removesuffix('telegram_manager_action\n')+"recover_domain_operation() { :; }\nentrypoint\n")
         def menu(answers,code=0):
+            marker.unlink(missing_ok=True);network.unlink(missing_ok=True)
             env={'MARKER':str(marker),'NETWORK':str(network)}
             result,text=tty_run(entry,answers,env=env)
             self.assertEqual(result,code,text)
             return text
-        for language in ('1','2'):
-            text=menu((language+'\n4\ny\n').encode())
-            self.assertEqual(text.count('1. Installation' if language=='1' else '1. Установка'),1)
-            self.assertIn('Would you like to proceed with installing' if language=='1' else 'Хотите перейти к установке',text)
-            for answer in ('n\n0\n','\n0\n','\x040\n'):
-                text=menu((language+'\n4\n'+answer).encode())
-                self.assertEqual(text.count('1. Installation' if language=='1' else '1. Установка'),2)
+        for language, menu_label, prompt in (
+            ('1','1. Installation','Would you like to proceed with installing Telegram Web Proxy Manager? [Y/n]:'),
+            ('2','1. Установка','Хотите перейти к установке Telegram Web Proxy Manager? [Y/n]:'),
+        ):
+            for answer in ('\n','y\n','Y\n','n\n','N\n','unexpected\n','\x04'):
+                with self.subTest(language=language,answer=answer):
+                    confirmed = answer in ('\n','y\n','Y\n')
+                    text=menu((language+'\n4\n'+answer+'0\n').encode())
+                    self.assertIn(prompt,text)
+                    self.assertEqual(text.count(menu_label),1 if confirmed else 2)
+                    self.assertEqual(network.exists(),confirmed)
+                    self.assertEqual(marker.exists(),confirmed)
 
         for env,code in (({'DOWNLOAD_EXIT':'23'},23),({'EXTERNAL_EXIT':'42'},42),({'ACTIVE_EXIT':'1'},1),({'NGINX_EXIT':'1'},1)):
             self.assertEqual(run(**env).returncode,code)
@@ -864,6 +877,9 @@ telegram_manager_action
         for language in ('1','2'):
             text=menu((language+'\n4\n').encode())
             self.assertEqual(text.count('1. Installation' if language=='1' else '1. Установка'),1)
+            self.assertNotIn('Telegram Web Proxy Manager? [Y/n]',text)
+            self.assertTrue(network.exists())
+            self.assertEqual(marker.read_text(),'bootstrap')
         for mode in (0o777,0o775,0o644):
             launcher.chmod(mode);self.assertNotEqual(run().returncode,0);self.assertFalse(marker.exists())
         launcher.chmod(0o755);os.chown(launcher,1000,1000)

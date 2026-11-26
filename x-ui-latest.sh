@@ -4365,9 +4365,9 @@ telegram_manager_action() (
             msg_err "$(ui_text 'First run option 1 - Installation of 3X-UI AUTO NGINX; a working stack is required.' 'Сначала выполните пункт 1 — Установка 3X-UI AUTO NGINX; нужен работающий стек.')"
             exit 1
         fi
-        ui_text 'Would you like to proceed with installing Telegram Web Proxy Manager? [y/N]: ' 'Хотите перейти к установке Telegram Web Proxy Manager? [y/N]: '
+        ui_text 'Would you like to proceed with installing Telegram Web Proxy Manager? [Y/n]: ' 'Хотите перейти к установке Telegram Web Proxy Manager? [Y/n]: '
         IFS= read -r answer || exit 0
-        [[ $answer == y || $answer == Y ]] || exit 0
+        [[ -z $answer || $answer == y || $answer == Y ]] || exit 0
     fi
     umask 077
     stage=$(mktemp -d) || exit $?

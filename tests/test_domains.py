@@ -331,9 +331,7 @@ class DomainFixture:
 
     def change(self, panel=None, reality=None):
         context = self.operation.discover(); old = context['domains']
-        with patch.object(self.module.socket, 'getaddrinfo', return_value=[(2,1,6,'',('192.0.2.7',443))],
-                          side_effect=socket_error() if self.fault=='dns' else None):
-            self.operation.change(panel or old['panel'],reality or old['reality'],old['panel'],old['reality'],SOURCE)
+        self.operation.change(panel or old['panel'],reality or old['reality'],old['panel'],old['reality'],SOURCE)
 
 
 class Domains(unittest.TestCase):
@@ -1170,15 +1168,33 @@ curl() {
                 self.assertFalse(any(args[:3]==['bash','fixture-backup','backup'] for _,args in f.calls))
                 self.assertFalse(f.p(f.module.STATE+'/journal.json').exists())
 
-    def test_failures_backup_dns_second_acme_nginx_sqlite_and_start_preserve_original(self):
-        for failure in ('backup','dns','issue-new-cover.example','validating complete candidate nginx','switching:nginx:-t',
+    def test_change_succeeds_when_old_domains_point_elsewhere_or_do_not_resolve(self):
+        panel, reality = 'new-panel.example', 'new-cover.example'
+        for old_address in ('192.0.2.8', None):
+            with self.subTest(old_address=old_address):
+                f = self.fixture()
+
+                def resolve(name, port, *, type):
+                    address = old_address if name in (f.panel, f.reality) else '192.0.2.7'
+                    if address is None:
+                        raise socket.gaierror(socket.EAI_NONAME, 'fixture name not found')
+                    return [(socket.AF_INET, type, socket.IPPROTO_TCP, '', (address, port))]
+
+                with patch.object(socket, 'getaddrinfo', side_effect=resolve) as lookup:
+                    f.change(panel, reality)
+                lookup.assert_not_called()
+                domains = f.operation.discover()['domains']
+                self.assertEqual((domains['panel'], domains['reality']), (panel, reality))
+                self.assertTrue(lineages(f, panel))
+                self.assertTrue(lineages(f, reality))
+
+    def test_failures_backup_second_acme_nginx_sqlite_and_start_preserve_original(self):
+        for failure in ('backup','issue-new-cover.example','validating complete candidate nginx','switching:nginx:-t',
                         'switching:systemctl:start:x-ui','sqlite'):
             with self.subTest(failure=failure):
                 f=self.fixture(optional=True);before=f.state();manifest=f.p(f.module.MANIFEST).read_bytes();old=f.operation.guards(f.operation.discover())
                 f.fault=failure
-                if failure=='dns':
-                    context=patch.object(f.module.socket,'getaddrinfo',side_effect=socket_error())
-                elif failure=='sqlite':
+                if failure=='sqlite':
                     original=f.operation.database_update
                     def update(record,forward):
                         if forward:raise sqlite3.OperationalError('fixture')
@@ -1186,7 +1202,7 @@ curl() {
                     context=patch.object(f.operation,'database_update',side_effect=update)
                 else:context=patch.object(f,'fault',failure)
                 with context, self.assertRaises(Exception): f.change('new-panel.example','new-cover.example')
-                if failure not in ('dns','sqlite'):self.assertTrue(f.fault_used,'Requested failure point was not exercised')
+                if failure!='sqlite':self.assertTrue(f.fault_used,'Requested failure point was not exercised')
                 self.assertTrue(f.state()==before,'Failure changed SQLite')
                 self.assertEqual(f.p(f.module.MANIFEST).read_bytes(),manifest)
                 self.assertEqual(f.operation.guards(f.operation.discover()),old)
@@ -1578,8 +1594,3 @@ def lineages(f, name):
     """Certificate lineage paths of a domain that still exist in the fixture."""
     return [path for path in ('/etc/letsencrypt/live/'+name,'/etc/letsencrypt/archive/'+name,'/etc/letsencrypt/renewal/'+name+'.conf')
             if os.path.lexists(f.p(path))]
-
-
-def socket_error():
-    import socket
-    return socket.gaierror('fixture DNS failure')

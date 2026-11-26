@@ -14,7 +14,6 @@ import copy
 import fcntl
 import hashlib
 import http.client
-import ipaddress
 import json
 import os
 from pathlib import Path
@@ -22,7 +21,6 @@ import pwd
 import re
 import shutil
 import signal
-import socket
 import sqlite3
 import ssl
 import stat
@@ -869,17 +867,6 @@ class Operation:
                 self.check('lineage', value)
             certdir = self.path('/root/cert/'+value)
             require(not os.path.lexists(certdir) or value in history, 'Existing certificate link directory is not owned by this operation.')
-        # Reuse the current working public DNS identity (including NAT), without
-        # changing addresses or routing. ACME independently validates HTTP-01.
-        try:
-            known = {str(ipaddress.ip_address(r[4][0])) for name in (old['panel'], old['reality'])
-                     for r in socket.getaddrinfo(name, 443, type=socket.SOCK_STREAM)}
-            for name, previous in ((panel, old['panel']), (reality, old['reality'])):
-                if name != previous:
-                    addresses = {str(ipaddress.ip_address(r[4][0])) for r in socket.getaddrinfo(name, 443, type=socket.SOCK_STREAM)}
-                    require(bool(addresses) and addresses <= known, 'New domain DNS does not match the current VPS identity; fix A/AAAA records first.')
-        except socket.gaierror:
-            raise Refusal('Current/new domain DNS lookup failed; check A/AAAA records before retrying.') from None
 
     def file_plan(self, context, panel, reality, source):
         old = context['domains']; files = []
