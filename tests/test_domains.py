@@ -1303,7 +1303,7 @@ curl() {
         shutil.copytree(live, stage, symlinks=True)
         env = {**os.environ, **FIXTURE, 'stage':str(stage)}
         fields = ('domain reality_domain panel_path panel_port sub_path sub_port json_path diag_token diag_path '
-                  'mtr_backend_port xhttp_path INSTALL_WS_GRPC ws_port ws_path trojan_port trojan_path')
+                  'mtr_backend_port xhttp_path INSTALL_WS_GRPC ws_port ws_route trojan_port service_name')
         code = '\n'.join(function(name) for name in ('render_acme_nginx','render_core_nginx','render_nginx_main'))
         # All includes resolve at their production paths inside the private mount.
         # The actual Certbot fixture stays in its temporary directory.

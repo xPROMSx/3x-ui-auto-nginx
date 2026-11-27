@@ -408,7 +408,10 @@ def fresh_acceptance(ref, group='all'):
         phase = 'project-update'
         invoke('__import__("update").project_update()', 'update', 1200, tty=True)
         invoke('checks.installed()', 'installed')
-        invoke('checks.transports(positive_only=True)', 'updated-transports', 300)
+        invoke('checks.transports(positive_only=True, edge_profiles="pre-update-edge-profiles.json")',
+               'updated-transports', 300)
+        phase = 'mtr-start-intent-recovery'
+        invoke('__import__("update").verify_mtr_recovery()', 'updated-mtr', 240)
         invoke('__import__("update").remove_customer_fixture()', 'end-update-fixture')
         phase = 'native-agh-update'
         invoke('checks.native_agh_update()', 'native-agh-update', 1200, tty=True)

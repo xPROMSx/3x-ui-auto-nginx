@@ -33,6 +33,7 @@ FIXTURE = {
     "sub_port": "10001", "panel_port": "10002", "ws_port": "10003",
     "trojan_port": "10004", "mtr_backend_port": "10005",
     "ws_route": "/10003/websocket", "trojan_route": "/10004/trojan",
+    "service_name": "/10004/trojan|trojan-multi",
     "diag_path": "/diagnostics/", "diag_token": "test-token", "emoji_flag": "test",
     "private_key": "test-private", "public_key": "test-public",
     "sub_uri": "https://deploy.example/subscription/",

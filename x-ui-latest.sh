@@ -945,7 +945,7 @@ render_core_nginx() {
     local stage=$1 name
     local -n inputs=$2
     for name in domain reality_domain sub_path json_path panel_path panel_port sub_port xhttp_path \
-                diag_path diag_token mtr_backend_port ws_port ws_path trojan_port trojan_path INSTALL_WS_GRPC; do
+                diag_path diag_token mtr_backend_port ws_port ws_route trojan_port service_name INSTALL_WS_GRPC; do
         local "$name=${inputs[$name]-}"
     done
     local http2_listen='' http2_on='' ipv6_listen=''
@@ -1071,9 +1071,16 @@ EOF
         grpc_pass unix:/dev/shm/uds2023.sock;
     }
 
-$(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then cat <<WS_GRPC_NGINX
+$(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then
+    if [[ $service_name == /* ]]; then
+        grpc_method=${service_name##*/}
+        grpc_route="${service_name%/*}/${grpc_method%%|*}"
+    else
+        grpc_route="/$service_name/Tun"
+    fi
+    cat <<WS_GRPC_NGINX
     # Installer-managed WS: exact path, fixed backend port
-    location = /${ws_port}/${ws_path} {
+    location = ${ws_route} {
         if (\$hack = 1) { return 404; }
         client_max_body_size 0;
         client_body_timeout 1d;
@@ -1091,7 +1098,7 @@ $(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then cat <<WS_GRPC_NGINX
     }
 
     # Xray custom gRPC serviceName is the full method path (no /Tun suffix)
-    location = /${trojan_port}/${trojan_path} {
+    location = ${grpc_route} {
         if (\$hack = 1) { return 404; }
         client_max_body_size 0;
         client_body_timeout 1d;
@@ -1403,9 +1410,11 @@ configure_nginx() { (
     local stage name
     local -A params=([ipv6]=n)
     for name in domain reality_domain sub_path json_path panel_path panel_port sub_port xhttp_path \
-                diag_path diag_token mtr_backend_port ws_port ws_path trojan_port trojan_path INSTALL_WS_GRPC; do
+                diag_path diag_token mtr_backend_port ws_port trojan_port INSTALL_WS_GRPC; do
         params[$name]=${!name-}
     done
+    params[ws_route]="/${ws_port:-}/$ws_path"
+    params[service_name]="/${trojan_port:-}/$trojan_path|$trojan_path-multi"
     if ipv6_available; then params[ipv6]=y; fi
     params[nginx_version]=$(nginx -v 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo 0)
     stage=$(mktemp -d) || return 1
@@ -5000,7 +5009,7 @@ PYCOMPAT
         exit 1
     fi
     ui_title "$(ui_text 'PROJECT UPDATE' 'ОБНОВЛЕНИЕ ПРОЕКТА')"
-    ui_wrap '' "$(ui_text 'Update refreshes managed configuration and preserves panel settings, clients and keys. A verified Backup is created before changes. Service may be briefly interrupted and client profiles may need refreshing. Manual edits to managed nginx and transport settings may be replaced.' 'Менеджер обновит конфигурации проекта и сохранит настройки панели, клиентов и ключи. Перед изменениями будет создан и проверен Backup. Возможен краткий перерыв в работе. Может потребоваться обновить клиентские профили. Ручные изменения управляемых конфигураций Nginx и транспортов могут быть заменены.')"
+    ui_wrap '' "$(ui_text 'Update refreshes managed configuration and preserves panel settings, clients and keys. Managed cover sites may be regenerated. A verified Backup is created before changes. Service may be briefly interrupted and client profiles may need refreshing. Manual edits to managed nginx and transport settings may be replaced.' 'Менеджер обновит конфигурации проекта и сохранит настройки панели, клиентов и ключи. Управляемые сайты-прикрытия могут быть сгенерированы заново. Перед изменениями будет создан и проверен Backup. Возможен краткий перерыв в работе. Может потребоваться обновить клиентские профили. Ручные изменения управляемых конфигураций Nginx и транспортов могут быть заменены.')"
     ui_text 'Continue? [y/N] ' 'Продолжить? [y/N] '
     IFS= read -r answer || exit 0
     [[ $answer == [yY] ]] || exit 0

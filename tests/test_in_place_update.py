@@ -185,8 +185,172 @@ os._exit(0)
             patch.object(update, 'verified_health', side_effect=RuntimeError('offline')),
         ):
             with self.assertRaisesRegex(RuntimeError, 'offline'):
-                update.commit(dict(target={}, sha='new'))
+                update.commit(dict(target={}, sha='new', active={}))
         self.assertEqual(update.MANIFEST.read_text(), 'previous')
+
+    def test_audit_preserves_vless_settings_on_existing_roles(self):
+        params = dict(domain='panel.example', reality_domain='cover.example', short_ids=[],
+                      private_key='private', public_key='public', ws_port=12001, ws_route='/custom-ws',
+                      trojan_port=12002, service_name='/custom/grpc|multi', xhttp_route='/xhttp',
+                      certificate='cert', key_file='key', INSTALL_WS_GRPC='y', flag='')
+        core = update.module('inbounds')
+        vision = update.module('vision')
+        target = {role: core.core_inbound(role, params) for role in ('reality', 'xhttp', 'ws')}
+        target['vision'] = vision.inbound('vision.example', 12003, 12004, 'cert', 'key')
+        target['xhttp_cdn'] = update.module('xhttp-cdn').inbound(
+            12005, '/CDNFixture123/cookie', '', dict(encryption='pair', decryption='key'))
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute('CREATE TABLE inbounds(id INTEGER PRIMARY KEY, settings TEXT)')
+            for iid, (role, definition) in enumerate(target.items(), 1):
+                saved = dict(encryption='pair', decryption='key', clients=[{'id': 'existing'}])
+                row = dict(id=iid, settings=saved, stream_settings=definition['streamSettings'],
+                           sniffing=definition['sniffing'], **{key: definition[key] for key in ('listen','port','protocol')})
+                db.execute('INSERT INTO inbounds VALUES(?,?)', (iid, json.dumps(saved)))
+                database.apply(db, database.changes({role: row}, {role: definition}))
+                actual = json.loads(db.execute('SELECT settings FROM inbounds WHERE id=?', (iid,)).fetchone()[0])
+                self.assertEqual(actual, saved, role)
+        old_fallbacks = [{'dest': '127.0.0.1:12006', 'xver': 1}]
+        self.assertEqual(database.merge_vless_settings(
+            dict(encryption='none', decryption='none', fallbacks=old_fallbacks), target['vision']['settings']
+        )['fallbacks'], old_fallbacks)
+
+    def test_audit_shared_renderer_uses_custom_transport_paths(self):
+        from test_personal_xhttp import SHARED, render
+
+        for service, route in (('/custom/rpc|bulk', '/custom/rpc'), ('existing', '/existing/Tun')):
+            with self.subTest(service=service):
+                snippet = render(SHARED, ws_port='12001', ws_route='/custom-ws',
+                                 trojan_port='12002', service_name=service)
+                self.assertIn('location = /custom-ws {', snippet)
+                self.assertIn('proxy_pass http://127.0.0.1:12001;', snippet)
+                self.assertIn(f'location = {route} {{', snippet)
+                self.assertIn('grpc_pass grpc://127.0.0.1:12002;', snippet)
+
+    def test_audit_trial_rejects_host_change_before_planning_or_cutover(self):
+        with closing(sqlite3.connect(self.db)) as db, db:
+            db.executescript('CREATE TABLE hosts(id INTEGER PRIMARY KEY, mihomo_x25519 INTEGER);'
+                             'INSERT INTO hosts VALUES(1,1);')
+        work = self.root/'work'
+
+        def native_migration(binary, folder, *_):
+            with closing(sqlite3.connect(folder/self.db.name)) as db, db:
+                db.execute('UPDATE hosts SET mihomo_x25519=0')
+
+        with (
+            patch.object(update, 'WORK', work),
+            patch.object(update, 'metadata', return_value={}),
+            patch.object(update, 'versions', return_value=(True, None)),
+            patch.object(update, 'migrate_schema', side_effect=native_migration),
+            patch.object(update, 'run'),
+            patch.object(update, 'make_plan', side_effect=AssertionError('unexpected stack preparation')),
+            patch.object(update, 'service') as service,
+        ):
+            with self.assertRaisesRegex(ValueError, 'existing record in hosts'):
+                update.apply_update('revision')
+            service.assert_not_called()
+            self.assertFalse(update.JOURNAL.exists())
+
+    def test_audit_recovery_restarts_changed_mtr_before_health(self):
+        for files, active, restart in (({'/usr/local/lib/3x-ui-pro/mtr-backend.py': {}}, True, True),
+                                       ({}, True, False),
+                                       ({'/usr/local/lib/3x-ui-pro/mtr-backend.py': {}}, False, False)):
+            with self.subTest(files=files, active=active):
+                j = dict(active={'mtr-backend': active}, files=files, phase='start_intent', target={})
+                calls = []
+                with (
+                    patch.object(update, 'restore_services'),
+                    patch.object(update, 'service', side_effect=lambda *args: calls.append(args)),
+                    patch.object(update, 'verified_health', side_effect=lambda *args: calls.append(('health',))),
+                    patch.object(update, 'save'),
+                    patch.object(update, 'finish_commit'),
+                ):
+                    update.recover(j)
+                self.assertEqual(calls, ([('restart', 'mtr-backend')] if restart else []) + [('health',)])
+
+    def test_worker_cleans_owned_source_only_after_recovery_dependencies_are_gone(self):
+        source = self.root/'source.1234abcd'
+        source.mkdir()
+        system = self.root/'system'
+        system.mkdir()
+        guard = system/update.BOOT
+        guard.touch()
+        args = ['managed.py', 'worker', 'a'*40]
+        with (
+            patch.object(update, 'ROOT', source),
+            patch.object(update, 'BASE', self.root),
+            patch.object(update, 'SYSTEM', system),
+            patch.object(update, 'apply_update'),
+            patch.object(sys, 'argv', args),
+        ):
+            update.main()
+            self.assertTrue(source.is_dir())
+            guard.unlink()
+            update.main()
+            self.assertFalse(source.exists())
+
+    def test_audit_health_probes_active_subscriptions_and_empty_install(self):
+        from urllib.parse import urlsplit
+
+        with closing(sqlite3.connect(self.db)) as db, db:
+            db.executescript("""
+                ALTER TABLE clients ADD COLUMN enable DEFAULT 1;
+                ALTER TABLE clients ADD COLUMN expiry_time DEFAULT 0;
+                ALTER TABLE clients ADD COLUMN total_gb DEFAULT 0;
+                ALTER TABLE clients ADD COLUMN email DEFAULT 'client';
+                ALTER TABLE client_inbounds RENAME COLUMN client TO client_id;
+                ALTER TABLE client_inbounds RENAME COLUMN inbound TO inbound_id;
+                CREATE TABLE inbounds(id INTEGER, protocol TEXT, enable INTEGER, exclude_from_sub INTEGER);
+                INSERT INTO inbounds VALUES(7,'vless',1,0);
+                CREATE TABLE client_traffics(email TEXT, enable INTEGER, expiry_time INTEGER, total INTEGER, up INTEGER, down INTEGER);
+                CREATE TABLE settings(key TEXT,value TEXT);
+                INSERT INTO settings VALUES ('webBasePath','/panel/'),('subPath','/raw/'),('subJsonPath','/json/'),
+                      ('subURI','https://panel.example/raw/'),('subJsonURI','https://panel.example/json/'),
+                      ('subEnable','true'),('subJsonEnable','true'),('subPort','12345');
+            """)
+        state = dict(domains={'panel':'panel.example'}, features={}, diagnostics={'mtr_backend_port':12346})
+        failures = {'RAW': (404, b''), 'JSON': (200, b'{}'), 'Clash provider': (200, b'not a subscription')}
+        seen = []
+
+        def request(_, panel, path, cert, headers=None):
+            route = urlsplit(path)
+            if route.path == '/panel/':
+                return 200, b''
+            if route.path.startswith('/raw/') and headers and headers.get('User-Agent') == 'mihomo' and not route.query:
+                return 200, (b'proxy-providers:\n  sub:\n    type: http\n    url: https://panel.example'
+                             + route.path.encode() + b'?provider=1\n')
+            if not route.path.endswith('/first'):
+                return 404, b''
+            kind = 'Clash provider' if route.query else 'JSON' if route.path.startswith('/json/') else 'RAW'
+            seen.append(kind)
+            if kind == fault:
+                return failures[kind]
+            return (200, b'{"outbounds":[{"protocol":"vless"}]}') if kind == 'JSON' else (200, b'vless://id@host:443')
+
+        with (
+            patch.object(update, 'installation', return_value=({}, None, {}, [])),
+            patch.object(update, 'workers', return_value={1}),
+            patch.object(update, 'versions', return_value=(False, self.root/'xray')),
+            patch.object(update.database, 'holds_database', return_value=True),
+            patch.object(update.os.path, 'samefile', return_value=True),
+            patch.object(update.Path, 'read_text', return_value='2'),
+            patch.object(update, 'prop', side_effect=lambda u, p: {'MainPID':'1','ControlGroup':'/x-ui',
+                                                                  'ActiveState':'active'}[p]),
+            patch.object(update, 'run', side_effect=lambda *args, **kw:
+                         b'127.0.0.1' if args[0] == 'curl' else b'LISTEN 0 0 127.0.0.1:12345 *:* pid=1,'),
+            patch.object(update.module('domains').Operation, 'request', request),
+        ):
+            for fault in failures:
+                with self.subTest(format=fault), self.assertRaisesRegex(ValueError, fault):
+                    update.health(state)
+            fault = None
+            seen.clear()
+            update.health(state)
+            self.assertEqual(set(seen), set(failures))
+            with closing(sqlite3.connect(self.db)) as db, db:
+                db.execute("UPDATE clients SET expiry_time=1")
+            seen.clear()
+            update.health(state)
+            self.assertEqual(seen, [])
 
     def test_schema_migration_uses_normal_init_and_requires_cli_completion(self):
         binary = self.root / 'x-ui'

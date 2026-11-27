@@ -1,5 +1,6 @@
 """Faults run only in the existing disposable Full Fresh guest."""
 
+import importlib.util
 import json
 import os
 import re
@@ -28,21 +29,25 @@ NGX_RECOVERY_SITE = Path('/etc/nginx/conf.d/pilot-recovery.conf')
 NGX_RECOVERY_SOCKET = Path('/run/pilot-recovery-nginx.sock')
 COVER = Path('/var/www/html/cover-panel/index.html')
 BACKEND = Path('/usr/local/lib/3x-ui-pro/mtr-backend.py')
+ROUTES = Path('/etc/nginx/snippets/includes.conf')
 FOREIGN = COVER.with_name('customer.txt')
 ENV = json.loads((ROOT / 'environment.json').read_text())
 SHA = ENV['XUI_AUTO_REF']
 
 
-def prepare_base_cdn():
-    """Populate the CDN profile for the migration without overriding the installer preflight."""
-    import importlib.util
-
-    old_running()
-    manifest = json.loads(STATE.read_bytes())
-    assert 'xhttp_cdn' not in manifest['inbound_roles']
+def cdn_module():
     spec = importlib.util.spec_from_file_location('cdn', SOURCE / 'assets/xhttp-cdn/managed.py')
     cdn = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cdn)
+    return cdn
+
+
+def prepare_base_cdn():
+    """Populate the CDN profile for the migration without overriding the installer preflight."""
+    old_running()
+    manifest = json.loads(STATE.read_bytes())
+    assert 'xhttp_cdn' not in manifest['inbound_roles']
+    cdn = cdn_module()
     cred = credentials()
     domain = manifest['domains']['panel']
     with socket.socket() as listener:
@@ -196,6 +201,15 @@ def worker(fault):
                 time.sleep(0.2)
             raise RuntimeError('Injected failure after an external write')
 
+    refresh_mtr = worker.refresh_mtr
+
+    def restart_mtr(j):
+        if fault == 'mtr':
+            assert j['phase'] == 'start_intent'
+            touched.touch()
+            os.kill(os.getpid(), signal.SIGKILL)
+        refresh_mtr(j)
+
     candidate = worker.candidate_nginx
 
     def verify_candidate(directory, files):
@@ -209,6 +223,7 @@ def worker(fault):
         patch.object(worker, 'reload_nginx', reload_nginx),
         patch.object(worker, 'verify_migration', verify_migration),
         patch.object(worker, 'verified_health', verify),
+        patch.object(worker, 'refresh_mtr', restart_mtr),
         patch.object(worker, 'candidate_nginx', verify_candidate),
     ):
         try:
@@ -411,6 +426,77 @@ def retained():
     return dict(external_write_preserved=True, both_databases_retained=True)
 
 
+def change_transport_fixture(db, roles, keys):
+    replacements = []
+    originals = []
+    for role, group, field, value in (
+        ('ws', 'wsSettings', 'path', '/custom-ws'),
+        ('grpc', 'grpcSettings', 'serviceName', '/audit/custom-rpc|custom-rpc-multi'),
+    ):
+        iid = roles[role]
+        settings, stream = db.execute('SELECT settings,stream_settings FROM inbounds WHERE id=?', (iid,)).fetchone()
+        originals.append((settings, stream, iid))
+        options, transport = json.loads(settings), json.loads(stream)
+        previous = transport[group][field]
+        transport[group][field] = value
+        replacements.append((previous.split('|')[0], value.split('|')[0]))
+        if role == 'ws':
+            options.update(keys)
+            options.pop('fallbacks', None)
+        db.execute('UPDATE inbounds SET settings=?,stream_settings=? WHERE id=?',
+                   (json.dumps(options), json.dumps(transport), iid))
+    original = ROUTES.read_text()
+    changed = original
+    for before, after in replacements:
+        assert changed.count(f'location = {before} {{') == 1
+        changed = changed.replace(f'location = {before} {{', f'location = {after} {{')
+    (ROOT / 'pre-fixture-inbounds').write_text(json.dumps(originals))
+    ROUTES.write_text(changed)
+
+
+def save_transport_profiles(keys):
+    sys.path.insert(0, str(SOURCE / 'assets/update'))
+    from resources import module
+    from urllib.parse import quote, urlsplit
+
+    with closing(sqlite3.connect(DB)) as db:
+        uri = db.execute("SELECT value FROM settings WHERE key='subJsonURI'").fetchone()[0]
+    sub_id = json.loads(DB.with_name('initial-client.json').read_text())['identity']['subId']
+    url = urlsplit(uri)
+    cert = '/etc/letsencrypt/live/' + url.hostname + '/fullchain.pem'
+    op = module('domains').Operation('', '')
+    code, body = op.request(url.hostname, url.path + quote(sub_id, safe=''), cert)
+    assert code == 200
+    profiles = {}
+    for config in json.loads(body):
+        out = next((out for out in config['outbounds'] if out.get('protocol') in ('vless', 'trojan')), {})
+        network = out.get('streamSettings', {}).get('network')
+        if network in ('ws', 'grpc'):
+            name = 'Encrypted-WebSocket' if network == 'ws' else 'Custom-gRPC'
+            if network == 'ws':
+                assert keys['encryption'] in json.dumps(out)
+            profiles[name] = config
+    assert set(profiles) == {'Encrypted-WebSocket', 'Custom-gRPC'}
+    (ROOT / 'pre-update-edge-profiles.json').write_text(json.dumps(profiles))
+
+
+def verify_mtr_recovery():
+    invocation = lambda: checks.run('systemctl', 'show', 'mtr-backend', '-p', 'InvocationID', '--value')
+    before = BACKEND.read_bytes()
+    BACKEND.write_bytes(before + b'\n# Test previous MTR process\n')
+    checks.run('systemctl', 'restart', 'mtr-backend')
+    previous = invocation()
+    assert invoke_fault('mtr', background=True) == 0
+    until = time.monotonic() + 180
+    while not (ROOT / 'hit-mtr').exists() or JOURNAL.exists():
+        if time.monotonic() > until:
+            raise RuntimeError('MTR recovery did not complete')
+        time.sleep(0.2)
+    assert invocation() != previous and BACKEND.read_bytes() == before
+    checks.run('systemctl', 'is-active', '--quiet', 'mtr-backend')
+    return dict(mtr_restarted_after_interrupt=True)
+
+
 def project_update():
     old_running()
     before = json.loads(STATE.read_bytes())
@@ -439,6 +525,8 @@ def project_update():
             old_template = reply['xraySetting']
             if isinstance(old_template, str):
                 old_template = json.loads(old_template)
+            keys = cdn_module().new_vless_keys(panel)
+        change_transport_fixture(db, before['inbound_roles'], keys)
         db.execute(
             "UPDATE inbounds SET stream_settings=json_set(stream_settings,'$.hysteriaSettings.udpIdleTimeout',59) WHERE id=?",
             (iid,),
@@ -471,10 +559,15 @@ def project_update():
         cdn_before = db.execute('SELECT enable,settings FROM inbounds WHERE id=?', (cdn_id,)).fetchone()
         assert cdn_before[0] == 0
     checks.run('systemctl', 'restart', 'x-ui')
+    checks.run('nginx', '-t')
+    checks.run('systemctl', 'reload', 'nginx')
     checks.manager_tty(b'1\n7\nn\n0\n', ROOT / 'cancel.private.log', 90)
     assert json.loads(STATE.read_bytes()) == before
+    save_transport_profiles(keys)
+    stages = set(WORK.parent.glob('source.*'))
     output = checks.manager_tty(b'1\n7\ny\n0\n', ROOT / 'update.private.log', 600)
     assert b'Update verified' in output
+    assert set(WORK.parent.glob('source.*')) == stages
     after = json.loads(STATE.read_bytes())
     for key in before.keys() - {'source_ref', 'xhttp_cdn'}:
         assert after[key] == before[key]
@@ -486,6 +579,9 @@ def project_update():
     assert b'burst=80 ' in LIMIT.read_bytes()
     assert address + ':23988' in checks.run('ss', '-H', '-lntp')
     with closing(sqlite3.connect(DB)) as db:
+        transport = json.loads(db.execute('SELECT settings FROM inbounds WHERE id=?',
+                                         (before['inbound_roles']['ws'],)).fetchone()[0])
+        assert all(transport[key] == value for key, value in keys.items()) and 'fallbacks' not in transport
         cdn_after = db.execute('SELECT enable,settings FROM inbounds WHERE id=?', (cdn_id,)).fetchone()
         assert cdn_after[0] == 0 and json.loads(cdn_after[1]) == json.loads(cdn_before[1])
         for name, (columns, values) in clients.items():
@@ -512,7 +608,8 @@ def project_update():
     previous = starts()
     output = checks.manager_tty(b'1\n7\ny\n0\n', ROOT / 'repeat.private.log', 300)
     assert b'Already up to date' in output and starts() == previous
-    return dict(pinned_update=True, user_data=True, individual_cover=True, no_op=True, migration=True)
+    return dict(pinned_update=True, user_data=True, individual_cover=True, no_op=True, migration=True,
+                vless_encryption_preserved=True, source_stage_cleaned=True)
 
 
 def remove_customer_fixture():
@@ -520,6 +617,8 @@ def remove_customer_fixture():
     # to its original topology for the existing AGH/Restore scenarios.
     checks.run('systemctl', 'stop', 'x-ui')
     with closing(sqlite3.connect(DB)) as db, db:
+        db.executemany('UPDATE inbounds SET settings=?,stream_settings=? WHERE id=?',
+                       json.loads((ROOT / 'pre-fixture-inbounds').read_text()))
         db.execute("DELETE FROM hosts WHERE group_id='customer-group'")
         db.execute("DELETE FROM inbounds WHERE tag='customer-ip'")
         db.execute("DELETE FROM settings WHERE key IN ('xrayTemplateConfig','updateFixture')")
@@ -528,6 +627,9 @@ def remove_customer_fixture():
             db.execute("INSERT INTO settings(key,value) VALUES('xrayTemplateConfig',?)", original)
     FOREIGN.unlink()
     checks.run('systemctl', 'start', 'x-ui')
+    # Reconcile the original public paths before resuming shared AGH tests.
+    output = checks.manager_tty(b'1\n7\ny\n0\n', ROOT / 'restore-transport.private.log', 300)
+    assert b'Update verified' in output
     return dict(customer_fixture_removed=True)
 
 

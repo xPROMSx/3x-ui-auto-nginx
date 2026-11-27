@@ -187,8 +187,12 @@ def render(directory, state, rows, params, release=None):
             )
     if values['vision']:
         row = rows['vision']
-        port = int(row['settings']['fallbacks'][0]['dest'].rsplit(':', 1)[-1])
         vision = module('vision')
+        site = (NGINX / 'sites-available/vision.conf').read_text()
+        listener = re.search(r'^\s*listen 127\.0\.0\.1:(\d+) proxy_protocol;$', site, re.M)
+        if not site.startswith(vision.MARKER) or listener is None:
+            raise ValueError('Cannot identify the managed Vision nginx listener')
+        port = int(listener[1])
         (ng / 'sites-available/vision.conf').write_text(
             vision.fallback_config(values['vision'], port, root='/var/www/html/cover-vision', rate_limit=True)
         )

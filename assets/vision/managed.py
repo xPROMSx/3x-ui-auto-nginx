@@ -77,12 +77,14 @@ def certificate(domain, cert, key):
 
 def inbound(domain, port, fallback, cert, key, flag="🌐"):
     domain_name(domain)
-    if port == fallback or any(not 1024 <= p <= 65535 for p in (port, fallback)):
+    if not 1024 <= port <= 65535 or (fallback is not None and (port == fallback or not 1024 <= fallback <= 65535)):
         raise ValueError('Invalid/distinct internal ports required')
+    settings = {'clients': [], 'decryption': 'none', 'encryption': 'none'}
+    if fallback is not None:
+        settings['fallbacks'] = [{'name': domain, 'alpn': 'http/1.1', 'dest': f'127.0.0.1:{fallback}', 'xver': 1}]
     return {'enable': True, 'listen': '127.0.0.1', 'port': port, 'protocol': 'vless',
             'remark': flag + ' XTLS', 'tag': f'inbound-{port}',
-            'settings': {'clients': [], 'decryption': 'none', 'encryption': 'none',
-                         'fallbacks': [{'name': domain, 'alpn': 'http/1.1', 'dest': f'127.0.0.1:{fallback}', 'xver': 1}]},
+            'settings': settings,
             # Official panel v3.9.0 gates flow on "tcp". Xray maps tcp/raw to RAW.
             'streamSettings': {'network': 'tcp', 'security': 'tls',
                                'tcpSettings': {'acceptProxyProtocol': True, 'header': {'type': 'none'}},

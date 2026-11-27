@@ -519,7 +519,7 @@ def http3_cover():
         assert headers[b':status']==b'404' and b'set-cookie' not in headers
 
 
-def transports(vision=True, panel_domain='panel.example.test', positive_only=False, *, ws_grpc=True):
+def transports(vision=True, panel_domain='panel.example.test', positive_only=False, *, ws_grpc=True, edge_profiles=None):
     root=ROOT; results={}
     http3_cover()
     binary=next(Path("/usr/local/x-ui/bin").glob("xray-linux-amd64"))
@@ -549,10 +549,12 @@ def transports(vision=True, panel_domain='panel.example.test', positive_only=Fal
                 assert name not in selected;selected[name]=config
             assert paired == ({('vless', 'ws'), ('trojan', 'grpc')} if ws_grpc else set())
             assert set(selected)==({'REALITY','XHTTP','Hysteria2','Vision'} if vision else {'REALITY','XHTTP','Hysteria2'})
+            if edge_profiles:
+                selected.update(json.loads((root/edge_profiles).read_text()))
             for name,original in selected.items():
                 for variant in (('positive',) if positive_only else ('positive','credentials') if name=='REALITY' else ('positive','credentials','untrusted-ca','wrong-sni')):
                     negative=variant!='positive'
-                    config=json.loads(json.dumps(original));out=next(o for o in config['outbounds'] if o['protocol'] in ('vless','hysteria'));stream=out['streamSettings']
+                    config=json.loads(json.dumps(original));out=next(o for o in config['outbounds'] if o['protocol'] in ('vless','hysteria','trojan'));stream=out['streamSettings']
                     if name!='REALITY':
                         tls=stream['tlsSettings']
                         assert tls.get('allowInsecure',False) is False

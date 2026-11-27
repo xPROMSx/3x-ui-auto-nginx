@@ -56,6 +56,23 @@ class Refusal(ValueError):
     pass
 
 
+def validate_subscription(body, format):
+    if format == 'JSON':
+        configs = json.loads(body)
+        if isinstance(configs, dict):
+            configs = [configs]
+        return isinstance(configs, list) and bool(configs) and all(
+            isinstance(item, dict) and isinstance(item.get('outbounds'), list) and item['outbounds']
+            for item in configs
+        )
+    if format == 'Clash provider' and re.search(rb'(?m)^proxies:[ \t]*\r?\n[ \t]*-\s*\S', body):
+        return True
+    if b'://' not in body:
+        body = base64.b64decode(b''.join(body.split()), validate=True)
+    return any(re.fullmatch(rb'[a-zA-Z][a-zA-Z0-9+.-]*://[^\s]+', line.strip())
+               for line in body.splitlines())
+
+
 def require(condition, reason):
     if not condition:
         raise Refusal(reason)
@@ -793,15 +810,9 @@ class Operation:
             enabled = settings.get('subEnable' if key == 'subURI' else 'subJsonEnable', 'true') == 'true'
             if not selected or not enabled:
                 require(code in (400, 404), 'Subscription backend did not reject an unknown client.')
-            elif key == 'subJsonURI':
-                configs = json.loads(body) if code == 200 else None
-                if isinstance(configs, dict): configs = [configs]
-                require(isinstance(configs, list) and configs and
-                        all(isinstance(item, dict) and isinstance(item.get('outbounds'), list) and item['outbounds'] for item in configs),
-                        'JSON subscription validation failed.')
             else:
-                require(code == 200, 'RAW subscription validation failed.')
-                base64.b64decode(b''.join(body.split()), validate=True)
+                format = 'JSON' if key == 'subJsonURI' else 'RAW'
+                require(code == 200 and validate_subscription(body, format), f'{format} subscription validation failed.')
         if clients and settings.get('subEnable', 'true') == 'true':
             code, body = self.request(panel, settings['subPath']+quote(clients[0][0], safe=''), cert,
                                       headers={'User-Agent': 'mihomo'})

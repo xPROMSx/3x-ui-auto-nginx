@@ -631,7 +631,8 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
                   'installed-renewal-hooks','cold-boot','cold-transport-consumers','change-domains','restore-before-domains']
         agh=['install-update-base','prepare-update-base-cdn','update-failure-and-recovery',
              'interrupted-file-switch','blocked-cold-recovery','update-after-cold-recovery',
-             'project-update','project-update','project-update','project-update','native-agh-update',
+             'project-update','project-update','project-update','mtr-start-intent-recovery',
+             'mtr-start-intent-recovery','native-agh-update',
              'external-write-before-commit','external-write-before-commit']
         negative=['mandatory-dependency-negative','DoT-outage-partial-install','DoT-outage-core-consumers']
         with tempfile.TemporaryDirectory() as directory:
@@ -665,7 +666,9 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
                 agh_calls=['positive','__import__("update").prepare_base_cdn()',
                     '__import__("update").rollback_cases()','__import__("update").interrupt_switch()',
                     '__import__("update").failed_boot()','__import__("update").verify_cold_recovery()',
-                    '__import__("update").project_update()','checks.installed()','checks.transports(positive_only=True)',
+                    '__import__("update").project_update()','checks.installed()',
+                    'checks.transports(positive_only=True, edge_profiles="pre-update-edge-profiles.json")',
+                    '__import__("update").verify_mtr_recovery()',
                     '__import__("update").remove_customer_fixture()','checks.native_agh_update()',
                     '__import__("update").await_external()','__import__("update").retained()']
                 negative_calls=['dependency','dot-outage','checks.transports(vision=False, ws_grpc=False)']
@@ -680,7 +683,7 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
                     self.assertEqual(installs,[('positive',('b'*40,),{'upstream':'v3.10.2'})])
                     self.assertEqual([kind for kind,_ in events],
                         ['disk','boot','phase','phase','phase','phase','kill','wait','boot','phase','off',
-                         'boot','phase','phase','phase','phase','phase','phase','phase','external-write','phase','off'])
+                         'boot','phase','phase','phase','phase','phase','phase','phase','phase','external-write','phase','off'])
                 if group in ('all','negative'):
                     for phase in negative[:2]:
                         boot_index=events.index(('boot',phase))

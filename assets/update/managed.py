@@ -4,6 +4,7 @@
 """In-place Update. The journal is write-ahead and lives outside Restore trees."""
 
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -16,6 +17,7 @@ import tempfile
 import time
 from contextlib import closing
 from pathlib import Path
+from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import database
@@ -292,6 +294,19 @@ def clear(j):
     run('systemctl', 'daemon-reload')
     shutil.rmtree(WORK)
     fsync(BASE)
+    clean_source()
+
+
+def clean_source():
+    if ROOT.parent == BASE and re.fullmatch(r'source\.[A-Za-z0-9]{8}', ROOT.name) and ROOT.is_dir():
+        shutil.rmtree(ROOT)
+        fsync(BASE)
+
+
+def refresh_mtr(j):
+    touched = ('/etc/systemd/system/mtr-backend.service', '/usr/local/lib/3x-ui-pro/mtr-backend.py')
+    if j['active'].get('mtr-backend') and any(name in j.get('files', {}) for name in touched):
+        service('restart', 'mtr-backend')
 
 
 def restore_services(j):
@@ -332,6 +347,84 @@ def reload_nginx():
             return
         time.sleep(0.1)
     raise RuntimeError('nginx master did not start a new worker generation')
+
+
+def subscription_client(db, protocols):
+    now = int(time.time()*1000)
+    return db.execute(
+        '''SELECT c.sub_id FROM clients c
+           JOIN client_inbounds ci ON ci.client_id=c.id
+           JOIN inbounds i ON i.id=ci.inbound_id
+           LEFT JOIN client_traffics t ON t.email=c.email
+           WHERE c.enable=1 AND i.enable=1 AND c.sub_id<>'' AND NOT COALESCE(i.exclude_from_sub, 0)
+             AND COALESCE(t.enable,1)=1
+             AND (c.expiry_time IS NULL OR c.expiry_time<=0 OR c.expiry_time>?)
+             AND (t.expiry_time IS NULL OR t.expiry_time<=0 OR t.expiry_time>?)
+             AND (COALESCE(NULLIF(t.total,0),c.total_gb,0)<=0
+                  OR COALESCE(t.up,0)+COALESCE(t.down,0)<COALESCE(NULLIF(t.total,0),c.total_gb))
+             AND i.protocol IN (''' + ','.join('?' for _ in protocols) + ') ORDER BY c.id LIMIT 1',
+        (now, now, *protocols),
+    ).fetchone()
+
+
+def subscription_health(op, domains, db, settings, panel, cert, clash):
+    if settings.get('subEnable', 'true') != 'true':
+        return
+    protocols = ('vless', 'vmess', 'trojan', 'hysteria', 'shadowsocks', 'wireguard')
+    invalid = secrets.token_hex(20)
+    while db.execute('SELECT 1 FROM clients WHERE sub_id=?', (invalid,)).fetchone():
+        invalid = secrets.token_hex(20)
+    raw_client = None
+
+    def checked(format, path, active, headers):
+        try:
+            code, body = op.request(panel, path, cert, headers=headers)
+            if active:
+                valid = code == 200 and domains.validate_subscription(body, format)
+            else:
+                valid = code in (400, 404)
+            if valid:
+                return
+        except (OSError, ValueError, http.client.HTTPException):
+            pass
+        raise ValueError(f'{format} subscription validation failed.') from None
+
+    for format, uri, path_key, supported in (
+        ('RAW', 'subURI', 'subPath', protocols + ('amneziawg', 'tuic')),
+        ('JSON', 'subJsonURI', 'subJsonPath', protocols),
+    ):
+        if format == 'JSON' and settings.get('subJsonEnable', 'false') != 'true':
+            continue
+        client = subscription_client(db, supported)
+        token = quote(client[0], safe='') if client else invalid
+        try:
+            configured = urlsplit(settings.get(uri) or settings[path_key])
+            path = configured.path.rstrip('/') + '/' + token
+            route = urlunsplit(('', '', path, configured.query, ''))
+        except ValueError:
+            raise ValueError(f'{format} subscription URI is invalid.') from None
+        checked(format, route, client, {'User-Agent': 'x-ui-update-health',
+                                       'Accept': 'application/json' if format == 'JSON' else 'text/plain'})
+        if format == 'RAW':
+            raw_client = client
+    if not clash:
+        return
+    lookup = settings['subPath'].rstrip('/') + '/' + (quote(raw_client[0], safe='') if raw_client else invalid)
+    try:
+        code, body = op.request(panel, lookup, cert, headers={'User-Agent': 'mihomo'})
+        match = re.search(rb'(?m)^proxy-providers:[ \t]*\r?\n  sub:[ \t]*\r?\n'
+                          rb'    type: http[ \t]*\r?\n    url: (\S+)[ \t]*\r?$', body)
+        if code != 200 or not match:
+            raise ValueError
+        provider = urlsplit(match[1].decode())
+        if (provider.scheme != 'https' or provider.netloc != panel or provider.path != lookup
+                or parse_qs(provider.query).get('provider') != ['1']):
+            raise ValueError
+    except (OSError, ValueError, http.client.HTTPException):
+        raise ValueError('Managed Clash/Mihomo subscription validation failed.') from None
+    if raw_client:
+        provider_route = urlunsplit(('', '', provider.path, provider.query, ''))
+        checked('Clash provider', provider_route, raw_client, {'User-Agent': 'mihomo', 'Accept': 'text/plain'})
 
 
 def health(state, target=True):
@@ -383,29 +476,26 @@ def health(state, target=True):
         owners = [pid, *xray_pids] if role == 'amneziawg' else xray_pids
         if not any(f'pid={p},' in line for line in listing for p in owners):
             raise RuntimeError(f'Managed {role} listener unavailable')
-    op = module('domains').Operation('', '')
+    domains = module('domains')
+    op = domains.Operation('', '')
     panel = state['domains']['panel']
     cert = '/etc/letsencrypt/live/' + panel + '/fullchain.pem'
+    mtr = prop('mtr-backend', 'ActiveState') == 'active'
+    if mtr:
+        port = state['diagnostics']['mtr_backend_port']
+        if run('curl', '-qfsS', '--noproxy', '*', '--max-time', '5',
+               f'http://127.0.0.1:{port}/api/st/getip') != b'127.0.0.1':
+            raise ValueError('MTR backend HTTP health check failed')
     with closing(connect()) as db:
         settings = dict(db.execute('SELECT key,value FROM settings'))
-        token = secrets.token_hex(20)
-        while db.execute('SELECT 1 FROM clients WHERE sub_id=?', (token,)).fetchone():
-            token = secrets.token_hex(20)
-    request = op.request
-    if request(panel, settings['webBasePath'], cert)[0] not in (200, 302):
-        raise RuntimeError('Panel HTTPS unavailable')
-    if settings.get('subEnable', 'true') == 'true':
-        # Probe configured local routes without reading customer profiles or
-        # assuming a particular subscription format, public origin, or valid client.
-        raw = settings['subPath'].rstrip('/') + '/' + token
-        if request(panel, raw, cert)[0] not in (400, 404):
-            raise RuntimeError('RAW subscription route did not reject an unknown client')
-        code, body = request(panel, raw, cert, headers={'User-Agent': 'mihomo'})
-        if code != 200 or b'proxy-providers:' not in body:
-            raise RuntimeError('Managed Clash subscription unavailable')
-        if settings.get('subJsonEnable', 'true') == 'true':
-            if request(panel, settings['subJsonPath'].rstrip('/') + '/' + token, cert)[0] not in (400, 404):
-                raise RuntimeError('JSON subscription route did not reject an unknown client')
+        if op.request(panel, settings['webBasePath'], cert)[0] not in (200, 302):
+            raise RuntimeError('Panel HTTPS unavailable')
+        if settings.get('subEnable', 'true') == 'true' and not any(
+            len(line.split()) > 3 and line.split()[3].rsplit(':', 1)[-1] == settings['subPort']
+            and f'pid={pid},' in line for line in tcp
+        ):
+            raise RuntimeError('Subscription listener is not owned by the running panel')
+        subscription_health(op, domains, db, settings, panel, cert, mtr)
     if state['features'].get('adguard') and prop('AdGuardHome', 'ActiveState') == 'active':
         run('bash', DRIVER, 'agh-health')
 
@@ -490,6 +580,7 @@ def start_intent(j, state, change_db):
 
 def commit(j):
     restore_services(j)
+    refresh_mtr(j)
     verified_health(j['target'])
     save(j, 'verified')
     finish_commit(j)
@@ -524,15 +615,18 @@ def apply_update(sha):
         trial.mkdir()
         with closing(connect()) as live, closing(sqlite3.connect(trial / DB.name)) as db:
             live.backup(db)
+        before = trial / 'before.db'
+        shutil.copyfile(trial / DB.name, before)
         migrate_schema(
             release / 'x-ui',
             trial,
             'XUI_BIN_FOLDER=' + str(release / 'bin'),
             'XUI_LOG_FOLDER=' + str(trial),
         )
-        with closing(sqlite3.connect(trial / DB.name)) as db:
+        with closing(sqlite3.connect((trial / DB.name).as_uri() + '?mode=ro', uri=True)) as db:
             if db.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
                 raise RuntimeError('Trial SQLite migration failed quick_check')
+            verify_migration(db, before)
         shutil.rmtree(trial)
     files, edits, missing, params = make_plan(state, release)
     if not (
@@ -627,8 +721,6 @@ def apply_update(sha):
     start_intent(j, state, change_db)
     if restart_panel:
         service('start', 'x-ui')
-    if j['active']['mtr-backend'] and any('mtr-backend' in f for f in files):
-        service('restart', 'mtr-backend')
     commit(j)
 
 
@@ -713,8 +805,7 @@ def finish_old(j):
     restore_services(j)
     if any(Path(n).is_relative_to(NGINX) for n in j.get('files', {})):
         reload_nginx()
-    if j['active']['mtr-backend'] and any('mtr-backend' in f for f in j.get('files', {})):
-        service('restart', 'mtr-backend')
+    refresh_mtr(j)
     verified_health(j['old'], False)
     clear(j)
     print('ROLLBACK_VERIFIED: previous installation restored.', flush=True)
@@ -773,6 +864,9 @@ def main():
                 rollback(j)
                 finish_old(j)
             raise
+        finally:
+            if not JOURNAL.exists() and not (SYSTEM / BOOT).exists():
+                clean_source()
     elif j:
         recover(j, offline=action == 'boot')
 

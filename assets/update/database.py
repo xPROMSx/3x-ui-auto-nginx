@@ -94,6 +94,16 @@ def merge_fields(stored, desired):
     return desired
 
 
+def merge_vless_settings(stored, desired):
+    managed = {key: value for key, value in desired.items()
+               if key not in ('encryption', 'decryption', 'fallbacks')}
+    result = merge_fields(stored, managed)
+    if result.get('decryption') not in (None, '', 'none') and not result.get('fallbacks'):
+        # Xray rejects even an empty fallback array with VLESS Encryption.
+        result.pop('fallbacks', None)
+    return result
+
+
 def read_roles(db, state):
     db.row_factory = sqlite3.Row
     rows = {}
@@ -134,16 +144,12 @@ def parameters(state, settings, rows):
     p.update(xhttp_path=p['xhttp_route'].lstrip('/'), INSTALL_WS_GRPC='n', flag='🌐')
     if 'ws' in rows:
         ws, grpc = rows['ws'], rows['grpc']
-        ws_path = ws['stream_settings']['wsSettings']['path']
-        service = grpc['stream_settings']['grpcSettings']['serviceName']
         p.update(
             INSTALL_WS_GRPC='y',
             ws_port=ws['port'],
-            ws_route=ws_path,
-            ws_path=ws_path.removeprefix(f"/{ws['port']}/"),
+            ws_route=ws['stream_settings']['wsSettings']['path'],
             trojan_port=grpc['port'],
-            service_name=service,
-            trojan_path=service.split('|')[0].removeprefix(f"/{grpc['port']}/"),
+            service_name=grpc['stream_settings']['grpcSettings']['serviceName'],
         )
     return p
 
@@ -157,9 +163,8 @@ def definitions(assets, state, rows, p):
         row = rows['vision']
         tls = row['stream_settings']['tlsSettings']
         cert = tls['certificates'][0]
-        port = int(row['settings']['fallbacks'][0]['dest'].rsplit(':', 1)[-1])
         wanted['vision'] = assets('vision').inbound(
-            state['domains']['vision'], row['port'], port, cert['certificateFile'], cert['keyFile']
+            state['domains']['vision'], row['port'], None, cert['certificateFile'], cert['keyFile']
         )
     if 'xhttp_cdn' in rows:
         row = rows['xhttp_cdn']
@@ -189,7 +194,8 @@ def changes(rows, wanted):
             ('sniffing', 'sniffing'),
         ):
             old = row[column]
-            new = merge_fields(old, definition[field])
+            new = (merge_vless_settings if column == 'settings' and row['protocol'] == 'vless'
+                   else merge_fields)(old, definition[field])
             if role == 'xhttp_cdn' and column == 'settings':
                 new.pop('fallbacks', None)
             if old != new:
