@@ -2656,7 +2656,7 @@ cmd_restore() {
     ADGUARD_HOME=$(python3 -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["adguard_home"]).lower())' "$STAGING/meta.json")
     load_restored_services
     if [[ "$ADGUARD_HOME" == true ]]; then
-        command -v gpg >/dev/null && command -v gpgv >/dev/null || install_missing_packages gnupg
+        command -v gpg >/dev/null && command -v gpgv >/dev/null || install_missing_packages gnupg gpgv
         preflight_staged_adguard
     fi
     preflight_staged_core
