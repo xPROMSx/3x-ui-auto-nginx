@@ -31,16 +31,24 @@ def run(*args):
     return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=45)
 
 
-def restore_content():
+def restore_content(debian=False):
     """Private content digests, never credentials or database rows in reports."""
     with sqlite3.connect('/etc/x-ui/x-ui.db') as db:
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         content = {name: db.execute('SELECT * FROM '+name+' ORDER BY rowid').fetchall()
-                   for name in ('settings','inbounds','users','clients') if name in tables}
+                   for name in ('settings','inbounds','users','clients','client_inbounds') if name in tables}
     result = {'sqlite': hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()}
-    for name in ('/etc/x-ui/pr2-persist', '/etc/x-ui/auto-nginx-managed.json', '/root/cert/panel.example.test/fullchain.pem',
-                 '/root/cert/panel.example.test/privkey.pem'):
-        result[name] = hashlib.sha256(Path(name).read_bytes()).hexdigest()
+    paths = [Path('/etc/x-ui/pr2-persist'), Path('/etc/x-ui/auto-nginx-managed.json'),
+             Path('/root/cert/panel.example.test/fullchain.pem'), Path('/root/cert/panel.example.test/privkey.pem')]
+    if debian:
+        paths += [Path('/etc/x-ui/initial-client.json')]
+        for domain in ('panel', 'reality', 'vision'):
+            lineage = Path('/etc/letsencrypt/live')/(domain+'.example.test')
+            paths.extend(lineage/name for name in ('fullchain.pem', 'privkey.pem'))
+        paths.extend(Path('/opt/AdGuardHome')/name for name in
+                     ('AdGuardHome', 'AdGuardHome.sig', 'AdGuardHome-public.gpg', 'managed.json'))
+    for path in paths:
+        result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
     for path in (Path('/etc/x-ui/cover-sites.json'), *Path('/var/www/html').glob('cover-*/*')):
         if path.is_file(): result[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
         elif path.is_dir():
@@ -49,7 +57,7 @@ def restore_content():
     return result
 
 
-def restore_source(dot=False):
+def restore_source(dot=False, debian=False):
     if dot:
         name = 'dot-'+uuid.uuid4().hex+'.example.test'
         state = adguard_state({'domain':name, 'answer':'203.0.113.7'})
@@ -63,9 +71,13 @@ def restore_source(dot=False):
     (ROOT/'source-backup.private.log').write_bytes(result.stderr)
     assert result.returncode == 0
     archive = json.loads(result.stdout)['archive']
-    assert json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',archive))['format_version'] == 3
+    inspected = json.loads(run('bash','/usr/local/bin/x-ui-backup','inspect',archive))
+    assert inspected['format_version'] == 3
+    if debian:
+        assert inspected['adguard_home'] is True
+        assert (inspected['os_id'], inspected['os_version'], inspected['arch']) == ('debian', '13', 'amd64')
     (ROOT/'restore-archive-path').write_text(archive)
-    evidence = restore_content()
+    evidence = restore_content(debian)
     if dot:
         import tarfile
         paths = ('/etc/nginx/nginx.conf', '/etc/nginx/stream-dot.d/adguard-dot.conf')
@@ -74,8 +86,11 @@ def restore_source(dot=False):
                 assert saved.extractfile('files'+path).read() == Path(path).read_bytes()
         evidence = dict(content=evidence, query=name,
                         nginx={path: hashlib.sha256(Path(path).read_bytes()).hexdigest() for path in paths})
+        if debian:
+            evidence.update(adguard=state, credentials=test_credentials())
+            assert adguard_state() == state
     (ROOT/'restore-expected.json').write_text(json.dumps(evidence))
-    return {'real_backup_v3':True, 'minimal_source':True,
+    return {'real_backup_v3':True, ('maximum_source' if debian else 'minimal_source'):True,
             **({'installed_DoT_verified':True} if dot else {})}
 
 
@@ -183,19 +198,26 @@ def dot_verified(domain, query):
     assert re.search(rb'DoT:\s+'+re.escape(domain.encode())+rb', port 853', details)
 
 
-def restore_dot_target():
+def restore_dot_target(debian=False):
+    from install import clean_guest, gpgv_installed, observe_missing_gpgv
     assert not any(Path(path).exists() for path in ('/etc/x-ui', '/usr/local/x-ui', '/opt/AdGuardHome'))
+    if debian:
+        clean_guest(debian=True)
+        print('Debian Restore: clean amd64 guest, gpgv absent', flush=True)
     # Let dpkg configure Certbot on the clean target before setting its ACME server.
     fixture = Path('/etc/letsencrypt/cli.ini')
     pebble_config = fixture.read_text()
     assert pebble_config == 'server = https://10.0.2.2:14000/dir\n'
     fixture.unlink()
     env = restore_trust()
+    if debian:
+        env = observe_missing_gpgv(env)
+    answers = b'/root/pilot/restore.tar.gz\n' + (b'y' if debian else b'n') + b'\nn\nYES\n'
     log = ROOT/'dot-restore.private.log'
     with log.open('wb') as output:
         result = subprocess.run(['bash', '-c', 'source "$1"; backup_action restore',
                                  'fixture', str(ROOT/'x-ui-latest.sh')],
-                                input=b'/root/pilot/restore.tar.gz\nn\nn\nYES\n',
+                                input=answers,
                                 stdout=output, stderr=subprocess.STDOUT, env=env, timeout=1500)
     text = log.read_text(errors='replace')
     if result.returncode:
@@ -210,14 +232,32 @@ def restore_dot_target():
         if stage == 'packages':
             counts = dot_restore_package_counts(text.rsplit('\n==> ', 1)[-1])
             print('DoT Restore package diagnostics:', result.returncode, *counts.values(), flush=True)
+        if (debian and (ROOT/'gpgv-attempt').exists() and not gpgv_installed()
+                and 'Staged AdGuard Home executable SHA256 mismatch; target state was not changed.' in text):
+            assert 'Stopping services and restoring managed state' not in text
+            assert not any(Path(path).exists() for path in ('/etc/x-ui', '/usr/local/x-ui', '/opt/AdGuardHome'))
+            print('Debian Restore: gpgv missing at AGH preflight, managed state untouched', flush=True)
     assert result.returncode == 0, 'DoT Restore failed; private log retained'
     assert 'Overall: SUCCESS' in text
+    if debian:
+        for status in ('Restore: SUCCESS', 'APT: CONFIGURED', 'Fail2ban: CONFIGURED', 'UFW: NOT_REQUESTED'):
+            assert status in text
+        assert gpgv_installed() and not (ROOT/'gpgv-attempt').exists()
     fixture.write_text(pebble_config)
+    checks = restore_dot_verified(debian)
+    if debian:
+        print('Debian Restore: Restore SUCCESS, Overall SUCCESS, gpgv installed', flush=True)
+    return checks
+
+
+def restore_dot_verified(debian=False):
     assert run('ufw', 'status').strip() == 'Status: inactive'
     evidence = json.loads((ROOT/'restore-expected.json').read_text())
-    assert restore_content() == evidence['content']
+    assert restore_content(debian) == evidence['content']
     assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest
                for path, digest in evidence['nginx'].items())
+    if debian:
+        assert adguard_state() == evidence['adguard'], 'Restored AGH upstreams or rewrites changed'
     dot_verified('panel.example.test', evidence['query'])
     return {'clean_target_DoT_verified':True, 'restored_content_preserved':True}
 
@@ -239,11 +279,23 @@ def load(name):
     spec.loader.exec_module(module)
     return module
 
+def test_credentials():
+    log = ROOT/'installer.raw.log'
+    if not log.exists():
+        return json.loads((ROOT/'restore-expected.json').read_text())['credentials']
+    text = re.sub(r'\x1b\[[0-9;]*m', '', log.read_text())
+    credentials = {field: re.search(r'^ +'+field.capitalize()+r': +(\S+)$', text, re.M)[1]
+                   for field in ('username', 'password')}
+    agh = re.search(r'^ +Login: +admin\n +Password: +(\S+)$', text, re.M)
+    if agh:
+        credentials['adguard'] = agh[1]
+    return credentials
+
+
 def adguard_state(rewrite=None):
     """Private API assertions; never publish AGH credentials or configuration."""
     metadata=json.loads(Path('/opt/AdGuardHome/managed.json').read_text())
-    log=re.sub(r'\x1b\[[0-9;]*m','',(ROOT/'installer.raw.log').read_text())
-    password=re.search(r'^ +Login: +admin\n +Password: +(\S+)$',log,re.M)[1]
+    password=test_credentials()['adguard']
     headers={'Authorization':'Basic '+base64.b64encode(('admin:'+password).encode()).decode(),
              'Content-Type':'application/json'}
     def request(path,body=None):
@@ -277,7 +329,7 @@ def cover_rate_limits(domains):
         connection.close()
 
 
-def installed(cold=False):
+def installed(cold=False, restored=False):
     root=ROOT; checks={}
     boot=Path('/proc/sys/kernel/random/boot_id').read_text().strip().replace('-','')
     if cold:
@@ -303,7 +355,8 @@ def installed(cold=False):
     saved_limit = root/'first-conntrack-max'
     if cold:
         assert conntrack == int(saved_limit.read_text())
-        run('ufw', 'reload')
+        if not restored:
+            run('ufw', 'reload')
         assert conntrack == int(run('sysctl', '-n', conntrack_key))
     else:
         saved_limit.write_text(str(conntrack))
@@ -320,9 +373,13 @@ def installed(cold=False):
     assert xui_version==baseline['version'][1:] and xray_version==baseline['xray']
     checks['installed_verified_baseline']=True
     run('nginx','-t');checks['nginx_syntax']=True
-    assert run('busctl','get-property','org.freedesktop.resolve1','/org/freedesktop/resolve1','org.freedesktop.resolve1.Manager','DNSOverTLS').strip()=='s "yes"'
+    if restored:
+        assert not Path('/etc/systemd/resolved.conf.d/90-3x-ui-auto-nginx.conf').exists()
+    else:
+        assert run('busctl','get-property','org.freedesktop.resolve1','/org/freedesktop/resolve1','org.freedesktop.resolve1.Manager','DNSOverTLS').strip()=='s "yes"'
     assert 'tech0.ru' in run('resolvectl','domain')
-    run('resolvectl','query','--cache=no','cloudflare.com');run('getent','ahosts','debian.org');checks['native_DNS_DoT_search_domain']=True
+    run('resolvectl','query','--cache=no','cloudflare.com');run('getent','ahosts','debian.org')
+    checks['native_DNS_search_domain' if restored else 'native_DNS_DoT_search_domain']=True
     deadline=time.monotonic()+45
     while True:
         try:
@@ -378,12 +435,11 @@ def installed(cold=False):
     checks['independent_static_cover_sites']=True
     cover_rate_limits(dict(panel='panel.example.test',reality='reality.example.test',vision='vision.example.test'))
     checks['cover_rate_limits']=True
-    log=re.sub(r'\x1b\[[0-9;]*m','',(root/'installer.raw.log').read_text())
-    username=re.search(r'^ +Username: +(\S+)$',log,re.M)[1];password=re.search(r'^ +Password: +(\S+)$',log,re.M)[1]
+    credentials=test_credentials()
     with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:
         settings=dict(db.execute('SELECT key,value FROM settings'))
     with tempfile.TemporaryDirectory(prefix='cold-session-') as directory:
-        panel=load('session').Panel('https://panel.example.test'+settings['webBasePath'],username,password,directory,['--resolve','panel.example.test:443:127.0.0.1'])
+        panel=load('session').Panel('https://panel.example.test'+settings['webBasePath'],credentials['username'],credentials['password'],directory,['--resolve','panel.example.test:443:127.0.0.1'])
         client=load('client');rows=client.active_inbounds(panel)
         identity=json.loads(Path('/etc/x-ui/initial-client.json').read_text())['identity']
         client.validate_credentials(rows,identity['email'])
@@ -432,6 +488,37 @@ def installed(cold=False):
     mtr_api();checks['restricted_mtr_http']=True
     assert Path('/usr/local/bin/x-ui-backup').is_file();checks['backup_tool_present']=True
     return checks
+
+
+def debian_stack(cold=False, restored=False):
+    from install import gpgv_installed
+    if not cold:
+        boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip().replace('-', '')
+        (ROOT/'first-boot-id').write_text(boot)
+    checks = installed(cold=cold, restored=restored)
+    assert gpgv_installed()
+    run('bash', '-c', 'source /usr/local/lib/3x-ui-pro/managed-adguard.sh; '
+        'agh_binary && [[ "$AGH_RUNNING_VERSION" == "$AGH_VERSION" ]]')
+    security = load('current-security')
+    security.verify_apt('debian', set())
+    security.verify_fail2ban([22])
+    rules = set(run('ufw', 'show', 'added').splitlines())
+    ports = {'80/tcp', '443/tcp', '443/udp', '8443/udp', '853/tcp'}
+    if not restored:
+        ports.add('22/tcp')
+        security.verify_dns()
+    assert {'ufw allow '+port for port in ports} <= rules
+    assert run('ufw', 'status').splitlines()[0] == ('Status: inactive' if restored else 'Status: active')
+    if restored and cold:
+        checks.update(restore_dot_verified(debian=True))
+    elif not restored and cold:
+        evidence = json.loads((ROOT/'restore-expected.json').read_text())
+        assert adguard_state() == evidence['adguard']
+        dot_verified('panel.example.test', evidence['query'])
+    checks.update(transports(positive_only=True))
+    checks.update(amneziawg())
+    return dict(checks, signed_AGH=True, debian_APT_security_and_Fail2ban=True, UFW=True)
+
 
 def core_flags():
     roles=json.loads(Path('/etc/x-ui/auto-nginx-managed.json').read_text())['inbound_roles']
@@ -526,12 +613,11 @@ def transports(vision=True, panel_domain='panel.example.test', positive_only=Fal
     rule=["iptables","-t","nat","-A","OUTPUT","-d","8.8.8.9","-p","tcp","--dport","18081","-j","DNAT","--to-destination","10.0.2.2:18081"]
     subprocess.run(rule,check=True,timeout=10)
     try:
-        log=re.sub(r'\x1b\[[0-9;]*m','',(root/'installer.raw.log').read_text())
-        username=re.search(r'^ +Username: +(\S+)$',log,re.M)[1];password=re.search(r'^ +Password: +(\S+)$',log,re.M)[1]
+        credentials=test_credentials()
         with sqlite3.connect('file:/etc/x-ui/x-ui.db?mode=ro',uri=True) as db:settings=dict(db.execute('SELECT key,value FROM settings'))
         with tempfile.TemporaryDirectory(prefix='installed-consumer-') as directory:
             directory=Path(directory)
-            panel=load('session').Panel('https://'+panel_domain+settings['webBasePath'],username,password,directory,['--resolve',panel_domain+':443:127.0.0.1'])
+            panel=load('session').Panel('https://'+panel_domain+settings['webBasePath'],credentials['username'],credentials['password'],directory,['--resolve',panel_domain+':443:127.0.0.1'])
             client=load('client');identity=json.loads(Path('/etc/x-ui/initial-client.json').read_text())['identity']
             public=panel.request('panel/api/setting/defaultSettings',{})['obj']
             configs=json.loads(client.fetch(panel,public['subJsonURI']+identity['subId']))

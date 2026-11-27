@@ -75,9 +75,25 @@ jobs:
           XUI_FRESH_GROUP: negative
         run: bash tests/fresh/run.sh
 
+  debian:
+    name: Fresh compatibility (debian-13)
+    needs: scope
+    if: needs.scope.outputs.docs_only == 'false'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Debian Installation, Backup, Restore and cold boots
+        env:
+          XUI_FRESH_GROUP: debian
+        run: bash tests/fresh/run.sh
+
   fresh:
     name: Full fresh installer (ubuntu-26.04)
-    needs: [scope, positive, agh, negative]
+    needs: [scope, positive, agh, negative, debian]
     if: always()
     runs-on: ubuntu-26.04
     steps:
@@ -88,27 +104,29 @@ jobs:
           CI_POSITIVE_RESULT: ${{ needs.positive.result }}
           CI_AGH_RESULT: ${{ needs.agh.result }}
           CI_NEGATIVE_RESULT: ${{ needs.negative.result }}
+          CI_DEBIAN_RESULT: ${{ needs.debian.result }}
         run: |
           python3 - <<'PYFRESHRESULT'
           import os, sys
 
-          def fresh_success(docs, scope, positive, agh, negative):
+          def fresh_success(docs, scope, positive, agh, negative, debian):
               if scope != 'success':
                   return False
               if docs == 'true':
-                  return positive == agh == negative == 'skipped'
-              return docs == 'false' and positive == agh == negative == 'success'
+                  return positive == agh == negative == debian == 'skipped'
+              return docs == 'false' and positive == agh == negative == debian == 'success'
 
           docs = os.environ.get('CI_DOCS_ONLY', '')
           scope = os.environ.get('CI_SCOPE_RESULT', '')
           positive = os.environ.get('CI_POSITIVE_RESULT', '')
           agh = os.environ.get('CI_AGH_RESULT', '')
           negative = os.environ.get('CI_NEGATIVE_RESULT', '')
-          passed = fresh_success(docs, scope, positive, agh, negative)
+          debian = os.environ.get('CI_DEBIAN_RESULT', '')
+          passed = fresh_success(docs, scope, positive, agh, negative, debian)
           if passed and docs == 'true':
               message = 'DOCS-ONLY: Full Fresh E2E not executed; documentation scope verified.'
           elif passed:
-              message = 'Full Fresh E2E: PASS; the positive, AGH update and negative groups completed.'
+              message = 'Full Fresh E2E: PASS; the positive, AGH update, negative and Debian groups completed.'
           else:
               message = 'Full Fresh E2E: FAIL; scope or a required scenario group did not complete as expected.'
           print(message)

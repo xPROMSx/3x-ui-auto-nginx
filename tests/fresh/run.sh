@@ -6,12 +6,15 @@ repository=$(git rev-parse --show-toplevel)
 ref=$(git rev-parse HEAD)
 restore_mode=${XUI_RESTORE_ACCEPTANCE:-0}
 fresh_group=all
+distro=ubuntu:26.04
 if [[ "$restore_mode" != 1 ]]; then
     fresh_group=${XUI_FRESH_GROUP:-all}
-    case "$fresh_group" in all|positive|agh|negative) ;; *) printf 'Invalid fresh scenario group\n' >&2; exit 2 ;; esac
-fi
-distro=ubuntu:26.04
-if [[ "$restore_mode" == 1 ]]; then
+    case "$fresh_group" in
+        all|positive|agh|negative) ;;
+        debian) distro=debian:13 ;;
+        *) printf 'Invalid fresh scenario group\n' >&2; exit 2 ;;
+    esac
+else
     distro=${XUI_TEST_DISTRO:-ubuntu:26.04}
     case "$distro" in ubuntu:24.04|ubuntu:26.04) ;; *) exit 2 ;; esac
 fi
@@ -40,7 +43,7 @@ timeout 8m docker build "${secret[@]}" -t xui-fresh-tools -f "$repository/tests/
 date +%s > "$work/images.ready"
 root_container=$(docker create xui-fresh-root)
 docker export "$root_container" -o "$work/rootfs.tar"
-if [[ "$restore_mode" != 1 ]]; then
+if [[ "$restore_mode" != 1 && "$fresh_group" != debian ]]; then
     git show bf5ce345949c530b97bcf324b7d334332cd33dc9:assets/security/managed.py > "$work/old-security.py"
 fi
 # Preserve the cloud proxy if present; only hostname/IP mappings, no credentials in argv.

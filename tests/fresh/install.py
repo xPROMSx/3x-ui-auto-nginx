@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import socket
 import ssl
 import subprocess
@@ -54,7 +55,45 @@ def install_answers(scenario, upstream):
         return b'n\nn\nn\ny\ny\nn\n'
     options = b'y\ny\ny\ny\nvision.example.test\ny\n'
     # An explicit historical release cannot select CDN and skips the WARP question.
-    return options + (b'n\ny\nn\ny\n' if upstream else b'y\nn\ny\nn\ny\n')
+    if upstream:
+        return options + b'n\ny\nn\ny\n'
+    return options + b'y\nn\ny\n' + (b'y' if scenario == 'debian' else b'n') + b'\ny\n'
+
+
+def gpgv_installed():
+    result = subprocess.run(['dpkg-query', '-W', '-f=${db:Status-Status}', 'gpgv'],
+                            capture_output=True, text=True, timeout=10)
+    return result.stdout == 'installed'
+
+
+def clean_guest(debian=False):
+    packages = subprocess.check_output(
+        ['dpkg-query', '-W', '-f=${binary:Package}\t${db:Status-Status}\n'], text=True)
+    for package in ('nginx', 'nginx-common', 'certbot', 'fail2ban',
+                    'unattended-upgrades', 'mtr-tiny', 'ufw'):
+        assert package+'\tinstalled' not in packages.splitlines(), 'Application stack preinstalled: '+package
+    for path in ('/etc/x-ui', '/usr/local/x-ui', '/opt/AdGuardHome'):
+        assert not Path(path).exists(), 'Application state preinstalled: '+path
+    if debian:
+        release = Path('/etc/os-release').read_text().splitlines()
+        assert 'ID=debian' in release and 'VERSION_ID="13"' in release
+        assert subprocess.check_output(['dpkg', '--print-architecture']).strip() == b'amd64'
+        assert not gpgv_installed() and not shutil.which('gpgv'), 'gpgv preinstalled in Debian guest'
+
+
+def observe_missing_gpgv(env):
+    # Bash preserves the usual missing-command exit. The actual verifier and APT
+    # run normally, and the record contains neither arguments nor private output.
+    observer = ROOT/'missing-command.sh'
+    observer.write_text("""command_not_found_handle() {
+    if [[ $1 == gpgv ]]; then
+        printf '%s\\n' missing > /root/pilot/gpgv-attempt
+    fi
+    printf '%s: command not found\\n' "$1" >&2
+    return 127
+}
+""")
+    return {**env, 'BASH_ENV': str(observer)}
 
 
 def install(scenario, ref, upstream=None):
@@ -63,14 +102,10 @@ def install(scenario, ref, upstream=None):
     try:
         assert os.geteuid() == 0 and Path('/proc/1/comm').read_text().strip() == 'systemd'
         assert re.fullmatch('[0-9a-f]{40}', ref)
-        packages = subprocess.check_output(
-            ['dpkg-query', '-W', '-f=${binary:Package}\t${db:Status-Status}\n'], text=True)
-        for package in ('nginx', 'nginx-common', 'certbot', 'fail2ban',
-                        'unattended-upgrades', 'mtr-tiny', 'ufw'):
-            assert not any(line.split('\t')[0] == package and line.endswith('\tinstalled')
-                           for line in packages.splitlines()), 'Application stack preinstalled'
-        for path in ('/etc/x-ui', '/usr/local/x-ui', '/opt/AdGuardHome'):
-            assert not Path(path).exists(), 'Application state preinstalled'
+        debian = scenario == 'debian'
+        clean_guest(debian)
+        if debian:
+            report['gpgv_absent_before'] = True
         subprocess.run(['/usr/sbin/sshd', '-t'], check=True, capture_output=True, timeout=10)
         dns_before = (Path('/etc/resolv.conf').readlink(), Path('/etc/resolv.conf').read_bytes())
         network = Path('/etc/systemd/network/10-pilot.network').read_bytes()
@@ -79,6 +114,8 @@ def install(scenario, ref, upstream=None):
                'REQUESTS_CA_BUNDLE': '/etc/ssl/certs/ca-certificates.crt'}
         os.environ.update(env)
         env['PATH'] = str(api_restart_probe(ROOT))+os.pathsep+env['PATH']
+        if debian:
+            env = observe_missing_gpgv(env)
         started = time.monotonic()
         context = ssl.create_default_context(cafile=str(ROOT/'fixture.crt'))
         with urllib.request.urlopen('https://10.0.2.2:15000/roots/0', context=context, timeout=10) as response:
@@ -118,6 +155,15 @@ def install(scenario, ref, upstream=None):
             'xray_runtime_failure': r'Xray must own the REALITY TCP, live XHTTP Unix and Hysteria2 UDP listeners',
         }
         report['components'] = {name: bool(re.search(pattern, private)) for name, pattern in patterns.items()}
+        if debian:
+            report['gpgv_installed_after'] = gpgv_installed()
+            report['gpgv_missing_at_verification'] = (ROOT/'gpgv-attempt').exists()
+            report['agh_rolled_back'] = (
+                'AdGuard Home stage failed.' in private
+                and not Path('/opt/AdGuardHome').exists()
+                and subprocess.run(['systemctl', 'is-active', '--quiet', 'AdGuardHome'], timeout=10).returncode != 0)
+            assert result.returncode == 0, 'Debian maximum installation failed'
+            assert report['gpgv_installed_after'] and not report['gpgv_missing_at_verification']
         require_active('ssh')
         subprocess.run(['getent', 'ahosts', 'debian.org'], check=True, capture_output=True, timeout=30)
         if scenario == 'dependency':
@@ -135,14 +181,14 @@ def install(scenario, ref, upstream=None):
                 subprocess.run(['systemctl','is-active','--quiet','AdGuardHome'], check=True, timeout=10)
             assert not Path('/etc/fail2ban/jail.d/90-3x-ui-auto-nginx.local').exists()
         else:
-            required = [u for u in INSTALL_UNITS if scenario == 'positive' or u != 'AdGuardHome']
+            required = [u for u in INSTALL_UNITS if scenario in ('positive', 'debian') or u != 'AdGuardHome']
             for unit in required:
                 require_active(unit)
             assert re.search(r'^ +Username: +\S+$', private, re.M)
             assert re.search(r'^ +Password: +\S+$', private, re.M)
             assert re.search(r'\[✓\]\s+Client\s+Created', private)
             assert re.search(r'\[✓\]\s+Subscription\s+Ready', private)
-            if scenario == 'positive':
+            if scenario in ('positive', 'debian'):
                 assert result.returncode == 0, 'Maximum installation failed'
                 metadata = json.loads(Path('/opt/AdGuardHome/managed.json').read_text())
                 assert re.fullmatch(r'dns-[A-Za-z0-9]{12}', metadata['doh_path']), 'AGH public path is not random'

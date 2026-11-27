@@ -1,4 +1,4 @@
-"""One disk-based Ubuntu 26.04 acceptance, using real main(), services and consumers."""
+"""Disk-based Ubuntu and Debian acceptance with native services and consumers."""
 import ast
 import hashlib
 import json
@@ -125,6 +125,13 @@ def invoke(expression, result_name, timeout=180, tty=False):
     import shlex
     result = ssh('python3 -c '+shlex.quote(code), timeout, tty=tty)
     (ROOT/(phase+'.private.log')).write_bytes(result.stdout+result.stderr)
+    if phase == 'debian-restore':
+        for message in (
+                'Debian Restore: clean amd64 guest, gpgv absent',
+                'Debian Restore: gpgv missing at AGH preflight, managed state untouched',
+                'Debian Restore: Restore SUCCESS, Overall SUCCESS, gpgv installed'):
+            if message.encode() in result.stdout.splitlines():
+                print(message, flush=True)
     if phase == 'update-failure-and-recovery':
         cases = update_recovery_results(result.stdout)
         report['update_recovery'] = cases
@@ -229,8 +236,16 @@ def install(scenario, ref, upstream=None):
     report[phase+'_components'] = flags
     print(phase+' components: '+json.dumps(flags, sort_keys=True), flush=True)
     for key in ('main_seconds', 'trust_seconds', 'main_exit'):
-        assert type(values[key]) in (int, float)
-        report[phase+'_'+key] = values[key]
+        if key in values:
+            assert type(values[key]) in (int, float)
+            report[phase+'_'+key] = values[key]
+    if scenario == 'debian':
+        evidence = {key: values[key] for key in ('gpgv_absent_before', 'gpgv_installed_after',
+                                                 'gpgv_missing_at_verification', 'agh_rolled_back')
+                    if key in values}
+        assert all(type(v) is bool for v in evidence.values())
+        report[phase+'_dependencies'] = evidence
+        print(phase+' dependencies: '+json.dumps(evidence, sort_keys=True), flush=True)
     assert result.returncode == 0 and values['passed'] is True, 'Unexpected real-main result'
     installer = ROOT/'base-installer' if upstream else REPO/'x-ui-latest.sh'
     assert values['installer_sha256'] == hashlib.sha256(installer.read_bytes()).hexdigest()
@@ -293,6 +308,11 @@ def boot_restore_pair(ref, scenario, target_phase):
     phase = scenario if dot else 'minimal-source'
     fresh_disk(); boot(); install(scenario, ref)
     invoke('checks.restore_source(dot='+repr(dot)+')', 'restore-source', 180)
+    boot_restore_target(target_phase)
+
+
+def boot_restore_target(target_phase):
+    global phase
     for source, target in (('$(cat /root/pilot/restore-archive-path)', 'restore.tar.gz'),
                            ('/root/pilot/restore-expected.json', 'restore-expected.json')):
         result = ssh('cat '+source, 90)
@@ -304,6 +324,32 @@ def boot_restore_pair(ref, scenario, target_phase):
     for name in ('restore.tar.gz', 'restore-expected.json'):
         result = ssh('cat > /root/pilot/'+name, 90, input=(ROOT/name).read_bytes())
         assert result.returncode == 0
+
+
+def debian_acceptance(ref):
+    global phase
+    phase = 'debian-installation'
+    fresh_disk()
+    boot()
+    install('debian', ref)
+    phase = 'debian-installed'
+    invoke('checks.debian_stack()', 'debian-installed', 600)
+    phase = 'debian-backup'
+    invoke('checks.restore_source(dot=True, debian=True)', 'debian-backup', 180)
+    poweroff()
+    phase = 'debian-source-cold-boot'
+    boot()
+    invoke('checks.debian_stack(cold=True)', 'debian-source-cold', 600)
+    boot_restore_target('debian-restore')
+    invoke('checks.restore_dot_target(debian=True)', 'debian-restore', 1800)
+    assert ssh('true').returncode == 0, 'New SSH connection failed after Debian Restore'
+    phase = 'debian-restored'
+    invoke('checks.debian_stack(restored=True)', 'debian-restored', 600)
+    poweroff()
+    phase = 'debian-target-cold-boot'
+    boot()
+    invoke('checks.debian_stack(cold=True, restored=True)', 'debian-target-cold', 600)
+    poweroff()
 
 
 def restore_acceptance(ref):
@@ -344,6 +390,9 @@ def external_update_write():
 def fresh_acceptance(ref, group='all'):
     """Run the linked positive installation, the AGH update scenario and/or the clean-disk negative cases."""
     global phase
+    if group == 'debian':
+        debian_acceptance(ref)
+        return
     if group not in ('all','positive','agh','negative'):
         raise ValueError('Invalid fresh scenario group')
     if group in ('all','positive'):

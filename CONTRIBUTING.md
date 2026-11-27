@@ -98,13 +98,15 @@ There is no branch-push or manual-dispatch trigger. A newer launch cancels an ol
 `tests/fresh/run.sh` selects a scenario group through `XUI_FRESH_GROUP`:
 `positive` (installation, consumers, cold boot, Change Domains and Restore),
 `agh` (PR1 installation, in-place Update and recovery, then native AdGuard Home update),
-`negative` (clean-disk failure cases) or `all` (all three groups in that order).
+`negative` (clean-disk failure cases), `all` (all three Ubuntu groups in that
+order) or `debian` (Debian 13 amd64 Installation, Backup v3 and Restore).
 Set `XUI_UPDATE_BASE_REF` to select the Update source revision. The target is the PR head.
-The workflow runs `positive`, `agh` and `negative` as three
-independent jobs; the aggregate `Full fresh installer (ubuntu-26.04)` (name unchanged)
-requires all three, so a missing group never passes.
+The workflow runs four independent jobs. The aggregate
+`Full fresh installer (ubuntu-26.04)` requires successful scope classification
+and all four successful scenario jobs for code changes. Verified docs-only
+changes require all four scenario jobs to be skipped.
 
-The unchanged harness boots a minimal disk-based VM
+The shared harness boots a minimal disk-based VM
 under QEMU KVM with 4 vCPU/4 GiB RAM, runs the unmodified installer `main()` with
 maximum options and one exact checkout SHA, then cold-boots the same disk.
 Actual installed services, subscriptions, restricted MTR HTTP and Xray/AWG data
@@ -112,6 +114,21 @@ transfer are checked; TLS clients explicitly trust the temporary CA and reject
 wrong trust, SNI and credentials. Independent clean disk copies cover mandatory
 APT dependency failure and partial installation after verified DNS rollback.
 The existing canonical regression preserves STOP on unverified rollback.
+
+The Debian group uses the same Ubuntu CI kernel, 4 vCPU and 4096 MiB guest RAM.
+Each of its two clean Debian disks starts without `gpgv` or the application
+stack. A maximum Installation uses the PR SHA, with WARP off and the XHTTP CDN
+profile created disabled. The installed VM creates the Backup v3 archive with
+a DNS rewrite. Restore uses that archive on the second VM with Debian APT
+Security and Fail2ban enabled, leaving UFW inactive and checking a new SSH
+connection. The test verifies the signed AdGuard Home binary, DNS, HTTPS DoH
+GET/POST and certificate-verified public DoT when first installed and restored
+and after cold boots. System DNS-over-TLS is checked on the source, as system
+resolver settings are outside the archive. Panel login and native subscriptions
+are exercised with REALITY, XHTTP, Hysteria2, Vision and AmneziaWG data transfer.
+WS and gRPC coverage checks profiles and listeners. The common CI kernel
+exercises Debian userspace. Testing the Debian production kernel and provider
+network requires the separate VPS acceptance.
 
 Only external DNS/DoT/filter/HTTP-01 services are controlled fixtures (real Pebble
 validation); official package/release downloads remain real. This does not test
@@ -165,7 +182,7 @@ variable is `true`.
 The protected check names stay unchanged. A verified
 documentation-only final check states exactly:
 `DOCS-ONLY: Full Fresh E2E not executed; documentation scope verified.`
-Production/code changes still execute the complete unchanged acceptance sequence.
+Production and code changes execute all four Full Fresh groups.
 The owner must confirm hosted docs-only behavior with a separately authorized PR
 after merge; synthetic Git-history tests do not prove GitHub merge enforcement.
 

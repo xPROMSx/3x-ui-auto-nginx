@@ -625,7 +625,7 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
         import ast
         from types import SimpleNamespace
         tree=ast.parse((ROOT/'tests/fresh/acceptance.py').read_text())
-        names = {'fresh_acceptance', 'boot_restore_pair'}
+        names = {'fresh_acceptance', 'boot_restore_pair', 'boot_restore_target', 'debian_acceptance'}
         functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
         positive=['maximum-install','manager-backup','transport-consumers','AWG-payload','tech0-RED-GREEN',
                   'installed-renewal-hooks','cold-boot','cold-transport-consumers','change-domains','restore-before-domains']
@@ -636,7 +636,7 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
              'external-write-before-commit','external-write-before-commit']
         negative=['mandatory-dependency-negative','DoT-outage-partial-install','DoT-outage-core-consumers']
         with tempfile.TemporaryDirectory() as directory:
-            for group,disks in (('all',6),('positive',3),('agh',1),('negative',2)):
+            for group,disks in (('all',6),('positive',3),('agh',1),('negative',2),('debian',2)):
                 events=[];calls=[];group_root=Path(directory)/group;group_root.mkdir()
                 env=dict(ROOT=group_root,phase='',re=re)
                 def record(kind):events.append((kind,env['phase']))
@@ -653,10 +653,13 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
                 env['fresh_acceptance']('a'*40,group)
                 positive_phases=[positive[0],*positive[:6],'installed-renewal-hooks','cold-boot',*positive[6:],
                                  'dot-restore-source','dot-restore-source','dot-clean-target','dot-change-panel']
+                debian_phases=['debian-installation','debian-installed','debian-backup','debian-source-cold-boot',
+                               'debian-restore','debian-restored','debian-target-cold-boot']
                 self.assertEqual([phase for kind,phase in events if kind=='phase'],
                                  (positive_phases if group in ('all','positive') else [])+
                                  (agh if group in ('all','agh') else [])+
-                                 (negative if group in ('all','negative') else []))
+                                 (negative if group in ('all','negative') else [])+
+                                 (debian_phases if group == 'debian' else []))
                 positive_calls=['positive','checks.installed()','checks.manager_backup()','checks.transports()',
                     'checks.amneziawg()','checks.search_domain_regression()','checks.renewal()',
                     'checks.disabled_cold_boot(prepare=True)','checks.disabled_cold_boot()',
@@ -672,13 +675,24 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
                     '__import__("update").remove_customer_fixture()','checks.native_agh_update()',
                     '__import__("update").await_external()','__import__("update").retained()']
                 negative_calls=['dependency','dot-outage','checks.transports(vision=False, ws_grpc=False)']
+                debian_calls=['debian','checks.debian_stack()','checks.restore_source(dot=True, debian=True)',
+                    'checks.debian_stack(cold=True)','checks.restore_dot_target(debian=True)',
+                    'checks.debian_stack(restored=True)','checks.debian_stack(cold=True, restored=True)']
                 self.assertEqual(calls,(positive_calls if group in ('all','positive') else [])+
                                        (agh_calls if group in ('all','agh') else [])+
-                                       (negative_calls if group in ('all','negative') else []))
+                                       (negative_calls if group in ('all','negative') else [])+
+                                       (debian_calls if group == 'debian' else []))
                 if group in ('all','agh'):
                     self.assertEqual(calls.count('checks.native_agh_update()'),1)
                     self.assertEqual([phase for kind,phase in events if kind=='phase'].count('native-agh-update'),1)
                 self.assertEqual(sum(kind=='disk' for kind,_ in events),disks)
+                if group == 'debian':
+                    self.assertEqual(installs,[('debian',('a'*40,),{})])
+                    self.assertEqual([event for event in events if event[0] in ('disk','boot','off')],
+                        [('disk','debian-installation'),('boot','debian-installation'),('off','debian-backup'),
+                         ('boot','debian-source-cold-boot'),('off','debian-source-cold-boot'),
+                         ('disk','debian-restore'),('boot','debian-restore'),('off','debian-restored'),
+                         ('boot','debian-target-cold-boot'),('off','debian-target-cold-boot')])
                 if group=='agh':
                     self.assertEqual(installs,[('positive',('b'*40,),{'upstream':'v3.10.2'})])
                     self.assertEqual([kind for kind,_ in events],
@@ -723,10 +737,11 @@ if [[ -n $PANEL_VERSION ]]; then
 fi
 exit 0
 """
-        for upstream, expected in ((None, b'y y y y y n y n y'), ('v3.10.2', b'y y y y n n y n y')):
-            with self.subTest(upstream=upstream):
+        for scenario, upstream, expected in (('positive', None, b'y y y y y n y n y'),
+                ('positive', 'v3.10.2', b'y y y y n n y n y'), ('debian', None, b'y y y y y n y y y')):
+            with self.subTest(scenario=scenario, upstream=upstream):
                 proc = subprocess.run(['bash','-c',script,'fixture',ROOT/'x-ui-latest.sh',upstream or ''],
-                    input=env['install_answers']('positive',upstream),capture_output=True,timeout=15,check=True)
+                    input=env['install_answers'](scenario,upstream),capture_output=True,timeout=15,check=True)
                 self.assertIn(b'OPTIONS '+expected+b'\n',proc.stdout)
                 if upstream:
                     self.assertIn(b'XHTTP CDN requires the verified 3X-UI baseline',proc.stdout)
@@ -737,23 +752,28 @@ exit 0
         code=textwrap.dedent(re.search(r"python3 - <<'PYFRESHRESULT'\n(.*?)^          PYFRESHRESULT$",workflow,re.M|re.S)[1])
         tree=ast.parse(code);function=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='fresh_success')
         env={};exec(compile(ast.Module(body=[function],type_ignores=[]),'fresh-result','exec'),env)
-        states=('success','failure','cancelled','skipped')
+        states=('success','failure','cancelled','skipped','')
         for docs in ('true','false','','unknown'):
-            for scope,positive,agh,negative in itertools.product(states,repeat=4):
-                expected=scope=='success' and ((docs=='true' and positive==agh==negative=='skipped') or
-                                              (docs=='false' and positive==agh==negative=='success'))
-                self.assertEqual(env['fresh_success'](docs,scope,positive,agh,negative),expected,
-                                 (docs,scope,positive,agh,negative))
-        for docs,scope,positive,agh,negative,passed in (('false','success','success','success','success',True),
-                ('true','success','skipped','skipped','skipped',True),('true','failure','skipped','skipped','skipped',False),
-                ('false','success','skipped','success','success',False),('false','success','cancelled','success','success',False),
-                ('false','success','success','failure','success',False),('false','success','success','skipped','success',False),
-                ('true','success','skipped','success','skipped',False)):
+            for scope,*jobs in itertools.product(states,repeat=5):
+                expected=(scope == 'success' and docs in ('true','false') and
+                          jobs == ['skipped' if docs == 'true' else 'success']*4)
+                self.assertEqual(env['fresh_success'](docs,scope,*jobs),expected,(docs,scope,*jobs))
+        for docs,scope,positive,agh,negative,debian,passed in (
+                ('false','success','success','success','success','success',True),
+                ('true','success','skipped','skipped','skipped','skipped',True),
+                ('true','failure','skipped','skipped','skipped','skipped',False),
+                ('false','success','skipped','success','success','success',False),
+                ('false','success','success','success','success','cancelled',False),
+                ('false','success','success','success','success','failure',False),
+                ('false','success','success','success','success','skipped',False),
+                ('false','success','success','success','success','',False),
+                ('true','success','skipped','skipped','skipped','success',False)):
             with tempfile.TemporaryDirectory() as directory:
                 summary=Path(directory)/'summary'
                 result=subprocess.run(['python3','-c',code],text=True,capture_output=True,env={**os.environ,
                     'CI_DOCS_ONLY':docs,'CI_SCOPE_RESULT':scope,'CI_POSITIVE_RESULT':positive,
-                    'CI_AGH_RESULT':agh,'CI_NEGATIVE_RESULT':negative,'GITHUB_STEP_SUMMARY':str(summary)})
+                    'CI_AGH_RESULT':agh,'CI_NEGATIVE_RESULT':negative,'CI_DEBIAN_RESULT':debian,
+                    'GITHUB_STEP_SUMMARY':str(summary)})
                 self.assertEqual(result.returncode==0,passed)
                 self.assertEqual(summary.read_text().strip(),result.stdout.strip())
                 if docs=='true' and passed:
@@ -832,20 +852,25 @@ exit 0
     def test_fresh_workflow_wires_independent_groups_and_kvm_budgets(self):
         workflow=(ROOT/'.github/workflows/fresh-acceptance.yml').read_text()
         self.assertEqual(workflow.count('name: Full fresh installer (ubuntu-26.04)'),1)
-        self.assertIn('needs: [scope, positive, agh, negative]',workflow)
+        self.assertIn('needs: [scope, positive, agh, negative, debian]',workflow)
         self.assertIn('if: always()',workflow.split('  fresh:',1)[1])
-        self.assertEqual(workflow.count('timeout-minutes: 60'),3)
-        self.assertEqual(workflow.count("if: needs.scope.outputs.docs_only == 'false'"),3)
+        self.assertEqual(workflow.count('timeout-minutes: 60'),4)
+        self.assertEqual(workflow.count("if: needs.scope.outputs.docs_only == 'false'"),4)
         self.assertEqual(workflow.count('name: Fresh AGH update scenario (ubuntu-26.04)'),1)
-        for group in ('positive','agh','negative'):
+        self.assertEqual(workflow.count('name: Fresh compatibility (debian-13)'),1)
+        for group in ('positive','agh','negative','debian'):
             block=re.split(r'\n  [a-z]+:',workflow.split('  '+group+':',1)[1])[0]
             self.assertIn('needs: scope',block)
+            self.assertIn('runs-on: ubuntu-26.04',block)
+            self.assertIn('ref: ${{ github.event.pull_request.head.sha }}',block)
             self.assertIn('XUI_FRESH_GROUP: '+group,block)
+        self.assertIn('CI_DEBIAN_RESULT: ${{ needs.debian.result }}',workflow)
         script=(ROOT/'tests/fresh/run.sh').read_text()
         self.assertIn('--device=/dev/kvm',script)
         self.assertNotIn('--cpus=',script);self.assertNotIn('--memory=',script)
         self.assertNotIn('--privileged',script)
         self.assertIn('-e "XUI_FRESH_GROUP=$fresh_group"',script)
+        self.assertIn('--build-arg "DISTRO=$distro"',script)
         acceptance=(ROOT/'tests/fresh/acceptance.py').read_text()
         self.assertIn("'-smp', '4'",acceptance)
         self.assertIn("'-accel', 'kvm'",acceptance)
@@ -860,6 +885,18 @@ exit 0
         result=subprocess.run(['bash','tests/fresh/run.sh'],cwd=ROOT,text=True,capture_output=True,
                               env={**os.environ,'XUI_FRESH_GROUP':'unsupported','XUI_RESTORE_ACCEPTANCE':'0'})
         self.assertEqual(result.returncode,2);self.assertIn('Invalid fresh scenario group',result.stderr)
+        selection = script.split('[[ "$ref"',1)[0] + 'printf "%s %s\\n" "$fresh_group" "$distro"'
+        for group,restore,distro,expected in (
+                ('all','0','debian:13','all ubuntu:26.04'),
+                ('positive','0','debian:13','positive ubuntu:26.04'),
+                ('agh','0','debian:13','agh ubuntu:26.04'),
+                ('negative','0','debian:13','negative ubuntu:26.04'),
+                ('debian','0','ubuntu:24.04','debian debian:13'),
+                ('debian','1','ubuntu:24.04','all ubuntu:24.04'),
+                ('debian','1','ubuntu:26.04','all ubuntu:26.04')):
+            result = subprocess.run(['bash','-c',selection],cwd=ROOT,text=True,capture_output=True,check=True,
+                env={**os.environ,'XUI_FRESH_GROUP':group,'XUI_RESTORE_ACCEPTANCE':restore,'XUI_TEST_DISTRO':distro})
+            self.assertEqual(result.stdout.strip(),expected)
 
 
 if __name__ == '__main__':

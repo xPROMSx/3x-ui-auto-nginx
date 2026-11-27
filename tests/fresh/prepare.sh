@@ -4,7 +4,7 @@ umask 077
 cd /pilot
 rm -rf /pilot/root
 mkdir root
-# Exported Ubuntu minimal OS, no tested application packages.
+# Exported minimal guest OS, no tested application packages.
 tar -xf rootfs.tar -C root
 cp -a /lib/modules root/usr/lib/
 rm -f root/.dockerenv root/usr/sbin/policy-rc.d root/etc/apt/apt.conf.d/docker-gzip-indexes root/etc/apt/apt.conf.d/docker-clean root/etc/apt/apt.conf.d/docker-autoremove-suggests
