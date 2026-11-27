@@ -260,6 +260,7 @@ os._exit(0)
                 with (
                     patch.object(update, 'restore_services'),
                     patch.object(update, 'service', side_effect=lambda *args: calls.append(args)),
+                    patch.object(update, 'prop', return_value='active' if active else 'inactive'),
                     patch.object(update, 'verified_health', side_effect=lambda *args: calls.append(('health',))),
                     patch.object(update, 'save'),
                     patch.object(update, 'finish_commit'),
@@ -267,6 +268,19 @@ os._exit(0)
                     update.recover(j)
                 self.assertEqual(calls, ([('restart', 'mtr-backend')] if restart else []) + [('health',)])
 
+    def test_audit_mtr_exit_after_restart_prevents_verified_phase(self):
+        j = dict(target={}, active={'mtr-backend': True}, files={'/etc/systemd/system/mtr-backend.service': {}})
+        with (
+            patch.object(update, 'restore_services'),
+            patch.object(update, 'service'),
+            patch.object(update, 'prop', return_value='failed'),
+            patch.object(update, 'verified_health'),
+            patch.object(update, 'save') as save,
+            patch.object(update, 'finish_commit'),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'MTR backend is not active'):
+                update.commit(j)
+            save.assert_not_called()
     def test_worker_cleans_owned_source_only_after_recovery_dependencies_are_gone(self):
         source = self.root/'source.1234abcd'
         source.mkdir()

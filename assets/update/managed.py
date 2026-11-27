@@ -584,6 +584,8 @@ def commit(j):
     restore_services(j)
     refresh_mtr(j)
     verified_health(j['target'])
+    if j['active'].get('mtr-backend') and prop('mtr-backend', 'ActiveState') != 'active':
+        raise RuntimeError('MTR backend is not active after Update')
     save(j, 'verified')
     finish_commit(j)
 
