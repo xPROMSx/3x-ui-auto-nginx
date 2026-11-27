@@ -445,6 +445,9 @@ def verify_migration(db, before):
 
     # The upstream migrator can reserialize the inbound settings object.
     db.create_function('normalize_inbound_settings', 1, normalize_inbound_settings)
+    # Both upstream models interpret NULL as an unset string in these fields.
+    unset_strings = {'inbounds': ('share_addr', 'origin_node_guid'),
+                     'hosts': ('verify_peer_cert_by_name',)}
     db.execute('ATTACH DATABASE ? AS previous', (before.as_uri() + '?mode=ro',))
     for (name,) in db.execute(
         "SELECT name FROM previous.sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
@@ -453,12 +456,10 @@ def verify_migration(db, before):
         fields = []
         for row in db.execute('PRAGMA previous.table_info(' + table + ')'):
             quoted = '"' + row[1].replace('"', '""') + '"'
-            if name == 'inbounds':
-                if row[1] == 'settings':
-                    quoted = f'normalize_inbound_settings({quoted})'
-                elif row[1] in ('share_addr', 'origin_node_guid'):
-                    # Save through upstream Go's string fields turns SQL NULL into ''.
-                    quoted = f"COALESCE({quoted}, '')"
+            if name == 'inbounds' and row[1] == 'settings':
+                quoted = f'normalize_inbound_settings({quoted})'
+            elif row[1] in unset_strings.get(name, ()):
+                quoted = f"COALESCE({quoted}, '')"
             fields.append(quoted)
         columns = ','.join(fields)
         if db.execute(

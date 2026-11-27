@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
@@ -154,7 +155,24 @@ def worker(fault):
         patch.object(worker, 'verified_health', verify),
         patch.object(worker, 'candidate_nginx', verify_candidate),
     ):
-        worker.main()
+        try:
+            worker.main()
+        except Exception as error:
+            # Retain source coordinates for the final error and its context.
+            # The exception text and arguments may contain private data.
+            assets = SOURCE / 'assets'
+            public = {assets / f'update/{name}.py' for name in ('managed', 'database', 'resources')}
+            frames = []
+            for cause in (error, error.__cause__ or error.__context__):
+                if cause is None:
+                    continue
+                frames.extend(
+                    f'{Path(frame.filename).name}:{frame.lineno}'
+                    for frame in traceback.extract_tb(cause.__traceback__)
+                    if Path(frame.filename) in public
+                )
+            (ROOT / ('update-trace-' + fault)).write_text(','.join(frames[-6:]))
+            raise
 
 
 def rollback_cases():
@@ -184,6 +202,17 @@ def rollback_cases():
             rollback_case(fault, old)
         except Exception:
             print(f'CI Update recovery {fault}: FAIL', flush=True)
+            if JOURNAL.exists():
+                try:
+                    journal_phase = json.loads(JOURNAL.read_text())['phase']
+                except (OSError, ValueError, KeyError, TypeError):
+                    journal_phase = 'unknown'
+                if journal_phase in ('prepared', 'draining', 'switching', 'start_intent', 'compare_target',
+                                     'rollback', 'target_retained', 'old_ready', 'verified', 'committed'):
+                    print(f'CI Update journal {fault}: {journal_phase}', flush=True)
+            trace = ROOT / ('update-trace-' + fault)
+            if trace.exists():
+                print(f'CI Update trace {fault}: {trace.read_text()}', flush=True)
             raise
         print(f'CI Update recovery {fault}: PASS', flush=True)
     return dict.fromkeys(faults, True)
@@ -362,7 +391,8 @@ def project_update():
             (address,),
         )
         db.execute(
-            "INSERT INTO hosts(inbound_id,address,port,remark,group_id,is_disabled) VALUES(?, 'custom.example',443,'extra','customer-group',1)",
+            """INSERT INTO hosts(inbound_id,address,port,remark,group_id,is_disabled,verify_peer_cert_by_name)
+               VALUES(?, 'custom.example',443,'extra','customer-group',1,'cert.custom.example')""",
             (iid,),
         )
         clients = {}

@@ -238,6 +238,21 @@ os._exit(0)
                 with self.assertRaisesRegex(ValueError, 'inbounds'):
                     update.verify_migration(db, before)
 
+    def test_migration_preserves_host_certificate_name(self):
+        before = self.root / 'before.db'
+        with closing(sqlite3.connect(self.db)) as live, closing(sqlite3.connect(before)) as old:
+            live.execute('CREATE TABLE hosts(id INTEGER PRIMARY KEY, verify_peer_cert_by_name TEXT)')
+            live.executemany('INSERT INTO hosts VALUES(?,?)', [(1, None), (2, 'cert.example')])
+            live.commit()
+            live.backup(old)
+        with closing(update.connect(False)) as db:
+            db.execute("UPDATE hosts SET verify_peer_cert_by_name='' WHERE id=1")
+            update.verify_migration(db, before)
+        with closing(update.connect(False)) as db:
+            db.execute("UPDATE hosts SET verify_peer_cert_by_name='' WHERE id=2")
+            with self.assertRaisesRegex(ValueError, 'hosts'):
+                update.verify_migration(db, before)
+
     def test_update_merges_owned_fields_without_replacing_client_data(self):
         clients = [{'id': 'original', 'flow': 'individual'}]
         row = dict(

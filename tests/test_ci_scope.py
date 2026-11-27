@@ -459,6 +459,16 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
             self.assertEqual(env['report'].get('failure_location'),'checks.py:527')
             self.assertNotIn(secret,json.dumps(env['report']))
 
+    def test_update_base_diagnostics_do_not_publish_installer_output(self):
+        d = self.diagnostics()
+        private = 'Private installer credentials and paths\n'
+        self.assertEqual(d.update_base_failure(private + 'Stable 3X-UI v3.10.2 is unavailable.\n'
+                         'Release preflight failed; existing deployment was not removed.\n'),
+                         'upstream_release_metadata')
+        self.assertEqual(d.update_base_failure(private +
+                         'Base OS preflight failed; existing deployment was not removed.\n'), 'base_os')
+        self.assertEqual(d.update_base_failure(private + 'Unexpected installer error\n'), 'unknown')
+
     def test_update_recovery_reports_each_case_and_only_public_locations(self):
         import ast
         import contextlib
@@ -466,12 +476,16 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
         import time
 
         tree = ast.parse((ROOT/'tests/fresh/acceptance.py').read_text())
-        names = {'invoke','failure_location','update_recovery_results'}
+        names = {'invoke','failure_location','update_recovery_results','update_recovery_evidence'}
         functions = [node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name in names]
         secret = 'PRIVATE-SESSION-https://secret.invalid/token'
         guest = (
             'CI Update recovery candidate: PASS\n'
             'CI Update recovery nginx: FAIL\n'
+            'CI Update journal nginx: old_ready\n'
+            'CI Update trace nginx: managed.py:423,managed.py:392,resources.py:40\n'
+            'CI Update trace start: '+secret+'\n'
+            'CI Update journal start: '+secret+'\n'
             'CI Update recovery start: '+secret+'\n'
             'CI Update recovery '+secret+': PASS\n'
             '  File "/root/pilot/update.py", line 198, in rollback_cases\n'
@@ -487,6 +501,8 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
         self.assertEqual(env['report'],{
             'failure_location':'update.py:198',
             'update_recovery':{'candidate':'PASS','nginx':'FAIL','start':'NOT RUN','kill':'NOT RUN'},
+            'update_recovery_evidence':{'nginx':{'journal':'old_ready',
+                                              'trace':'managed.py:423,managed.py:392,resources.py:40'}},
         })
         self.assertIn('Update recovery candidate: PASS',output.getvalue())
         self.assertIn('Update recovery nginx: FAIL',output.getvalue())

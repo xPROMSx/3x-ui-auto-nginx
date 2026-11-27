@@ -59,6 +59,23 @@ def public_service_diagnostics(output):
             yield match[1]
 
 
+def update_base_failure(output):
+    """Classify known installer messages without publishing the private log."""
+    lines = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output).splitlines()
+    if any(re.fullmatch(r'Stable 3X-UI v[0-9]+\.[0-9]+\.[0-9]+ is unavailable\.', line) for line in lines):
+        return 'upstream_release_metadata'
+    for reason, message in (
+        ('release_archive_download', 'Failed to download the 3X-UI release or checksum.'),
+        ('release_archive_integrity', '3X-UI release checksum verification failed.'),
+        ('project_source_mismatch', 'Installer differs from selected source revision; download a matching installer and retry.'),
+        ('release_preflight', 'Release preflight failed; existing deployment was not removed.'),
+        ('base_os', 'Base OS preflight failed; existing deployment was not removed.'),
+    ):
+        if message in lines:
+            return reason
+    return 'unknown'
+
+
 VISION_STAGES = {
     'rendering ACME configuration':'rendering_acme',
     'activating ACME configuration':'activating_acme',

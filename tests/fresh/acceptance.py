@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from kvm import preflight
 
 from diagnostics import VISION_STAGES, domain_failure, vision_detail, api_restart_metrics, api_restart_nginx_errors
-from diagnostics import dot_restore_package_report, public_service_diagnostics
+from diagnostics import dot_restore_package_report, public_service_diagnostics, update_base_failure
 
 ROOT = Path('/pilot')
 REPO = Path('/repo')
@@ -56,6 +56,19 @@ def update_recovery_results(output):
     for name, status in re.findall(pattern, output, re.M):
         results[name.decode()] = status.decode()
     return results
+
+
+def update_recovery_evidence(output):
+    faults = rb'(candidate|nginx|start|kill)'
+    phases = rb'prepared|draining|switching|start_intent|compare_target|rollback|target_retained|old_ready|verified|committed'
+    frame = rb'(?:managed|database|resources)\.py:[0-9]+'
+    evidence = {}
+    for kind, pattern in ((b'journal', rb'(?:'+phases+rb')'),
+                          (b'trace', frame+rb'(?:,'+frame+rb'){0,5}')):
+        prefix = rb'^CI Update '+kind+b' '+faults+rb': ('+pattern+rb')\r?$'
+        for fault, value in re.findall(prefix, output, re.M):
+            evidence.setdefault(fault.decode(), {})[kind.decode()] = value.decode()
+    return evidence
 
 
 def boot():
@@ -112,6 +125,9 @@ def invoke(expression, result_name, timeout=180, tty=False):
     if phase == 'update-failure-and-recovery':
         cases = update_recovery_results(result.stdout)
         report['update_recovery'] = cases
+        evidence = update_recovery_evidence(result.stdout)
+        if evidence:
+            report['update_recovery_evidence'] = evidence
         for name, status in cases.items():
             print(f'Update recovery {name}: {status}', flush=True)
     diagnostics = ssh('cat /root/pilot/dns-diagnostics.jsonl', 15)
@@ -173,7 +189,10 @@ def install(scenario, ref, upstream=None):
         if result.returncode:
             private = ssh('cat /root/pilot/installer.raw.log', 20)
             if private.returncode == 0:
-                detail = vision_detail(private.stdout.decode(errors='replace'), (REPO/'assets/vision/managed.py').read_text())
+                output = private.stdout.decode(errors='replace')
+                if phase == 'install-update-base':
+                    report['update_base_failure'] = update_base_failure(output)
+                detail = vision_detail(output, (REPO/'assets/vision/managed.py').read_text())
                 if detail is not None: report[phase+'_vision_detail'] = detail
             nginx = ssh('tail -n 100 /var/log/nginx/error.log', 20)
             if nginx.returncode == 0:
