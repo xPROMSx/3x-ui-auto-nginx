@@ -429,6 +429,8 @@ def retained():
 def change_transport_fixture(db, roles, keys):
     replacements = []
     originals = []
+    flows = db.execute('SELECT flow_override,client_id,inbound_id FROM client_inbounds WHERE inbound_id=?',
+                       (roles['ws'],)).fetchall()
     for role, group, field, value in (
         ('ws', 'wsSettings', 'path', '/custom-ws'),
         ('grpc', 'grpcSettings', 'serviceName', '/audit/custom-rpc|custom-rpc-multi'),
@@ -443,6 +445,9 @@ def change_transport_fixture(db, roles, keys):
         if role == 'ws':
             options.update(keys)
             options.pop('fallbacks', None)
+            for client in options['clients']:
+                client['flow'] = 'xtls-rprx-vision'
+            db.execute("UPDATE client_inbounds SET flow_override='xtls-rprx-vision' WHERE inbound_id=?", (iid,))
         db.execute('UPDATE inbounds SET settings=?,stream_settings=? WHERE id=?',
                    (json.dumps(options), json.dumps(transport), iid))
     original = ROUTES.read_text()
@@ -450,7 +455,7 @@ def change_transport_fixture(db, roles, keys):
     for before, after in replacements:
         assert changed.count(f'location = {before} {{') == 1
         changed = changed.replace(f'location = {before} {{', f'location = {after} {{')
-    (ROOT / 'pre-fixture-inbounds').write_text(json.dumps(originals))
+    (ROOT / 'pre-fixture-inbounds').write_text(json.dumps({'inbounds': originals, 'flows': flows}))
     ROUTES.write_text(changed)
 
 
@@ -627,8 +632,11 @@ def remove_customer_fixture():
     # to its original topology for the existing AGH/Restore scenarios.
     checks.run('systemctl', 'stop', 'x-ui')
     with closing(sqlite3.connect(DB)) as db, db:
+        recorded = json.loads((ROOT / 'pre-fixture-inbounds').read_text())
         db.executemany('UPDATE inbounds SET settings=?,stream_settings=? WHERE id=?',
-                       json.loads((ROOT / 'pre-fixture-inbounds').read_text()))
+                       recorded['inbounds'])
+        db.executemany('UPDATE client_inbounds SET flow_override=? WHERE client_id=? AND inbound_id=?',
+                       recorded['flows'])
         db.execute("DELETE FROM hosts WHERE group_id='customer-group'")
         db.execute("DELETE FROM inbounds WHERE tag='customer-ip'")
         db.execute("DELETE FROM settings WHERE key IN ('xrayTemplateConfig','updateFixture')")

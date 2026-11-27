@@ -357,6 +357,8 @@ def subscription_client(db, protocols):
            JOIN inbounds i ON i.id=ci.inbound_id
            LEFT JOIN client_traffics t ON t.email=c.email
            WHERE c.enable=1 AND i.enable=1 AND c.sub_id<>'' AND NOT COALESCE(i.exclude_from_sub, 0)
+             AND NOT EXISTS (SELECT 1 FROM clients h
+                             WHERE h.sub_id=c.sub_id AND h.enable=1 AND h.limit_hwid>0)
              AND COALESCE(t.enable,1)=1
              AND (c.expiry_time IS NULL OR c.expiry_time<=0 OR c.expiry_time>?)
              AND (t.expiry_time IS NULL OR t.expiry_time<=0 OR t.expiry_time>?)

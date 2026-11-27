@@ -296,6 +296,7 @@ os._exit(0)
                 ALTER TABLE clients ADD COLUMN enable DEFAULT 1;
                 ALTER TABLE clients ADD COLUMN expiry_time DEFAULT 0;
                 ALTER TABLE clients ADD COLUMN total_gb DEFAULT 0;
+                ALTER TABLE clients ADD COLUMN limit_hwid DEFAULT 0;
                 ALTER TABLE clients ADD COLUMN email DEFAULT 'client';
                 ALTER TABLE client_inbounds RENAME COLUMN client TO client_id;
                 ALTER TABLE client_inbounds RENAME COLUMN inbound TO inbound_id;
@@ -349,6 +350,11 @@ os._exit(0)
             with closing(sqlite3.connect(self.db)) as db, db:
                 db.execute("UPDATE clients SET expiry_time=1")
             seen.clear()
+            update.health(state)
+            self.assertEqual(seen, [])
+            with closing(sqlite3.connect(self.db)) as db, db:
+                db.execute('UPDATE clients SET expiry_time=0')
+                db.execute("INSERT INTO clients(id,sub_id,limit_hwid) VALUES (2,'first',1)")
             update.health(state)
             self.assertEqual(seen, [])
 
