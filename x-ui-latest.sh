@@ -2816,7 +2816,7 @@ adguard_stage() {
     install -o root -g root -m 0600 "$AGH_TEMP/helper" /usr/local/lib/3x-ui-pro/managed-adguard.sh || return 1
     . /usr/local/lib/3x-ui-pro/managed-adguard.sh
     agh_release "$(uname -m)" || return 1
-    apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends apache2-utils gnupg || return 1
+    apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends apache2-utils gnupg gpgv || return 1
     curl -fsSL --connect-timeout 15 --max-time 180 \
         "https://github.com/AdguardTeam/AdGuardHome/releases/download/${AGH_VERSION}/AdGuardHome_linux_${AGH_ARCH}.tar.gz" \
         -o "$AGH_TEMP/archive" || return 1
