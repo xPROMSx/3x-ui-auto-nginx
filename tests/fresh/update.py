@@ -108,7 +108,7 @@ def worker(fault):
 
     def publish(source, dest):
         original(source, dest)
-        if dest != LIMIT or touched.exists():
+        if fault == 'nginx' or dest != LIMIT or touched.exists():
             return
         if fault == 'cold':
             (WORK / 'before.db').rename(WORK / 'test-held-before.db')
@@ -117,9 +117,15 @@ def worker(fault):
         touched.touch()
         if fault == 'kill':
             os.kill(os.getpid(), signal.SIGKILL)
-        if fault == 'nginx':
-            # Candidate test has already passed. Actual nginx -t must now fail.
+
+    reload = worker.reload_nginx
+
+    def reload_nginx():
+        if fault == 'nginx' and not touched.exists():
+            # The native SQLite migration has passed. Fail the live nginx -t.
             LIMIT.write_text('invalid_directive;\n')
+            touched.touch()
+        reload()
 
     check = worker.verified_health
 
@@ -144,6 +150,7 @@ def worker(fault):
 
     with (
         patch.object(worker, 'publish', publish),
+        patch.object(worker, 'reload_nginx', reload_nginx),
         patch.object(worker, 'verified_health', verify),
         patch.object(worker, 'candidate_nginx', verify_candidate),
     ):
@@ -171,35 +178,45 @@ def rollback_cases():
         STATE.write_bytes(original)
     LIMIT.write_bytes(LIMIT.read_bytes().replace(b'burst=80 ', b'burst=79 '))
     old = LIMIT.read_bytes()
-    for fault in ('candidate', 'nginx', 'start', 'kill'):
-        drop = Path('/etc/systemd/system/x-ui.service.d/95-update-test.conf')
-        if fault == 'start':
-            drop.parent.mkdir(exist_ok=True)
-            fail = ROOT / 'fail-target-once'
-            fail.write_text(
-                '#!/usr/bin/python3\nimport json,sys\nfrom pathlib import Path\n'
-                f'j=Path({str(JOURNAL)!r})\n'
-                'if j.exists() and json.loads(j.read_bytes()).get("phase")=="start_intent":\n'
-                '    Path("/root/pilot/failed-actual-start").touch()\n    sys.exit(1)\n'
-            )
-            fail.chmod(0o700)
-            drop.write_text('[Service]\nExecStartPre=+' + str(fail) + '\n')
-            checks.run('systemctl', 'daemon-reload')
+    faults = ('candidate', 'nginx', 'start', 'kill')
+    for fault in faults:
         try:
-            assert invoke_fault(fault) != 0
-            deadline = time.monotonic() + 180
-            while JOURNAL.exists() and time.monotonic() < deadline:
-                time.sleep(0.5)
-            assert (ROOT / ('hit-' + fault)).exists()
-            if fault == 'start':
-                assert (ROOT / 'failed-actual-start').exists()
-            old_running()
-            assert LIMIT.read_bytes() == old
-        finally:
-            if fault == 'start':
-                drop.unlink()
-                checks.run('systemctl', 'daemon-reload')
-    return dict(nginx_failure=True, actual_panel_start_failure=True, SIGKILL_recovered=True)
+            rollback_case(fault, old)
+        except Exception:
+            print(f'CI Update recovery {fault}: FAIL', flush=True)
+            raise
+        print(f'CI Update recovery {fault}: PASS', flush=True)
+    return dict.fromkeys(faults, True)
+
+
+def rollback_case(fault, old):
+    drop = Path('/etc/systemd/system/x-ui.service.d/95-update-test.conf')
+    if fault == 'start':
+        drop.parent.mkdir(exist_ok=True)
+        fail = ROOT / 'fail-target-once'
+        fail.write_text(
+            '#!/usr/bin/python3\nimport json,sys\nfrom pathlib import Path\n'
+            f'j=Path({str(JOURNAL)!r})\n'
+            'if j.exists() and json.loads(j.read_bytes()).get("phase")=="start_intent":\n'
+            '    Path("/root/pilot/failed-actual-start").touch()\n    sys.exit(1)\n'
+        )
+        fail.chmod(0o700)
+        drop.write_text('[Service]\nExecStartPre=+' + str(fail) + '\n')
+        checks.run('systemctl', 'daemon-reload')
+    try:
+        assert invoke_fault(fault) != 0
+        deadline = time.monotonic() + 180
+        while JOURNAL.exists() and time.monotonic() < deadline:
+            time.sleep(0.5)
+        assert (ROOT / ('hit-' + fault)).exists()
+        if fault == 'start':
+            assert (ROOT / 'failed-actual-start').exists()
+        old_running()
+        assert LIMIT.read_bytes() == old
+    finally:
+        if fault == 'start':
+            drop.unlink()
+            checks.run('systemctl', 'daemon-reload')
 
 
 def interrupt_switch():

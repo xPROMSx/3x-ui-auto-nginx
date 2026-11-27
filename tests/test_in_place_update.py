@@ -220,6 +220,24 @@ os._exit(0)
             with self.assertRaisesRegex(ValueError, 'inbounds'):
                 update.verify_migration(db, before)
 
+    def test_migration_accepts_empty_inbound_fields_but_rejects_changed_values(self):
+        before = self.root / 'before.db'
+        with closing(sqlite3.connect(self.db)) as live, closing(sqlite3.connect(before)) as old:
+            live.execute('CREATE TABLE inbounds(id INTEGER PRIMARY KEY, share_addr TEXT, origin_node_guid TEXT)')
+            live.executemany('INSERT INTO inbounds VALUES(?,?,?)',
+                             [(1, None, None), (2, 'custom.example', 'original-node')])
+            live.commit()
+            live.backup(old)
+        with closing(update.connect(False)) as db:
+            db.execute("UPDATE inbounds SET share_addr='',origin_node_guid='' WHERE id=1")
+            update.verify_migration(db, before)
+            db.commit()
+        for column in ('share_addr', 'origin_node_guid'):
+            with self.subTest(column=column), closing(update.connect(False)) as db:
+                db.execute(f"UPDATE inbounds SET {column}='' WHERE id=2")
+                with self.assertRaisesRegex(ValueError, 'inbounds'):
+                    update.verify_migration(db, before)
+
     def test_update_merges_owned_fields_without_replacing_client_data(self):
         clients = [{'id': 'original', 'flow': 'individual'}]
         row = dict(

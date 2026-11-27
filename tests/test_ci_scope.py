@@ -459,6 +459,41 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
             self.assertEqual(env['report'].get('failure_location'),'checks.py:527')
             self.assertNotIn(secret,json.dumps(env['report']))
 
+    def test_update_recovery_reports_each_case_and_only_public_locations(self):
+        import ast
+        import contextlib
+        import io
+        import time
+
+        tree = ast.parse((ROOT/'tests/fresh/acceptance.py').read_text())
+        names = {'invoke','failure_location','update_recovery_results'}
+        functions = [node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name in names]
+        secret = 'PRIVATE-SESSION-https://secret.invalid/token'
+        guest = (
+            'CI Update recovery candidate: PASS\n'
+            'CI Update recovery nginx: FAIL\n'
+            'CI Update recovery start: '+secret+'\n'
+            'CI Update recovery '+secret+': PASS\n'
+            '  File "/root/pilot/update.py", line 198, in rollback_cases\n'
+            'ValueError: '+secret+'\n'
+        ).encode()
+        def ssh(command,*args,**kwargs):
+            return subprocess.CompletedProcess([],1,guest if command.startswith('python3 -c') else b'',b'')
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()) as output:
+            env = dict(ROOT=Path(directory),phase='update-failure-and-recovery',report={},ssh=ssh,re=re,time=time)
+            exec(compile(ast.Module(body=functions,type_ignores=[]),'acceptance.py','exec'),env)
+            with self.assertRaises(AssertionError):
+                env['invoke']('update.rollback_cases()','update-rollback')
+        self.assertEqual(env['report'],{
+            'failure_location':'update.py:198',
+            'update_recovery':{'candidate':'PASS','nginx':'FAIL','start':'NOT RUN','kill':'NOT RUN'},
+        })
+        self.assertIn('Update recovery candidate: PASS',output.getvalue())
+        self.assertIn('Update recovery nginx: FAIL',output.getvalue())
+        self.assertIn('Update recovery start: NOT RUN',output.getvalue())
+        self.assertIn('Update recovery kill: NOT RUN',output.getvalue())
+        self.assertNotIn(secret,output.getvalue())
+
     def test_service_diagnostics_publish_only_unit_states_and_ports(self):
         from unittest.mock import patch
         diagnostics = self.diagnostics()

@@ -453,8 +453,12 @@ def verify_migration(db, before):
         fields = []
         for row in db.execute('PRAGMA previous.table_info(' + table + ')'):
             quoted = '"' + row[1].replace('"', '""') + '"'
-            if name == 'inbounds' and row[1] == 'settings':
-                quoted = f'normalize_inbound_settings({quoted})'
+            if name == 'inbounds':
+                if row[1] == 'settings':
+                    quoted = f'normalize_inbound_settings({quoted})'
+                elif row[1] in ('share_addr', 'origin_node_guid'):
+                    # Save through upstream Go's string fields turns SQL NULL into ''.
+                    quoted = f"COALESCE({quoted}, '')"
             fields.append(quoted)
         columns = ','.join(fields)
         if db.execute(

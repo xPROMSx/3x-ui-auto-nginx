@@ -44,10 +44,18 @@ def failure_location(output):
     # Source locations identify the failed assertion without exposing the
     # exception text, API response, command arguments or raw installer log.
     output = re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', output)
-    frames = re.findall(rb'File "/root/pilot/(checks|install|client|session)\.py", line ([0-9]+)', output)
+    frames = re.findall(rb'File "/root/pilot/(checks|install|client|session|update)\.py", line ([0-9]+)', output)
     if frames:
         name, line = frames[-1]
         report['failure_location'] = name.decode()+'.py:'+line.decode()
+
+
+def update_recovery_results(output):
+    results = dict.fromkeys(('candidate', 'nginx', 'start', 'kill'), 'NOT RUN')
+    pattern = rb'^CI Update recovery (candidate|nginx|start|kill): (PASS|FAIL)\r?$'
+    for name, status in re.findall(pattern, output, re.M):
+        results[name.decode()] = status.decode()
+    return results
 
 
 def boot():
@@ -101,6 +109,11 @@ def invoke(expression, result_name, timeout=180, tty=False):
     import shlex
     result = ssh('python3 -c '+shlex.quote(code), timeout, tty=tty)
     (ROOT/(phase+'.private.log')).write_bytes(result.stdout+result.stderr)
+    if phase == 'update-failure-and-recovery':
+        cases = update_recovery_results(result.stdout)
+        report['update_recovery'] = cases
+        for name, status in cases.items():
+            print(f'Update recovery {name}: {status}', flush=True)
     diagnostics = ssh('cat /root/pilot/dns-diagnostics.jsonl', 15)
     if diagnostics.returncode == 0:
         probes = [json.loads(line) for line in diagnostics.stdout.splitlines()]
@@ -139,6 +152,8 @@ def invoke(expression, result_name, timeout=180, tty=False):
         raise AssertionError('Guest result unavailable')
     values = json.loads(data.stdout)
     assert isinstance(values, dict) and values and all(v is True for v in values.values())
+    if phase == 'update-failure-and-recovery':
+        assert all(status == 'PASS' for status in cases.values()), 'Update recovery case results incomplete'
     report[phase] = 'PASS'
     report[phase+'_seconds'] = round(time.monotonic()-started, 2)
     print(phase+': PASS', flush=True)
