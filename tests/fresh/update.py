@@ -156,6 +156,8 @@ def worker(fault):
             return
         if fault == 'cold':
             (WORK / 'before.db').rename(WORK / 'test-held-before.db')
+            # The host kills QEMU without flushing the guest filesystem.
+            worker.fsync(WORK)
             touched.touch()
             os.kill(os.getpid(), signal.SIGSTOP)
         touched.touch()
@@ -328,6 +330,7 @@ def verify_cold_recovery():
 
 
 def failed_boot():
+    assert (WORK / 'test-held-before.db').is_file() and not (WORK / 'before.db').exists()
     until = time.monotonic() + 90
     while (
         checks.run('systemctl', 'show', 'xui-update-files', '-p', 'ActiveState', '--value').strip()
