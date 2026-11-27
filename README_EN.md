@@ -69,6 +69,10 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 
 <a id="installation-vs-update"></a>
 
+On installations running version 3.0.0 or later, open the current manager and select **7. Update**. The manager automatically creates a backup and updates the project in place, preserving clients, subscriptions, keys and user settings.
+
+To move from 2.x, perform a fresh installation and then restore clients and subscriptions.
+
 > [!CAUTION]
 > **Installation is not an update!**
 >
@@ -86,7 +90,7 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 <summary><strong>How do I update?</strong></summary>
 
 - **3X-UI and Xray:** use the panel's built-in update tools. New versions may not yet be verified with this project's configuration.
-- **3X-UI AUTO NGINX:** updating the installed stack in place is not supported. To use new manager features such as **5 — Cascade**, download the current script and select that operation. The manager checks whether your installed configuration is compatible. See the [upgrade guide (Russian)](https://xpromsx.github.io/3x-ui-auto-nginx/guides/update/) for a fresh installation with client migration.
+- **3X-UI AUTO NGINX:** select **7. Update** on compatible installations. For 2.x, see the [upgrade guide (Russian)](https://xpromsx.github.io/3x-ui-auto-nginx/guides/update/).
 - **Backup / Restore:** saves and restores data; it does not update the stack.
 - **What version 2.7.0 changes on existing servers:** menu item **6 - My Server Details** can display available saved information. Random DoH paths, the additional-connection question and DoT require a fresh installation. Existing WebSocket and Trojan gRPC profiles remain as before, and existing DoH uses `/dns-query`.
 

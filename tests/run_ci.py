@@ -13,6 +13,7 @@ SUITES = {
     'systemd': ('test_security_systemd.SecuritySystemd',),
     'nonroot': (
         'test_manager.Manager',
+        'test_in_place_update.InPlaceUpdate',
         'test_cover_sites.CoverResources',
         'test_release_asset.ReleaseAsset',
         'test_telegram_release.TelegramRelease',

@@ -69,33 +69,37 @@ def new_group_id():
     return ''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(16))
 
 
-def insert_initial_inbounds(db, params):
-    """Create empty roles and their Hosts in one transaction, returning the assigned IDs."""
+def core_roles(ws_grpc):
+    return ('reality', *(('ws',) if ws_grpc else ()), 'xhttp',
+            *(('grpc',) if ws_grpc else ()), 'hysteria2')
+
+
+def insert_core_role(db, role, params, *, enabled, user_id):
     grouped = any(row[1] == 'group_id' for row in db.execute('PRAGMA table_info(hosts)'))
-    created = {}
+    inbound = core_inbound(role, params)
+    name = 'trojan-grpc' if role == 'grpc' else role
+    port = inbound['port']
+    tag = {'hysteria2':'inbound-443-udp', 'xhttp':'inbound-/dev/shm/uds2023.sock,0666:0|'}.get(role, f'inbound-{port}')
+    iid = db.execute('''INSERT INTO inbounds
+        (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol,
+         settings, stream_settings, tag, sniffing) VALUES (?,0,0,0,?,?,0,?,?,?,?,?,?,?)''',
+        (user_id, params['flag']+' '+name, int(enabled), inbound['listen'], port, inbound['protocol'],
+         json.dumps(dict(clients=[], **inbound['settings'])), json.dumps(inbound['streamSettings']),
+         tag, json.dumps(inbound['sniffing']))).lastrowid
+    host = core_host(role, params)
+    host.update(inbound_id=iid, sort_order=0, alpn=json.dumps(host['alpn'], separators=(',', ':')))
+    if grouped:
+        host['group_id'] = new_group_id()
+    columns = ','.join(host)
+    placeholders = ','.join('?' for _ in host)
+    hid = db.execute(f'INSERT INTO hosts ({columns}) VALUES ({placeholders})', tuple(host.values())).lastrowid
+    return [iid, hid]
+
+
+def insert_initial_inbounds(db, params):
     with db:
-        for role in ('reality', 'ws', 'xhttp', 'grpc', 'hysteria2'):
-            if role in ('ws', 'grpc') and not params['ws_grpc']:
-                continue
-            inbound = core_inbound(role, params)
-            name = 'trojan-grpc' if role == 'grpc' else role
-            port = inbound['port']
-            tag = {'hysteria2':'inbound-443-udp', 'xhttp':'inbound-/dev/shm/uds2023.sock,0666:0|'}.get(role, f'inbound-{port}')
-            iid = db.execute('''INSERT INTO inbounds
-                (user_id, up, down, total, remark, enable, expiry_time, listen, port, protocol,
-                 settings, stream_settings, tag, sniffing) VALUES (1,0,0,0,?,1,0,?,?,?,?,?,?,?)''',
-                (params['flag']+' '+name, inbound['listen'], port, inbound['protocol'],
-                 json.dumps(dict(clients=[], **inbound['settings'])), json.dumps(inbound['streamSettings']),
-                 tag, json.dumps(inbound['sniffing']))).lastrowid
-            host = core_host(role, params)
-            host.update(inbound_id=iid, sort_order=0, alpn=json.dumps(host['alpn'], separators=(',', ':')))
-            if grouped:
-                host['group_id'] = new_group_id()
-            columns = ','.join(host)
-            placeholders = ','.join('?' for _ in host)
-            hid = db.execute(f'INSERT INTO hosts ({columns}) VALUES ({placeholders})', tuple(host.values())).lastrowid
-            created[role] = [iid, hid]
-    return created
+        return {role: insert_core_role(db, role, params, enabled=True, user_id=1)
+                for role in core_roles(params['ws_grpc'])}
 
 
 def main():

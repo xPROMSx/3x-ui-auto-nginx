@@ -53,6 +53,12 @@ for host in sorted(h for h in hosts if h):
     print(host+':'+socket.gethostbyname(host))
 PY
 )
+if [[ $restore_mode != 1 && ($fresh_group == agh || $fresh_group == all) ]]; then
+    base_ref=${XUI_UPDATE_BASE_REF:-79aa538d029eef159e45a1bc9c04c688b715b5d4}
+    [[ $base_ref =~ ^[a-f0-9]{40}$ ]]
+    git show "$base_ref:x-ui-latest.sh" > "$work/base-installer"
+    echo "$base_ref" > "$work/update-base-ref"
+fi
 network=()
 for mapping in "${proxy_hosts[@]}"; do network+=(--add-host "$mapping"); done
 docker run --name "$container" --rm --device=/dev/kvm "${network[@]}" \

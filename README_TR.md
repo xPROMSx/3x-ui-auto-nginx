@@ -69,6 +69,10 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 
 <a id="installation-vs-update"></a>
 
+3.0.0 ve sonraki sürümlerle yapılan kurulumlarda güncel yöneticiyi açıp **7. Update** seçeneğini seçin. Yönetici otomatik olarak yedek alır ve sunucuyu yeniden kurmadan projeyi günceller. İstemciler, abonelikler, anahtarlar ve kullanıcı ayarları korunur.
+
+2.x sürümünden geçiş yapmak için yeni bir kurulum yapın ve ardından istemcileri ve abonelikleri geri yükleyin.
+
 > [!CAUTION]
 > **Kurulum, güncelleme değildir!**
 >
@@ -86,7 +90,6 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 <summary><strong>Nasıl güncellenir?</strong></summary>
 
 - **3X-UI ve Xray:** panelin kendi güncelleme araçlarını kullanın. Yeni sürümlerin bu projenin yapılandırmasıyla uyumluluğu henüz doğrulanmamış olabilir.
-- **3X-UI AUTO NGINX:** mevcut kurulu sistemin yerinde güncellenmesi desteklenmez. **5 — Cascade** gibi yeni yönetici özelliklerini kullanmak için güncel betiği indirip ilgili işlemi seçin. Yönetici, mevcut yapılandırmanın uyumluluğunu kontrol eder.
 - **Backup / Restore:** verileri yedekler ve geri yükler; kurulu sistemi güncellemez.
 - **2.7.0 öncesinde kurulan sunucular:** **6 - My Server Details** erişilebilen eski bilgileri gösterir. Rastgele DoH yolu, ek bağlantı soruları ve DoT yalnızca yeni kurulumda kullanılabilir. Mevcut WebSocket ve Trojan gRPC yapılandırmaları değişmez ve eski DoH adresi `/dns-query` olarak kalır.
 

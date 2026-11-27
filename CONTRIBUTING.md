@@ -97,9 +97,10 @@ There is no branch-push or manual-dispatch trigger. A newer launch cancels an ol
 
 `tests/fresh/run.sh` selects a scenario group through `XUI_FRESH_GROUP`:
 `positive` (installation, consumers, cold boot, Change Domains and Restore),
-`agh` (a separate clean installation followed by the native AdGuard Home update
-scenario), `negative` (clean-disk failure cases) or `all` (the three in that
-order, used locally). The workflow runs `positive`, `agh` and `negative` as three
+`agh` (PR1 installation, in-place Update and recovery, then native AdGuard Home update),
+`negative` (clean-disk failure cases) or `all` (all three groups in that order).
+Set `XUI_UPDATE_BASE_REF` to select the Update source revision. The target is the PR head.
+The workflow runs `positive`, `agh` and `negative` as three
 independent jobs; the aggregate `Full fresh installer (ubuntu-26.04)` (name unchanged)
 requires all three, so a missing group never passes.
 

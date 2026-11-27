@@ -16,7 +16,7 @@ redirected output remain readable without ANSI escapes. System logs stay visible
 
 The main menu is **1 Installation / Установка**, **2 Change Domains / Смена
 доменов**, **3 Backups / Резервные копии**, **4 Telegram Web Proxy Manager**,
-**5 Cascade / Каскад**, **6 My server details / Данные моего сервера** and
+**5 Cascade / Каскад**, **6 My server details / Данные моего сервера**, **7 Update / Обновление** and
 **0 Exit / Выход**. With no
 unfinished domain operation, opening it, Back and Exit need no root access and
 perform no downloads, IP lookups or system preparation. An unfinished domain
@@ -332,3 +332,7 @@ Ordinary Telegram Manager updates need no 3X-UI PR while public interfaces stay
 compatible. The companion owns Telemt, TLS and its data/recovery lifecycle.
 No 3X-UI lock is held across this handoff; existing pending Change Domains
 recovery still runs before menu actions.
+
+## 7. Update
+
+Open the current release manager on a compatible installation and select **7. Update**. Confirm once with **y**. The manager verifies a Backup v3 before applying changed resources. Client profiles may need refreshing. A retained recovery journal includes the location of the data needed to investigate an incomplete rollback. For 2.x, use Installation followed by Restore clients and subscriptions.

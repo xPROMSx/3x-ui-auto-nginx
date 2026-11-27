@@ -69,6 +69,10 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 
 <a id="installation-vs-update"></a>
 
+En instalaciones de la versión 3.0.0 o posterior, abre el gestor actual y selecciona **7. Update**. El gestor crea automáticamente una copia de seguridad y actualiza el proyecto sin reinstalar el servidor. Conserva los clientes, las suscripciones, las claves y los ajustes del usuario.
+
+Para pasar de la versión 2.x, realiza una instalación nueva y después restaura los clientes y las suscripciones.
+
 > [!CAUTION]
 > **¡Instalar no significa actualizar!**
 >
@@ -86,7 +90,6 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 <summary><strong>¿Cómo se actualiza?</strong></summary>
 
 - **3X-UI y Xray:** utiliza las herramientas de actualización del panel. Es posible que las nuevas versiones aún no se hayan probado con la configuración del proyecto.
-- **3X-UI AUTO NGINX:** no se admite actualizar los componentes instalados sin reinstalarlos. Para usar las funciones nuevas del gestor, como **5 — Cascade**, descarga el script actual y selecciona la operación. El gestor comprobará si la instalación es compatible.
 - **Backup / Restore:** guarda y restaura los datos, pero no actualiza los componentes.
 - **Servidores instalados antes de 2.7.0:** la opción **6 - My Server Details** muestra la información que pueda recuperar. La ruta DoH aleatoria, las preguntas de conexiones adicionales y DoT requieren una instalación nueva. WebSocket y Trojan gRPC existentes permanecen como estaban y DoH conserva `/dns-query`.
 

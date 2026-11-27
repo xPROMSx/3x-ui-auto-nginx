@@ -69,6 +69,10 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 
 <a id="installation-vs-update"></a>
 
+对于 3.0.0 及更高版本的安装，请运行最新版管理器并选择 **7. Update**。管理器会自动创建备份并就地更新项目，保留客户端、订阅、密钥和用户设置，无需重装服务器。
+
+从 2.x 迁移时，请先执行全新安装，然后恢复客户端和订阅。
+
 > [!CAUTION]
 > **安装不等于更新！**
 >
@@ -86,7 +90,6 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 <summary><strong>如何更新？</strong></summary>
 
 - **3X-UI 和 Xray：**使用面板自带的更新功能。新版本与项目配置的兼容性可能尚未验证。
-- **3X-UI AUTO NGINX：**不支持直接升级已安装的整套服务。要使用 **5 — Cascade** 等新版管理功能，可以下载最新脚本并选择对应操作。管理器会检查现有配置是否兼容。
 - **Backup / Restore：**用于保存和恢复数据，不会升级已安装的服务。
 - **对于 2.7.0 之前安装的服务器：**菜单 **6 - My Server Details** 会显示能够读取的旧数据。随机 DoH 路径、额外连接的配置问题和 DoT 仅适用于全新安装。已有的 WebSocket 和 Trojan gRPC 保持原状，DoH 继续使用 `/dns-query`。
 

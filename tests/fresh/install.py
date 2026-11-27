@@ -45,7 +45,7 @@ def mtr_api():
         subprocess.run(['ip', 'addr', 'del', '8.8.8.9/32', 'dev', 'lo'], check=True, timeout=10)
 
 
-def install(scenario, ref):
+def install(scenario, ref, upstream=None):
     caller_umask = os.umask(0o077)
     report = {'scenario': scenario, 'passed': False}
     try:
@@ -82,7 +82,7 @@ def install(scenario, ref):
         if scenario == 'dot-restore-source': answers = b'n\nn\nn\ny\ny\nn\n'
         started = time.monotonic()
         with (ROOT/'installer.raw.log').open('wb') as log:
-            result = subprocess.run(['bash', str(ROOT/'x-ui-latest.sh'), '-subdomain',
+            result = subprocess.run(['bash', str(ROOT/'x-ui-latest.sh'), *(['-version',upstream] if upstream else []), '-subdomain',
                 'panel.example.test', '-reality_domain', 'reality.example.test'],
                 input=answers, stdout=log, stderr=subprocess.STDOUT, env=env, umask=caller_umask,
                 timeout=1200)

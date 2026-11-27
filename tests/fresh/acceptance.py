@@ -56,6 +56,8 @@ def boot():
     kernel = (ROOT/'kernel.path').read_text().strip()
     report['kernel'] = Path(kernel).name
     extra_ssh = ',hostfwd=tcp:127.0.0.1:22221-:2222' if os.environ.get('XUI_RESTORE_ACCEPTANCE') == '1' else ''
+    if (ROOT/'update-base-ref').exists():
+        extra_ssh += ',hostfwd=tcp:127.0.0.1:18443-:443'
     vm = launch(['qemu-system-x86_64', '-accel', 'kvm', '-cpu', 'max', '-m', '4096',
         '-smp', '4', '-nodefaults', '-no-reboot', '-display', 'none', '-serial', 'stdio',
         '-monitor', 'none', '-drive', 'file=/pilot/disk.raw,format=raw,if=virtio',
@@ -142,9 +144,9 @@ def invoke(expression, result_name, timeout=180, tty=False):
     print(phase+': PASS', flush=True)
 
 
-def install(scenario, ref):
+def install(scenario, ref, upstream=None):
     import shlex
-    code = 'import sys;sys.path.insert(0,"/root/pilot");import install;install.install('+repr(scenario)+','+repr(ref)+')'
+    code = 'import sys;sys.path.insert(0,"/root/pilot");import install;install.install('+repr(scenario)+','+repr(ref)+','+repr(upstream)+')'
     result = ssh('python3 -c '+shlex.quote(code), 1320)
     (ROOT/(phase+'.private.log')).write_bytes(result.stdout+result.stderr)
     if result.returncode:
@@ -189,7 +191,8 @@ def install(scenario, ref):
         assert type(values[key]) in (int, float)
         report[phase+'_'+key] = values[key]
     assert result.returncode == 0 and values['passed'] is True, 'Unexpected real-main result'
-    assert values['installer_sha256'] == hashlib.sha256((REPO/'x-ui-latest.sh').read_bytes()).hexdigest()
+    installer = ROOT/'base-installer' if upstream else REPO/'x-ui-latest.sh'
+    assert values['installer_sha256'] == hashlib.sha256(installer.read_bytes()).hexdigest()
     report[phase] = 'PASS'
     print(phase+': PASS (main exit '+str(values['main_exit'])+', '+str(values['main_seconds'])+'s)', flush=True)
 
@@ -325,12 +328,51 @@ def fresh_acceptance(ref, group='all'):
     if group in ('all','agh'):
         # Needs only an installed system; the phase restores its own state.
         fresh_disk()
-        phase = 'maximum-install'
+        phase = 'install-update-base'
         boot()
-        install('positive', ref)
+        assert ssh('cp /root/pilot/base-installer /root/pilot/x-ui-latest.sh').returncode == 0
+        base = (ROOT/'update-base-ref').read_text().strip()
+        install('positive', base, upstream='v3.10.2')
+        assert ssh('cp /root/pilot/update-source/x-ui-latest.sh /root/pilot/x-ui-latest.sh').returncode == 0
+        phase = 'update-failure-and-recovery'
+        invoke('__import__("update").rollback_cases()', 'update-rollback', 1200)
+        phase = 'interrupted-file-switch'
+        invoke('__import__("update").interrupt_switch()', 'interrupted-update', 600)
+        vm.kill()
+        vm.wait(timeout=30)
+        boot()
+        phase = 'blocked-cold-recovery'
+        invoke('__import__("update").failed_boot()', 'recovery-gated', 180)
+        poweroff()
+        boot()
+        phase = 'update-after-cold-recovery'
+        invoke('__import__("update").verify_cold_recovery()', 'cold-update-recovery', 240)
+        phase = 'project-update'
+        invoke('__import__("update").project_update()', 'update', 1200, tty=True)
         invoke('checks.installed()', 'installed')
+        invoke('checks.transports(positive_only=True)', 'updated-transports', 300)
+        invoke('__import__("update").remove_customer_fixture()', 'end-update-fixture')
         phase = 'native-agh-update'
         invoke('checks.native_agh_update()', 'native-agh-update', 1200, tty=True)
+        phase = 'external-write-before-commit'
+        invoke('__import__("update").await_external()', 'actual-panel-running', 480)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('session', REPO/'assets/amneziawg/managed.py')
+        session = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(session)
+        private = ssh("""cd /root/pilot && python3 -c 'import update,json; print(json.dumps(update.credentials()))'""")
+        private.check_returncode()
+        cred = json.loads(private.stdout)
+        cert = ssh('cat /etc/letsencrypt/live/panel.example.test/fullchain.pem')
+        cert.check_returncode()
+        (ROOT/'update-ca.pem').write_bytes(cert.stdout)
+        panel = session.Panel(cred['url'],cred['username'],cred['password'],ROOT,
+                  ['--connect-to','panel.example.test:443:127.0.0.1:18443','--cacert',str(ROOT/'update-ca.pem')])
+        role = ssh("python3 -c \"import json; print(json.load(open('/etc/x-ui/auto-nginx-managed.json'))['inbound_roles']['xhttp'])\"")
+        role.check_returncode()
+        panel.request('panel/api/hosts/add',dict(inboundIds=[int(role.stdout)], remark='external-update-case',
+                                                  hosts=['external.example'], port=443, security='same'))
+        invoke('__import__("update").retained()', 'verified-external-write', 180)
         poweroff()
     if group in ('all','negative'):
         phase = 'mandatory-dependency-negative'

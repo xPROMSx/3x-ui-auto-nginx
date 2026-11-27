@@ -2534,7 +2534,8 @@ recover_restore_target() {
 
 # Shared with fresh installation via the installed, sourceable Backup helper.
 tune_conntrack() {
-    python3 -I - <<'PYCONNTRACK'
+    python3 -I - "$@" <<'PYCONNTRACK'
+import json
 import os
 from pathlib import Path
 import re
@@ -2592,6 +2593,10 @@ def tune():
         raise ValueError(f'{rule} belongs to the administrator')
 
     limit = max(current, minimum)
+    if sys.argv[1:] == ['plan']:
+        print(json.dumps(dict(key=sysctl_key, before=current, after=limit,
+                              files={str(config): f'{marker}{assignment}{limit}\n', str(rule): rule_text})))
+        return
     if current < limit:
         subprocess.run(['sysctl', '-q', '-w', f'{sysctl_key}={limit}'], check=True)
         if int(parameter.read_text()) != limit:
@@ -2867,6 +2872,13 @@ main() {
            ! -L /var/lib/3x-ui-auto-nginx/change-domains && ! -L /var/lib/3x-ui-auto-nginx ]] ||
             die 'Unfinished Change Domains operation: start the manager through SSH for verified recovery before Backup/Restore.' ;;
     esac
+    run_backup_command "$@"
+}
+
+# The Update worker already owns fd9 and has armed its crash-recovery journal.
+# Public operations enter through main(), including its pending-operation check.
+run_backup_command() {
+    local BACKUP_JSON=0
     if [[ ${1:-} == backup && ${2:-} == --json && $# == 2 ]]; then
         BACKUP_JSON=1
         exec 3>&1 1>&2
