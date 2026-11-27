@@ -188,6 +188,18 @@ os._exit(0)
                 update.commit(dict(target={}, sha='new'))
         self.assertEqual(update.MANIFEST.read_text(), 'previous')
 
+    def test_schema_migration_uses_normal_init_and_requires_cli_completion(self):
+        binary = self.root / 'x-ui'
+        with patch.object(update, 'run', return_value=b'current panel settings as follows:\n') as run:
+            update.migrate_schema(binary, self.root)
+            run.assert_called_once_with(
+                'env', 'XUI_DB_TYPE=sqlite', 'XUI_DB_FOLDER=' + str(self.root),
+                binary, 'setting', '-show', cwd=self.root, timeout=300,
+            )
+            run.return_value = b'Database initialization failed\n'
+            with self.assertRaisesRegex(RuntimeError, 'did not complete SQLite schema initialization'):
+                update.migrate_schema(binary, self.root)
+
     def test_migration_accepts_additions_but_checks_client_links(self):
         with (
             closing(sqlite3.connect(self.db)) as live,

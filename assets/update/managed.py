@@ -434,6 +434,18 @@ def make_plan(state, release):
     return files, edits, list(wanted.keys() - rows.keys()), params
 
 
+def migrate_schema(binary, db_folder, *extra_env):
+    # setting -show runs the same InitDB as normal startup. The migrate
+    # subcommand also reimports legacy inbound clients and rewrites timestamps.
+    output = run(
+        'env', 'XUI_DB_TYPE=sqlite', 'XUI_DB_FOLDER=' + str(db_folder), *extra_env,
+        binary, 'setting', '-show', cwd=binary.parent, timeout=300,
+    )
+    # Upstream setting can return zero on an InitDB error, before printing settings.
+    if b'current panel settings as follows:' not in output.splitlines():
+        raise RuntimeError('The verified panel did not complete SQLite schema initialization')
+
+
 def verify_migration(db, before):
     def normalize_inbound_settings(value):
         if not isinstance(value, str):
@@ -512,16 +524,11 @@ def apply_update(sha):
         trial.mkdir()
         with closing(connect()) as live, closing(sqlite3.connect(trial / DB.name)) as db:
             live.backup(db)
-        run(
-            'env',
-            'XUI_DB_TYPE=sqlite',
-            'XUI_DB_FOLDER=' + str(trial),
+        migrate_schema(
+            release / 'x-ui',
+            trial,
             'XUI_BIN_FOLDER=' + str(release / 'bin'),
             'XUI_LOG_FOLDER=' + str(trial),
-            release / 'x-ui',
-            'migrate',
-            cwd=release,
-            timeout=300,
         )
         with closing(sqlite3.connect(trial / DB.name)) as db:
             if db.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
@@ -599,15 +606,7 @@ def apply_update(sha):
     if any(name.startswith('/etc/systemd/system/') for name in files):
         run('systemctl', 'daemon-reload')
     if upgrade:
-        run(
-            'env',
-            'XUI_DB_TYPE=sqlite',
-            'XUI_DB_FOLDER=' + str(DB.parent),
-            PANEL / 'x-ui',
-            'migrate',
-            cwd=PANEL,
-            timeout=300,
-        )
+        migrate_schema(PANEL / 'x-ui', DB.parent)
         with closing(connect()) as db:
             verify_migration(db, WORK / 'before.db')
     if change_db:
