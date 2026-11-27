@@ -281,6 +281,25 @@ def restore_acceptance(ref):
     poweroff()
 
 
+def external_update_write():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('session', REPO/'assets/amneziawg/managed.py')
+    session = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(session)
+    private = ssh("""cd /root/pilot && python3 -c 'import update,json; print(json.dumps(update.credentials()))'""")
+    private.check_returncode()
+    cred = json.loads(private.stdout)
+    cert = ssh('cat /etc/letsencrypt/live/panel.example.test/fullchain.pem')
+    cert.check_returncode()
+    (ROOT/'update-ca.pem').write_bytes(cert.stdout)
+    panel = session.Panel(cred['url'],cred['username'],cred['password'],ROOT,
+              ['--connect-to','panel.example.test:443:127.0.0.1:18443','--cacert',str(ROOT/'update-ca.pem')])
+    role = ssh("python3 -c \"import json; print(json.load(open('/etc/x-ui/auto-nginx-managed.json'))['inbound_roles']['xhttp'])\"")
+    role.check_returncode()
+    panel.request('panel/api/hosts/add',dict(inboundIds=[int(role.stdout)], remark='external-update-case',
+                                              hosts=['external.example'], port=443, security='same'))
+
+
 def fresh_acceptance(ref, group='all'):
     """Run the linked positive installation, the AGH update scenario and/or the clean-disk negative cases."""
     global phase
@@ -334,6 +353,8 @@ def fresh_acceptance(ref, group='all'):
         base = (ROOT/'update-base-ref').read_text().strip()
         install('positive', base, upstream='v3.10.2')
         assert ssh('cp /root/pilot/update-source/x-ui-latest.sh /root/pilot/x-ui-latest.sh').returncode == 0
+        phase = 'prepare-update-base-cdn'
+        invoke('__import__("update").prepare_base_cdn()', 'update-base-cdn', 120)
         phase = 'update-failure-and-recovery'
         invoke('__import__("update").rollback_cases()', 'update-rollback', 1200)
         phase = 'interrupted-file-switch'
@@ -356,22 +377,7 @@ def fresh_acceptance(ref, group='all'):
         invoke('checks.native_agh_update()', 'native-agh-update', 1200, tty=True)
         phase = 'external-write-before-commit'
         invoke('__import__("update").await_external()', 'actual-panel-running', 480)
-        import importlib.util
-        spec = importlib.util.spec_from_file_location('session', REPO/'assets/amneziawg/managed.py')
-        session = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(session)
-        private = ssh("""cd /root/pilot && python3 -c 'import update,json; print(json.dumps(update.credentials()))'""")
-        private.check_returncode()
-        cred = json.loads(private.stdout)
-        cert = ssh('cat /etc/letsencrypt/live/panel.example.test/fullchain.pem')
-        cert.check_returncode()
-        (ROOT/'update-ca.pem').write_bytes(cert.stdout)
-        panel = session.Panel(cred['url'],cred['username'],cred['password'],ROOT,
-                  ['--connect-to','panel.example.test:443:127.0.0.1:18443','--cacert',str(ROOT/'update-ca.pem')])
-        role = ssh("python3 -c \"import json; print(json.load(open('/etc/x-ui/auto-nginx-managed.json'))['inbound_roles']['xhttp'])\"")
-        role.check_returncode()
-        panel.request('panel/api/hosts/add',dict(inboundIds=[int(role.stdout)], remark='external-update-case',
-                                                  hosts=['external.example'], port=443, security='same'))
+        external_update_write()
         invoke('__import__("update").retained()', 'verified-external-write', 180)
         poweroff()
     if group in ('all','negative'):

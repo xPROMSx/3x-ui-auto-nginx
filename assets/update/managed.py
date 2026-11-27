@@ -248,7 +248,9 @@ TimeoutStartSec=20min
     for unit in GUARDS:
         folder = SYSTEM / (unit + '.d')
         folder.mkdir(mode=0o755, exist_ok=True)
-        data = f'[Unit]\nRequires={BOOT}\nAfter={BOOT}\n'
+        # A failed SQLite recovery must not take independent nginx sites down.
+        dependency = 'Wants' if unit == 'nginx.service' else 'Requires'
+        data = f'[Unit]\n{dependency}={BOOT}\nAfter={BOOT}\n'
         if unit.endswith('.service'):
             data += f'[Service]\nExecStartPre=+{check} gate {unit}\n'
         write(folder / '90-xui-update.conf', data.encode(), 0o644)
@@ -267,6 +269,9 @@ def gate(j, unit):
     if phase in COHERENT_PHASES:
         return
     if phase == 'start_intent' and unit != 'certbot.service':
+        return
+    if unit == 'nginx.service' and prop(BOOT, 'ActiveState') == 'failed':
+        # The distro unit's own ExecStartPre validates the live nginx config.
         return
     raise RuntimeError(f'{unit} start blocked during Update phase {phase}')
 
@@ -430,15 +435,28 @@ def make_plan(state, release):
 
 
 def verify_migration(db, before):
+    def normalize_inbound_settings(value):
+        if not isinstance(value, str):
+            return value
+        try:
+            return json.dumps(json.loads(value), sort_keys=True)
+        except ValueError:
+            return value
+
+    # The upstream migrator can reserialize the inbound settings object.
+    db.create_function('normalize_inbound_settings', 1, normalize_inbound_settings)
     db.execute('ATTACH DATABASE ? AS previous', (before.as_uri() + '?mode=ro',))
     for (name,) in db.execute(
         "SELECT name FROM previous.sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
     ):
         table = '"' + name.replace('"', '""') + '"'
-        columns = ','.join(
-            '"' + row[1].replace('"', '""') + '"'
-            for row in db.execute('PRAGMA previous.table_info(' + table + ')')
-        )
+        fields = []
+        for row in db.execute('PRAGMA previous.table_info(' + table + ')'):
+            quoted = '"' + row[1].replace('"', '""') + '"'
+            if name == 'inbounds' and row[1] == 'settings':
+                quoted = f'normalize_inbound_settings({quoted})'
+            fields.append(quoted)
+        columns = ','.join(fields)
         if db.execute(
             f'SELECT {columns} FROM previous.{table} EXCEPT SELECT {columns} FROM main.{table} LIMIT 1'
         ).fetchone():

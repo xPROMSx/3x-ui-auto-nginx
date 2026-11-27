@@ -157,11 +157,26 @@ os._exit(0)
         self.stack.enter_context(patch.object(database, 'assert_no_holders'))
         with self.assertRaises(FileNotFoundError):
             update.recover(j, offline=True)
-        for unit in update.GUARDS:
-            if unit.endswith('.service'):
-                with self.assertRaisesRegex(RuntimeError, 'blocked'):
-                    update.gate(update.record(), unit)
+        j = update.record()
+        for unit in ('x-ui.service', 'mtr-backend.service', 'certbot.service'):
+            with self.assertRaisesRegex(RuntimeError, 'blocked'):
+                update.gate(j, unit)
+        with patch.object(update, 'prop', return_value='active'):
+            with self.assertRaisesRegex(RuntimeError, 'blocked'):
+                update.gate(j, 'nginx.service')
+        with patch.object(update, 'prop', return_value='failed'):
+            update.gate(j, 'nginx.service')
         self.assertTrue(update.JOURNAL.exists())
+
+        system = self.root / 'system'
+        (system / 'multi-user.target.wants').mkdir(parents=True)
+        with patch.object(update, 'SYSTEM', system), patch.object(update, 'run'), patch.object(update, 'service'):
+            update.create_units()
+        nginx = (system / 'nginx.service.d/90-xui-update.conf').read_text()
+        panel = (system / 'x-ui.service.d/90-xui-update.conf').read_text()
+        self.assertIn(f'Wants={update.BOOT}\nAfter={update.BOOT}\n', nginx)
+        self.assertNotIn(f'Requires={update.BOOT}', nginx)
+        self.assertIn(f'Requires={update.BOOT}\nAfter={update.BOOT}\n', panel)
 
     def test_failed_health_does_not_publish_target_ref(self):
         update.MANIFEST.write_text('previous')
@@ -188,6 +203,22 @@ os._exit(0)
             live.execute('DELETE FROM client_inbounds')
             with self.assertRaisesRegex(ValueError, 'client_inbounds'):
                 update.verify_migration(live, self.root / 'before.db')
+
+    def test_migration_accepts_reserialized_inbound_settings_but_rejects_key_change(self):
+        before = self.root / 'before.db'
+        with closing(sqlite3.connect(self.db)) as live, closing(sqlite3.connect(before)) as old:
+            live.execute('CREATE TABLE inbounds(id INTEGER PRIMARY KEY, settings TEXT)')
+            live.execute('INSERT INTO inbounds VALUES(1,?)', ('{"encryption": "original", "clients": []}',))
+            live.commit()
+            live.backup(old)
+        with closing(update.connect(False)) as db:
+            db.execute('UPDATE inbounds SET settings=?', ('{"clients":[],"encryption":"original"}',))
+            update.verify_migration(db, before)
+            db.commit()
+            db.execute('DETACH previous')
+            db.execute('UPDATE inbounds SET settings=?', ('{"clients":[],"encryption":"replacement"}',))
+            with self.assertRaisesRegex(ValueError, 'inbounds'):
+                update.verify_migration(db, before)
 
     def test_update_merges_owned_fields_without_replacing_client_data(self):
         clients = [{'id': 'original', 'flow': 'individual'}]

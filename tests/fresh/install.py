@@ -45,6 +45,18 @@ def mtr_api():
         subprocess.run(['ip', 'addr', 'del', '8.8.8.9/32', 'dev', 'lo'], check=True, timeout=10)
 
 
+def install_answers(scenario, upstream):
+    if scenario == 'dot-outage':
+        return b'y\nn\nn\nn\ny\n'
+    if scenario == 'restore-source':
+        return b'n\nn\nn\nn\nn\n'
+    if scenario == 'dot-restore-source':
+        return b'n\nn\nn\ny\ny\nn\n'
+    options = b'y\ny\ny\ny\nvision.example.test\ny\n'
+    # An explicit historical release cannot select CDN and skips the WARP question.
+    return options + (b'n\ny\nn\ny\n' if upstream else b'y\nn\ny\nn\ny\n')
+
+
 def install(scenario, ref, upstream=None):
     caller_umask = os.umask(0o077)
     report = {'scenario': scenario, 'passed': False}
@@ -76,10 +88,7 @@ def install(scenario, ref, upstream=None):
         if scenario == 'dependency':
             Path('/etc/apt/preferences.d/pilot-mandatory-failure').write_text(
                 'Package: nginx-full\nPin: version *\nPin-Priority: -1\n')
-        answers = b'y\ny\ny\ny\nvision.example.test\ny\ny\nn\ny\nn\ny\n'
-        if scenario == 'dot-outage': answers = b'y\nn\nn\nn\ny\n'
-        if scenario == 'restore-source': answers = b'n\nn\nn\nn\nn\n'
-        if scenario == 'dot-restore-source': answers = b'n\nn\nn\ny\ny\nn\n'
+        answers = install_answers(scenario, upstream)
         started = time.monotonic()
         with (ROOT/'installer.raw.log').open('wb') as log:
             result = subprocess.run(['bash', str(ROOT/'x-ui-latest.sh'), *(['-version',upstream] if upstream else []), '-subdomain',
@@ -139,7 +148,7 @@ def install(scenario, ref, upstream=None):
                 assert re.fullmatch(r'dns-[A-Za-z0-9]{12}', metadata['doh_path']), 'AGH public path is not random'
                 expected_doh = 'DoH: https://'+metadata['domain']+'/'+metadata['doh_path']
                 assert any(' '.join(line.split()) == expected_doh for line in private.splitlines()), 'Final summary did not show the managed DoH address'
-                assert report['components']['xhttp_cdn_disabled'], 'Requested XHTTP CDN was not created disabled'
+                assert report['components']['xhttp_cdn_disabled'] == (upstream is None), 'Unexpected XHTTP CDN selection'
                 for component in ('Global DoT', 'Fail2ban', 'APT security'):
                     assert re.search(re.escape(component) + r' +Configured', private)
             else:

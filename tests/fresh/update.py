@@ -4,6 +4,7 @@ import json
 import os
 import re
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -22,11 +23,48 @@ STATE = DB.with_name('auto-nginx-managed.json')
 WORK = Path('/var/lib/3x-ui-auto-nginx/update')
 JOURNAL = WORK.parent / 'change-domains/journal.json'
 LIMIT = Path('/etc/nginx/snippets/xui-cover-limit.conf')
+NGX_RECOVERY_SITE = Path('/etc/nginx/conf.d/pilot-recovery.conf')
 COVER = Path('/var/www/html/cover-panel/index.html')
 BACKEND = Path('/usr/local/lib/3x-ui-pro/mtr-backend.py')
 FOREIGN = COVER.with_name('customer.txt')
 ENV = json.loads((ROOT / 'environment.json').read_text())
 SHA = ENV['XUI_AUTO_REF']
+
+
+def prepare_base_cdn():
+    """Populate the CDN profile for the migration without overriding the installer preflight."""
+    import importlib.util
+
+    old_running()
+    manifest = json.loads(STATE.read_bytes())
+    assert 'xhttp_cdn' not in manifest['inbound_roles']
+    spec = importlib.util.spec_from_file_location('cdn', SOURCE / 'assets/xhttp-cdn/managed.py')
+    cdn = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cdn)
+    cred = credentials()
+    domain = manifest['domains']['panel']
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+    path = '/UpdateBaseFixture/cookie'
+    snippet = Path('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf')
+    with tempfile.TemporaryDirectory() as directory:
+        panel = checks.load('session').Panel(
+            cred['url'], cred['username'], cred['password'], Path(directory),
+            ['--resolve', domain + ':443:127.0.0.1'],
+        )
+        assert cdn.configure(panel, domain, port, path, '🌐', snippet) == 'configured'
+    with closing(sqlite3.connect(DB)) as db:
+        db.row_factory = sqlite3.Row
+        inbound = db.execute('SELECT id,enable FROM inbounds WHERE tag=?', (f'inbound-{port}',)).fetchone()
+        assert not inbound['enable']
+        iid = inbound['id']
+        host = db.execute('SELECT * FROM hosts WHERE inbound_id=?', (iid,)).fetchone()
+    manifest['inbound_roles']['xhttp_cdn'] = iid
+    manifest['features']['xhttp_cdn'] = True
+    manifest['xhttp_cdn'] = dict(port=port, path=path, host=dict(host), snippet=snippet.read_text())
+    STATE.write_text(json.dumps(manifest))
+    return dict(cdn_fixture_disabled=True)
 
 
 def old_running():
@@ -165,6 +203,11 @@ def rollback_cases():
 
 
 def interrupt_switch():
+    # This independent vhost must boot even when x-ui remains blocked.
+    NGX_RECOVERY_SITE.write_text(
+        'server { listen unix:/run/pilot-recovery-nginx.sock; location / { return 200 "foreign-site"; } }\n'
+    )
+    checks.run('nginx', '-t')
     assert invoke_fault('cold', background=True) == 0
     deadline = time.monotonic() + 300
     while not (ROOT / 'hit-cold').exists() and time.monotonic() < deadline:
@@ -195,8 +238,17 @@ def failed_boot():
         JOURNAL.exists()
         and checks.run('systemctl', 'show', 'x-ui', '-p', 'MainPID', '--value').strip() == '0'
     )
+    while checks.run('systemctl', 'show', 'nginx', '-p', 'ActiveState', '--value').strip() != 'active':
+        if time.monotonic() > until:
+            raise RuntimeError('SQLite recovery failure prevented independent nginx startup')
+        time.sleep(0.2)
+    assert checks.run('curl', '-qfsS', '--noproxy', '*', '--unix-socket', '/run/pilot-recovery-nginx.sock',
+                      'http://localhost/') == 'foreign-site'
+    assert checks.run('systemctl', 'show', 'x-ui', '-p', 'MainPID', '-p',
+                      'ExecMainStartTimestampMonotonic', '--value').split() == ['0', '0']
+    NGX_RECOVERY_SITE.unlink()
     (WORK / 'test-held-before.db').rename(WORK / 'before.db')
-    return dict(unsafe_panel_blocked=True, journal_retained=True)
+    return dict(unsafe_panel_blocked=True, journal_retained=True, independent_nginx_site=True)
 
 
 def credentials():
@@ -300,6 +352,9 @@ def project_update():
         for name in ('users', 'clients', 'client_inbounds', 'hosts'):
             columns = [r[1] for r in db.execute('PRAGMA table_info(' + name + ')')]
             clients[name] = (columns, db.execute('SELECT * FROM ' + name + ' ORDER BY rowid').fetchall())
+        cdn_id = before['inbound_roles']['xhttp_cdn']
+        cdn_before = db.execute('SELECT enable,settings FROM inbounds WHERE id=?', (cdn_id,)).fetchone()
+        assert cdn_before[0] == 0
     checks.run('systemctl', 'restart', 'x-ui')
     checks.manager_tty(b'1\n7\nn\n0\n', ROOT / 'cancel.private.log', 90)
     assert json.loads(STATE.read_bytes()) == before
@@ -316,6 +371,8 @@ def project_update():
     assert b'burst=80 ' in LIMIT.read_bytes()
     assert address + ':23988' in checks.run('ss', '-H', '-lntp')
     with closing(sqlite3.connect(DB)) as db:
+        cdn_after = db.execute('SELECT enable,settings FROM inbounds WHERE id=?', (cdn_id,)).fetchone()
+        assert cdn_after[0] == 0 and json.loads(cdn_after[1]) == json.loads(cdn_before[1])
         for name, (columns, values) in clients.items():
             assert (
                 db.execute('SELECT ' + ','.join(columns) + ' FROM ' + name + ' ORDER BY rowid').fetchall()

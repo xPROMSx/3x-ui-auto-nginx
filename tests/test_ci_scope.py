@@ -530,16 +530,24 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
         functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
         positive=['maximum-install','manager-backup','transport-consumers','AWG-payload','tech0-RED-GREEN',
                   'installed-renewal-hooks','cold-boot','cold-transport-consumers','change-domains','restore-before-domains']
-        agh=['maximum-install','maximum-install','native-agh-update']
+        agh=['install-update-base','prepare-update-base-cdn','update-failure-and-recovery',
+             'interrupted-file-switch','blocked-cold-recovery','update-after-cold-recovery',
+             'project-update','project-update','project-update','project-update','native-agh-update',
+             'external-write-before-commit','external-write-before-commit']
         negative=['mandatory-dependency-negative','DoT-outage-partial-install','DoT-outage-core-consumers']
         with tempfile.TemporaryDirectory() as directory:
             for group,disks in (('all',6),('positive',3),('agh',1),('negative',2)):
                 events=[];calls=[];group_root=Path(directory)/group;group_root.mkdir()
                 env=dict(ROOT=group_root,phase='',re=re)
                 def record(kind):events.append((kind,env['phase']))
+                if group in ('all','agh'):
+                    (group_root/'update-base-ref').write_text('b'*40+'\n')
+                installs=[]
                 env.update(fresh_disk=lambda:record('disk'),boot=lambda:record('boot'),poweroff=lambda:record('off'),
-                    install=lambda scenario,*args:(record('phase'),calls.append(scenario)),
+                    install=lambda scenario,*args,**kwargs:(record('phase'),calls.append(scenario),installs.append((scenario,args,kwargs))),
                     invoke=lambda expression,*args,**kwargs:(record('phase'),calls.append(expression)),
+                    external_update_write=lambda:record('external-write'),
+                    vm=SimpleNamespace(kill=lambda:record('kill'),wait=lambda **kwargs:record('wait')),
                     ssh=lambda *args,**kwargs:SimpleNamespace(returncode=0,stdout=b'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n'))
                 exec(compile(ast.Module(body=functions,type_ignores=[]),'acceptance.py','exec'),env)
                 env['fresh_acceptance']('a'*40,group)
@@ -555,7 +563,12 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
                     'checks.installed(cold=True)','checks.transports()','checks.change_domains()',
                     'checks.restore_before_domains()','dot-restore-source','checks.restore_source(dot=True)',
                     'checks.restore_dot_target()','checks.change_dot_panel()']
-                agh_calls=['positive','checks.installed()','checks.native_agh_update()']
+                agh_calls=['positive','__import__("update").prepare_base_cdn()',
+                    '__import__("update").rollback_cases()','__import__("update").interrupt_switch()',
+                    '__import__("update").failed_boot()','__import__("update").verify_cold_recovery()',
+                    '__import__("update").project_update()','checks.installed()','checks.transports(positive_only=True)',
+                    '__import__("update").remove_customer_fixture()','checks.native_agh_update()',
+                    '__import__("update").await_external()','__import__("update").retained()']
                 negative_calls=['dependency','dot-outage','checks.transports(vision=False, ws_grpc=False)']
                 self.assertEqual(calls,(positive_calls if group in ('all','positive') else [])+
                                        (agh_calls if group in ('all','agh') else [])+
@@ -565,7 +578,10 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
                     self.assertEqual([phase for kind,phase in events if kind=='phase'].count('native-agh-update'),1)
                 self.assertEqual(sum(kind=='disk' for kind,_ in events),disks)
                 if group=='agh':
-                    self.assertEqual([kind for kind,_ in events],['disk','boot','phase','phase','phase','off'])
+                    self.assertEqual(installs,[('positive',('b'*40,),{'upstream':'v3.10.2'})])
+                    self.assertEqual([kind for kind,_ in events],
+                        ['disk','boot','phase','phase','phase','phase','kill','wait','boot','phase','off',
+                         'boot','phase','phase','phase','phase','phase','phase','phase','external-write','phase','off'])
                 if group in ('all','negative'):
                     for phase in negative[:2]:
                         boot_index=events.index(('boot',phase))
@@ -584,6 +600,34 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
         restore=next(node for node in ast.walk(main) if isinstance(node,ast.If) and 'XUI_RESTORE_ACCEPTANCE' in ast.unparse(node.test))
         self.assertEqual(ast.unparse(restore.body[0]),'restore_acceptance(ref)')
         self.assertNotIn('fresh_acceptance',ast.unparse(ast.Module(body=restore.body,type_ignores=[])))
+
+    def test_update_base_answers_match_historical_installer(self):
+        import ast
+        tree = ast.parse((ROOT/'tests/fresh/install.py').read_text())
+        answers = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name=='install_answers')
+        env = {}
+        exec(compile(ast.Module(body=[answers],type_ignores=[]), 'install.py', 'exec'), env)
+        script = r"""
+source "$1"
+PANEL_VERSION=$2
+select_security && select_additional_connections && select_warp_ru && select_adguard && select_dot && select_client || exit 1
+if read -r extra; then exit 1; fi
+printf 'OPTIONS %s %s %s %s %s %s %s %s %s\n' "$INSTALL_SECURITY" "$INSTALL_WS_GRPC" "$INSTALL_VISION" "$INSTALL_AWG" \
+    "$INSTALL_XHTTP_CDN" "$INSTALL_WARP_RU" "$INSTALL_AGH" "$INSTALL_AGH_DOT" "$CREATE_CLIENT"
+if [[ -n $PANEL_VERSION ]]; then
+    PANEL_TAG=$PANEL_VERSION
+    INSTALL_XHTTP_CDN=y
+    preflight_xhttp_cdn && exit 1
+fi
+exit 0
+"""
+        for upstream, expected in ((None, b'y y y y y n y n y'), ('v3.10.2', b'y y y y n n y n y')):
+            with self.subTest(upstream=upstream):
+                proc = subprocess.run(['bash','-c',script,'fixture',ROOT/'x-ui-latest.sh',upstream or ''],
+                    input=env['install_answers']('positive',upstream),capture_output=True,timeout=15,check=True)
+                self.assertIn(b'OPTIONS '+expected+b'\n',proc.stdout)
+                if upstream:
+                    self.assertIn(b'XHTTP CDN requires the verified 3X-UI baseline',proc.stdout)
 
     def test_fresh_final_check_fails_closed_for_all_job_results(self):
         import ast,itertools,textwrap
