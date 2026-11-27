@@ -99,6 +99,49 @@ def invoke_fault(fault, *, background=False):
     ).returncode
 
 
+def migration_differences(db, before):
+    """Describe every changed field by its public SQLite schema position."""
+    def quoted(name):
+        return '"' + name.replace('"', '""') + '"'
+
+    db.execute('ATTACH DATABASE ? AS audit_before', (before.as_uri() + '?mode=ro',))
+    try:
+        tables = db.execute(
+            "SELECT name FROM audit_before.sqlite_schema "
+            "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+        for table_index, (name,) in enumerate(tables):
+            table = quoted(name)
+            fields = db.execute(f'PRAGMA audit_before.table_info({table})').fetchall()
+            old = f'audit_before.{table}'
+            new = f'main.{table}'
+            keys = [quoted(field[1]) for field in fields if field[5]] or ['rowid']
+            join = ' AND '.join(f'b.{key} IS a.{key}' for key in keys)
+            projection = ','.join(quoted(field[1]) for field in fields)
+            try:
+                if db.execute(f'SELECT {projection} FROM {old} EXCEPT SELECT {projection} FROM {new} LIMIT 1').fetchone():
+                    if db.execute(f'SELECT 1 FROM {old} AS a WHERE NOT EXISTS '
+                                  f'(SELECT 1 FROM {new} AS b WHERE {join}) LIMIT 1').fetchone():
+                        yield f'{table_index}:row'
+                    for index, name, *_ in fields:
+                        column = quoted(name)
+                        if db.execute(f'SELECT 1 FROM {old} AS a JOIN {new} AS b ON {join} '
+                                      f'WHERE a.{column} IS NOT b.{column} LIMIT 1').fetchone():
+                            yield f'{table_index}:{index}'
+            except sqlite3.OperationalError:
+                yield f'{table_index}:schema'
+    finally:
+        db.execute('DETACH DATABASE audit_before')
+
+
+def inject_nginx_fault(worker, touched):
+    journal = worker.record()
+    if journal and journal['phase'] == 'switching' and not touched.exists():
+        # The native SQLite migration has passed. Fail the live nginx -t.
+        LIMIT.write_text('invalid_directive;\n')
+        touched.touch()
+
+
 def worker(fault):
     sys.path.insert(0, str(SOURCE / 'assets/update'))
     import managed as worker
@@ -122,11 +165,20 @@ def worker(fault):
     reload = worker.reload_nginx
 
     def reload_nginx():
-        if fault == 'nginx' and not touched.exists():
-            # The native SQLite migration has passed. Fail the live nginx -t.
-            LIMIT.write_text('invalid_directive;\n')
-            touched.touch()
+        if fault == 'nginx':
+            inject_nginx_fault(worker, touched)
         reload()
+
+    migration = worker.verify_migration
+
+    def verify_migration(db, before):
+        try:
+            migration(db, before)
+        except (ValueError, sqlite3.Error):
+            with closing(sqlite3.connect(DB.as_uri() + '?mode=ro', uri=True)) as audit:
+                positions = ','.join(migration_differences(audit, before))
+                (ROOT / ('update-migration-' + fault)).write_text(positions)
+            raise
 
     check = worker.verified_health
 
@@ -152,6 +204,7 @@ def worker(fault):
     with (
         patch.object(worker, 'publish', publish),
         patch.object(worker, 'reload_nginx', reload_nginx),
+        patch.object(worker, 'verify_migration', verify_migration),
         patch.object(worker, 'verified_health', verify),
         patch.object(worker, 'candidate_nginx', verify_candidate),
     ):
@@ -213,6 +266,9 @@ def rollback_cases():
             trace = ROOT / ('update-trace-' + fault)
             if trace.exists():
                 print(f'CI Update trace {fault}: {trace.read_text()}', flush=True)
+            migration = ROOT / ('update-migration-' + fault)
+            if migration.exists():
+                print(f'CI Update migration {fault}: {migration.read_text()}', flush=True)
             raise
         print(f'CI Update recovery {fault}: PASS', flush=True)
     return dict.fromkeys(faults, True)

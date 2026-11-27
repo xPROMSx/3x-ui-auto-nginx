@@ -484,6 +484,8 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
             'CI Update recovery nginx: FAIL\n'
             'CI Update journal nginx: old_ready\n'
             'CI Update trace nginx: managed.py:423,managed.py:392,resources.py:40\n'
+            'CI Update migration nginx: 7:4,7:5,8:row,9:schema\n'
+            'CI Update migration start: 7:4,'+secret+'\n'
             'CI Update trace start: '+secret+'\n'
             'CI Update journal start: '+secret+'\n'
             'CI Update recovery start: '+secret+'\n'
@@ -502,6 +504,7 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
             'failure_location':'update.py:198',
             'update_recovery':{'candidate':'PASS','nginx':'FAIL','start':'NOT RUN','kill':'NOT RUN'},
             'update_recovery_evidence':{'nginx':{'journal':'old_ready',
+                                              'migration':'7:4,7:5,8:row,9:schema',
                                               'trace':'managed.py:423,managed.py:392,resources.py:40'}},
         })
         self.assertIn('Update recovery candidate: PASS',output.getvalue())
@@ -509,6 +512,50 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
         self.assertIn('Update recovery start: NOT RUN',output.getvalue())
         self.assertIn('Update recovery kill: NOT RUN',output.getvalue())
         self.assertNotIn(secret,output.getvalue())
+
+    def test_update_nginx_fault_only_fires_during_apply(self):
+        import ast
+        from types import SimpleNamespace
+
+        tree = ast.parse((ROOT/'tests/fresh/update.py').read_text())
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == 'inject_nginx_fault')
+        env = {'LIMIT': self.repo/'nginx.conf'}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), 'update.py', 'exec'), env)
+        touched = self.repo/'fault'
+        journal = {'phase':'old_ready'}
+        worker = SimpleNamespace(record=lambda: journal)
+        self.write('nginx.conf', 'restored\n')
+        env['inject_nginx_fault'](worker, touched)
+        self.assertFalse(touched.exists())
+        self.assertEqual(env['LIMIT'].read_text(), 'restored\n')
+        journal['phase'] = 'switching'
+        env['inject_nginx_fault'](worker, touched)
+        self.assertTrue(touched.exists())
+        self.assertEqual(env['LIMIT'].read_text(), 'invalid_directive;\n')
+
+    def test_update_migration_reports_all_changed_positions(self):
+        import ast
+        import sqlite3
+        from contextlib import closing
+
+        tree = ast.parse((ROOT/'tests/fresh/update.py').read_text())
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == 'migration_differences')
+        env = {'sqlite3': sqlite3}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), 'update.py', 'exec'), env)
+        before = self.repo/'before.db'
+        with closing(sqlite3.connect(before)) as source, closing(sqlite3.connect(':memory:', uri=True)) as target:
+            source.executescript(
+                "CREATE TABLE a(id INTEGER PRIMARY KEY, x TEXT, y TEXT);"
+                "INSERT INTO a VALUES(1,'private','secret');"
+                "CREATE TABLE b(id INTEGER PRIMARY KEY, x TEXT);"
+                "INSERT INTO b VALUES(1,'private'),(2,'secret');"
+            )
+            source.backup(target)
+            target.executescript("UPDATE a SET x='', y=''; DELETE FROM b WHERE id=1; UPDATE b SET x='';")
+            self.assertEqual(list(env['migration_differences'](target, before)),
+                             ['0:1', '0:2', '1:row', '1:1'])
 
     def test_service_diagnostics_publish_only_unit_states_and_ports(self):
         from unittest.mock import patch

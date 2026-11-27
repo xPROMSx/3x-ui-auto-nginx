@@ -62,9 +62,11 @@ def update_recovery_evidence(output):
     faults = rb'(candidate|nginx|start|kill)'
     phases = rb'prepared|draining|switching|start_intent|compare_target|rollback|target_retained|old_ready|verified|committed'
     frame = rb'(?:managed|database|resources)\.py:[0-9]+'
+    position = rb'[0-9]{1,3}:(?:[0-9]{1,3}|row|schema)'
     evidence = {}
     for kind, pattern in ((b'journal', rb'(?:'+phases+rb')'),
-                          (b'trace', frame+rb'(?:,'+frame+rb'){0,5}')):
+                          (b'trace', frame+rb'(?:,'+frame+rb'){0,5}'),
+                          (b'migration', position+rb'(?:,'+position+rb')*')):
         prefix = rb'^CI Update '+kind+b' '+faults+rb': ('+pattern+rb')\r?$'
         for fault, value in re.findall(prefix, output, re.M):
             evidence.setdefault(fault.decode(), {})[kind.decode()] = value.decode()
