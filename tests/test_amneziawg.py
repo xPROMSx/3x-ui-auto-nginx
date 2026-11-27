@@ -158,7 +158,11 @@ else: sys.exit(1)
         self.assertIn('3X-UI AUTO NGINX',SOURCE)
         helper=Path(__file__).resolve().parents[1]/'assets/amneziawg/managed.py'
         self.assertTrue(helper.exists())
-        self.assertIn("'settings': {}",helper.read_text())
+        from test_integrated_features import helper as component
+        definition = component('amneziawg').inbound_definition
+        self.assertEqual(definition('panel.example',8443,settings={})['settings'], {})
+        saved = {'server': {'publicKey':'fixture'}, 'clients':[{'email':'fixture'}]}
+        self.assertEqual(definition('panel.example',8443,settings=saved)['settings'], saved)
 
     def test_port_conflict_is_rejected_without_mutation(self):
         import socket
@@ -274,7 +278,7 @@ else: sys.exit(1)
             paths=('tests/test_fixture.py','x-ui-latest.sh','assets/clash/clash.yaml',
                    'assets/diagnostics/mtr-backend.py','.github/workflows/upstream-canary.yml',
                    'assets/amneziawg/managed.py','assets/vision/managed.py','assets/client/managed.py','assets/xhttp-cdn/managed.py',
-                   'assets/cascade/managed.py')
+                   'assets/cascade/managed.py','assets/inbounds/managed.py')
             for name in paths:
                 path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('fixture')
             with patch.object(upstream_canary,'ROOT',root):

@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def function(source, name):
+    if name == 'install_panel':
+        from certificate_fixtures import function as installer_function
+        return installer_function(name, source)
     match = re.search(r'^'+re.escape(name)+r'\(\)\s*\{.*?^\}', source, re.M | re.S)
     if not match:
         raise ValueError('Missing function '+name)
@@ -329,7 +332,7 @@ _panel_initial_config() { :; }
             (root/'.github/workflows').mkdir(parents=True)
             shutil.copy2(ROOT/'.github/workflows/upstream-canary.yml',root/'.github/workflows/upstream-canary.yml')
             with patch.object(upstream_canary,'ROOT',root):
-                for feature in ('vision','client','xhttp-cdn'):
+                for feature in ('vision','client','xhttp-cdn','inbounds'):
                     previous = upstream_canary.fingerprint()
                     path = root/f'assets/{feature}/managed.py'
                     path.write_text(path.read_text()+'\n# changed API contract\n')

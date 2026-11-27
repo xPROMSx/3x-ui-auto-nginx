@@ -36,7 +36,7 @@ def fetch_json(url):
 def fingerprint():
     paths = sorted((ROOT/'tests').glob('*.py')) + [
         ROOT/'x-ui-latest.sh', ROOT/'assets/clash/clash.yaml', ROOT/'assets/amneziawg/managed.py',
-        ROOT/'assets/vision/managed.py', ROOT/'assets/client/managed.py', ROOT/'assets/xhttp-cdn/managed.py',
+        ROOT/'assets/vision/managed.py', ROOT/'assets/client/managed.py', ROOT/'assets/xhttp-cdn/managed.py', ROOT/'assets/inbounds/managed.py',
         ROOT/'assets/cascade/managed.py',
         ROOT/'assets/diagnostics/mtr-backend.py', ROOT/'.github/workflows/upstream-canary.yml']
     digest = hashlib.sha256()

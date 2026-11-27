@@ -45,23 +45,15 @@ FIXTURE = {
 
 def legacy_hysteria_source(source=SOURCE):
     """Deterministic prior Panel profile for legacy v3 fixtures, without Git history."""
-    for profile in ('ws', 'trojan-grpc'):
-        enabled = "'${emoji_flag} " + profile + "','1','0','127.0.0.1'"
-        source = source.replace(enabled, enabled.replace("','1','0',", "','0','0',"), 1)
-    start=source.index("    '1','0','0','0','${emoji_flag} hysteria2'")
-    end=source.index('\nEOF',start)
-    block=source[start:end]
-    block=re.sub(r',\n    "masquerade": \{[^\n]+\}', '', block)
-    block=block.replace('"serverName": "${reality_domain}",\n    "rejectUnknownSni": true','"serverName": "${domain}"')
-    block=block.replace('/etc/letsencrypt/live/${reality_domain}/','/root/cert/${domain}/')
-    block=block.replace("0, 'hysteria2', '${reality_domain}', 443", "0, 'hysteria2', '${domain}', 443")
-    source=source[:start]+block+source[end:]
     return source.replace('upstream xray {\n    server 127.0.0.1:8443 max_fails=0;\n    server 127.0.0.1:9443 backup;\n}',
                           'upstream xray { server 127.0.0.1:8443; }')
 
 
 def template(target, source=SOURCE):
     """Extract one original heredoc; never execute its surrounding function."""
+    if target.startswith('cat > ') and '/etc/nginx/' in target and 'render_core_nginx()' in source:
+        filename = target.removeprefix('cat > ').strip('"').removeprefix('/etc/nginx/')
+        target = f'cat > "$stage/{filename}"'
     matches = re.findall(r"^\s*" + re.escape(target) + r" <<(?:EOF|'EOF')\n(.*?)^EOF$", source, re.M | re.S)
     if len(matches) != 1:
         raise AssertionError(f"Expected one heredoc for {target}, found {len(matches)}")
@@ -69,6 +61,10 @@ def template(target, source=SOURCE):
 
 
 def render(target, source=SOURCE, **variables):
+    if target.endswith('/hysteria-cover.conf') and 'render_hysteria_cover()' in source:
+        return subprocess.check_output(['bash','-eu','-c',function('render_hysteria_cover',source)+
+                                        '\nrender_hysteria_cover "$1"', 'fixture',
+                                        variables.get('reality_domain',FIXTURE['reality_domain'])], text=True)
     variables.setdefault("ipv6_listen", "listen [::]:80;" if target.endswith("80.conf") else "listen     [::]:443;")
     script = "shor=(a b c d e f g h)\ncat <<EOF\n" + template(target, source) + "EOF\n"
     return subprocess.check_output(
@@ -77,12 +73,54 @@ def render(target, source=SOURCE, **variables):
     )
 
 
+def core_params(variables):
+    p = {**FIXTURE, **variables}
+    return dict(p, flag=p['emoji_flag'], short_ids=list('abcdefgh'), ws_grpc=p['INSTALL_WS_GRPC']=='y',
+                ws_route=f"/{p['ws_port']}/{p['ws_path']}", xhttp_route='/'+p['xhttp_path'],
+                service_name=f"/{p['trojan_port']}/{p['trojan_path']}|{p['trojan_path']}-multi",
+                certificate=f"/etc/letsencrypt/live/{p['reality_domain']}/fullchain.pem",
+                key_file=f"/etc/letsencrypt/live/{p['reality_domain']}/privkey.pem")
+
+
 def seed(group_id=False, source=SOURCE, *, expected_group_ids=None, **variables):
+    from unittest.mock import patch
+    from test_integrated_features import helper
+    if 'core-roles.json' not in source:
+        return historical_seed(group_id, source, **variables)
+    p = core_params(variables)
+    module = helper('inbounds')
+    columns = 'user_id up down total remark enable expiry_time listen port protocol settings stream_settings tag sniffing'
+    with sqlite3.connect(':memory:') as db:
+        db.row_factory = sqlite3.Row
+        db.execute('PRAGMA foreign_keys=ON')
+        db.execute('CREATE TABLE inbounds(id INTEGER PRIMARY KEY,'+','.join(k+' TEXT' for k in columns.split())+')')
+        db.execute("""CREATE TABLE hosts(id INTEGER PRIMARY KEY, inbound_id INTEGER REFERENCES inbounds(id),
+            sort_order INTEGER, remark TEXT, address TEXT, port INTEGER, security TEXT, fingerprint TEXT, alpn TEXT,
+            is_disabled INTEGER DEFAULT 0, sni TEXT DEFAULT '', final_mask TEXT DEFAULT '', mux_params TEXT DEFAULT '',
+            sockopt_params TEXT DEFAULT '' """+(',group_id TEXT NOT NULL' if group_id else '')+')')
+        with patch.object(module, 'new_group_id', wraps=module.new_group_id) as groups:
+            module.insert_initial_inbounds(db, p)
+            if expected_group_ids is not None and groups.call_count != expected_group_ids:
+                raise AssertionError('Unexpected number of generated Host groups')
+        rows = {r['remark'].split()[-1]:dict(r) for r in db.execute('SELECT * FROM inbounds')}
+        hosts = [dict(h) for h in db.execute('SELECT * FROM hosts')]
+    if source == legacy_hysteria_source():
+        for name in ('ws','trojan-grpc'):
+            rows[name]['enable'] = '0'
+        stream = json.loads(rows['hysteria2']['stream_settings'])
+        del stream['hysteriaSettings']['masquerade'], stream['tlsSettings']['rejectUnknownSni']
+        stream['tlsSettings']['serverName'] = p['domain']
+        stream['tlsSettings']['certificates'][0].update(certificateFile='/root/cert/'+p['domain']+'/fullchain.pem',
+                                                       keyFile='/root/cert/'+p['domain']+'/privkey.pem')
+        rows['hysteria2']['stream_settings'] = json.dumps(stream)
+        next(h for h in hosts if h['remark']=='hysteria2')['address'] = p['domain']
+    return rows, hosts
+
+
+def historical_seed(group_id, source, **variables):
     """Execute generated inbound/Host INSERTs against both supported Host schemas."""
     setup = re.search(r"    local gid_col=.*?^    fi", function("configure_xui_db", source), re.M | re.S).group()
-    generator = function('gen_group_id')
-    if expected_group_ids is not None:
-        generator = generator.replace('gen_group_id() {', 'gen_group_id() {\n    echo group-id-generated >&2')
+    generator = function('gen_group_id', source)
     script = (
         'sqlite3() { echo "$HOST_TEST_SCHEMA"; }\n' + generator +
         '\nemit() {\n' + setup + '\nshor=(a b c d e f g h)\ncat <<EOF\n' +
@@ -92,10 +130,6 @@ def seed(group_id=False, source=SOURCE, *, expected_group_ids=None, **variables)
         **os.environ, **FIXTURE, **variables, "XUIDB": "/fixture/x-ui.db",
         "HOST_TEST_SCHEMA": "group_id" if group_id else "id",
     })
-    if expected_group_ids is not None:
-        actual = result.stderr.splitlines().count('group-id-generated')
-        if actual != expected_group_ids:
-            raise AssertionError(f'Expected {expected_group_ids} group IDs, generated {actual}')
     sql = result.stdout
     blocks = re.findall(r'^INSERT INTO "inbounds"\s.*?^\);', sql, re.M | re.S)
     columns = re.search(r'\(("user_id".*?)\)\s*VALUES', blocks[0], re.S).group(1)
@@ -203,15 +237,21 @@ main
         self.assertIn('include snippets/xui-cover-static.conf;', cover)
         seed(group_id=True, expected_group_ids=5, **selected)
         for group_id in (False, True):
-            groups = {'gid_col': '"group_id",'} if group_id else {}
-            if group_id:
-                groups.update({f'gid_{key}': f"'{key}-fixture'," for key in ('reality','ws','xhttp','trojan','hysteria')})
-            sql = render('sqlite3 $XUIDB', **groups, **selected)
+            current, hosts = seed(group_id, **selected)
+            previous, old_hosts = historical_seed(group_id, base)
             for name in ('ws', 'trojan-grpc'):
-                before, after = (f"'test {name}','{enable}','0','127.0.0.1'" for enable in ('0', '1'))
-                self.assertEqual(sql.count(after), 1)
-                sql = sql.replace(after, before, 1)
-            self.assertEqual(sql, render('sqlite3 $XUIDB', base, **groups))
+                self.assertEqual((current[name]['enable'],previous[name]['enable']), ('1','0'))
+                previous[name]['enable'] = '1'
+            for collection in (current,previous):
+                for row in collection.values():
+                    for key in ('settings','stream_settings','sniffing'):
+                        row[key] = json.loads(row[key])
+            self.assertEqual(current, previous)
+            for row in hosts + old_hosts:
+                if group_id: self.assertRegex(row.pop('group_id'), '^[a-z0-9]{16}$')
+            self.assertEqual(hosts, old_hosts)
+            self.assertEqual(render('sqlite3 $XUIDB').strip(),
+                             render('sqlite3 $XUIDB',base).split('INSERT INTO "inbounds"')[0].strip())
 
     def test_installation_summary_reports_ws_grpc_only_when_selected(self):
         script = '''
@@ -616,8 +656,8 @@ systemctl() {
         panel = function("install_panel")
         self.assertNotIn("curl", panel)
         self.assertNotIn("_download_panel_archive", panel)
-        self.assertIn('install -m 0755 x-ui.sh /usr/bin/x-ui', panel)
-        self.assertLess(panel.index("tar zxvf"), panel.index("install -m 0755 x-ui.sh"))
+        self.assertIn('install -m 0755 "$1/x-ui.sh" /usr/bin/x-ui', panel)
+        self.assertLess(panel.index("tar zxvf"), panel.index("install -m 0755"))
         self.assertIn('${PANEL_ARCHIVE:?Release preflight is required}', panel)
         preflight = function('preflight_panel_release')
         self.assertIn('https://github.com/MHSanaei/3x-ui/releases/download/${PANEL_TAG}/$asset', preflight)
@@ -1202,7 +1242,7 @@ sys.exit(1 if sys.argv[1] == os.environ["FAIL_PANEL_COMMAND"] else 0)
             block = ('    archive=$(mktemp /usr/local/x-ui-release.XXXXXX.tar.gz) || return 1\n'
                      '    _download_panel_archive "https://github.com/MHSanaei/3x-ui/releases/download/${tag_version}/x-ui-linux-amd64.tar.gz" "$archive" || return 1\n'
                      '    _validate_panel_archive "$archive" amd64 || return 1\n'
-                     + panel[panel.index('    [[ -d /usr/local/x-ui/ ]]'):panel.index('    cd x-ui')])
+                     + panel[panel.index('    [[ -d /usr/local/x-ui/ ]]'):panel.index('    cd /usr/local/x-ui')])
             block = block.replace("/usr/local", str(destination))
             mock = '''_arch() { echo amd64; }
 msg_err() { echo "$*" >&2; }
@@ -1228,7 +1268,7 @@ curl() {
 tar() { echo extract >> "$RELEASE_LOG"; command tar "$@"; }
 stage() {
 '''
-            result = subprocess.run(["bash", "-u", "-c", mock + function("_download_panel_archive") + "\n" + function('_validate_panel_archive') + "\n" + block + "\n}\nstage"],
+            result = subprocess.run(["bash", "-u", "-c", mock + function('prepare_panel_binaries') + '\n' + function("_download_panel_archive") + "\n" + function('_validate_panel_archive') + "\n" + block + "\n}\nstage"],
                                     capture_output=True, text=True, env={**os.environ,
                                     "RELEASE_LOG": str(log), "RELEASE_FAILURE": failure,
                                     "ARCHIVE_FIXTURE": str(archive), "CHECKSUM_FIXTURE": str(checksum), "tag_version": "v3.9.0"})

@@ -538,7 +538,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             self.fail('Requires the existing disposable systemd VM')
         import stat
         import re
-        from test_personal_xhttp import function, FIXTURE, SOURCE
+        from test_personal_xhttp import function, FIXTURE, ROOT, SOURCE
         from test_integrated_features import helper
         from release_contract import baseline
         run=lambda *args: subprocess.check_output(args,text=True,stderr=subprocess.STDOUT,timeout=90)
@@ -557,8 +557,11 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
         Path('/etc/x-ui').mkdir(exist_ok=True); Path('/var/log/x-ui').mkdir(exist_ok=True)
         env={**os.environ,**FIXTURE,'PANEL_TAG':baseline()['version'],'PANEL_ARCHIVE':'/opt/xui-ci/panel.tar.gz',
              'XUIDB':'/etc/x-ui/x-ui.db','config_username':'integration','config_password':'temporary-fixture-password'}
+        stage = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (stage/'inbounds.py').write_bytes((ROOT/'assets/inbounds/managed.py').read_bytes())
+        env['PANEL_STAGE'] = str(stage)
         code='msg_ok() { :; }; msg_err() { echo "$*" >&2; }; _arch() { echo amd64; }; country_flag() { echo 🌐; }; x-ui() { :; };\n'
-        code+='\n'.join(function(n) for n in ('gen_random_string','gen_group_id','_panel_initial_config','install_panel'))
+        code+='\n'.join(function(n) for n in ('gen_random_string','_panel_initial_config','install_panel'))
         # JSON closing braces inside SQL heredocs are not Bash function ends.
         configure=re.search(r'^configure_xui_db\(\).*?^}\n\n#',SOURCE,re.M|re.S).group().removesuffix('\n\n#')
         code+='\n'+configure

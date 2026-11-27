@@ -273,10 +273,12 @@ class RealIntegration(unittest.TestCase):
             self.assertNotEqual(user[1], self.auth)
             self.assertTrue(user[1].startswith(('$2a$','$2b$','$2y$')), 'Expected persisted bcrypt credentials')
             bootstrap_user = db.execute('SELECT * FROM users ORDER BY id LIMIT 1').fetchone()
-            sql = render('sqlite3 $XUIDB',private_key=self.private,public_key=self.public_key)
-            for placeholder, short_id in zip('abcdefgh', self.short_ids):
-                sql = sql.replace('\"'+placeholder+'\"', '\"'+short_id+'\"')
-            db.executescript(sql)
+            from test_personal_xhttp import core_params
+            from test_integrated_features import helper
+            db.executescript(render('sqlite3 $XUIDB'))
+            params = core_params(dict(private_key=self.private, public_key=self.public_key))
+            params['short_ids'] = self.short_ids
+            helper('inbounds').insert_initial_inbounds(db, params)
             db.execute('INSERT INTO clients(email,sub_id,uuid,password,auth,flow,enable) VALUES(?,?,?,?,?,?,1)',
                        ('integration','fixture',self.uuid,self.auth,self.auth,'xtls-rprx-vision'))
             cid = db.execute('SELECT id FROM clients WHERE email=?',('integration',)).fetchone()[0]
@@ -319,7 +321,7 @@ class RealIntegration(unittest.TestCase):
         # Execute the installer's real post-SQL CLI tail: no second credential
         # update is needed, and the official cert command must set both pairs.
         from test_installer_compatibility import complete_function
-        finalize = complete_function('configure_xui_db').split('\nEOF\n',1)[1]
+        finalize = complete_function('configure_xui_db').split('    # v3.9.0 updateCert',1)[1].split('\n',1)[1]
         finalize = finalize.replace('/usr/local/x-ui/x-ui',shlex.quote(str(self.xui)))
         finalize = finalize.replace('"/root/cert/${domain}/fullchain.pem"',shlex.quote(str(self.cert)))
         finalize = finalize.replace('"/root/cert/${domain}/privkey.pem"',shlex.quote(str(self.key)))
@@ -1210,8 +1212,8 @@ curl() { echo 'Unexpected fallback probe' >&2; return 35; }
             self.assertEqual(len(rows),6)
             row=next(r for r in rows if r['port']==local_port)
             self.assertIs(row['enable'],False);self.assertEqual(row['remark'],'🇫🇮 xhttp CDN')
-            self.assertEqual(row['streamSettings'],cdn.inbound(local_port,path,'🇫🇮')['streamSettings'])
             settings=client.object_value(row['settings'])
+            self.assertEqual(row['streamSettings'],cdn.inbound(local_port,path,'🇫🇮',settings)['streamSettings'])
             encryption=settings['encryption']
             self.assertTrue('.native.' in encryption and '.native.' in settings['decryption'],
                             'Generated encryption must use native mode')

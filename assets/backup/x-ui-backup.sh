@@ -966,7 +966,9 @@ try:
     history = data.get('retained_domains')
     if (type(data.get('format')) is not int or data['format'] != 1 or data.get('layout') != 'nginx-stream-v1' or
             not isinstance(reference, str) or not re.fullmatch(r'[a-f0-9]{40}', reference) or
-            data.get('installed_by') not in ('source@'+reference, 'legacy-v2.1.7-layout') or
+            not (data.get('installed_by') in ('source@'+reference, 'legacy-v2.1.7-layout') or
+                 (type(data.get('update_contract')) is int and data['update_contract'] == 1 and
+                  isinstance(data.get('installed_by'), str) and re.fullmatch(r'source@[0-9a-f]{40}', data['installed_by']))) or
             not isinstance(data.get('domain_change_source'), str) or
             not re.fullmatch(r'[a-f0-9]{40}', data['domain_change_source']) or
             len(current) not in (2, 3) or len(set(current)) != len(current) or not all(map(hostname, current)) or

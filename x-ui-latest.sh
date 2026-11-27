@@ -303,12 +303,6 @@ gen_random_string() {
     echo
 }
 
-# Matches the panel's host group_id format (16 lowercase alphanumerics)
-gen_group_id() {
-    head -c 4096 /dev/urandom | tr -dc 'a-z0-9' | head -c 16
-    echo
-}
-
 # 0 = free, 3 = occupied, other = probe failure. After release dependencies.
 check_free() {
     python3 - "$1" <<'PYPORT'
@@ -784,12 +778,13 @@ except OSError:
 PYIPV6
 }
 
-setup_acme_http() {
-    local ipv6_listen=''
-    if ipv6_available; then ipv6_listen='listen [::]:80;'; fi
-    prepare_acme_webroot || return 1
-    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/snippets || return 1
-    cat > /etc/nginx/snippets/xui-cover-limit.conf <<'EOF'
+render_acme_nginx() {
+    local stage=$1
+    local -n inputs=$2
+    local domain=${inputs[domain]} reality_domain=${inputs[reality_domain]} ipv6_listen=''
+    [[ ${inputs[ipv6]} != y ]] || ipv6_listen='listen [::]:80;'
+    mkdir -p "$stage/sites-available" "$stage/snippets" || return 1
+    cat > "$stage/snippets/xui-cover-limit.conf" <<'EOF'
 limit_req zone=xui_cover_ip burst=80 nodelay;
 limit_req zone=xui_cover_site burst=200 nodelay;
 limit_req_status 429;
@@ -797,7 +792,7 @@ limit_req_log_level info;
 error_page 429 /__xui_cover_rate_error;
 EOF
     [[ $? == 0 ]] || return 1
-    cat > /etc/nginx/snippets/xui-cover-error.conf <<'EOF'
+    cat > "$stage/snippets/xui-cover-error.conf" <<'EOF'
 location = /__xui_cover_rate_error {
     internal;
     add_header Cache-Control no-store always;
@@ -805,7 +800,7 @@ location = /__xui_cover_rate_error {
 }
 EOF
     [[ $? == 0 ]] || return 1
-    cat > /etc/nginx/snippets/xui-cover-static.conf <<'EOF'
+    cat > "$stage/snippets/xui-cover-static.conf" <<'EOF'
 location / {
     include snippets/xui-cover-limit.conf;
     error_page 404 /404.html;
@@ -814,7 +809,7 @@ location / {
 include snippets/xui-cover-error.conf;
 EOF
     [[ $? == 0 ]] || return 1
-    cat > /etc/nginx/snippets/xui-cover-redirect.conf <<'EOF'
+    cat > "$stage/snippets/xui-cover-redirect.conf" <<'EOF'
 location / {
     include snippets/xui-cover-limit.conf;
     # try_files runs after preaccess. A return here would skip limit_req.
@@ -824,7 +819,7 @@ location @xui_cover_redirect { return 301 https://$host$request_uri; }
 include snippets/xui-cover-error.conf;
 EOF
     [[ $? == 0 ]] || return 1
-    cat > /etc/nginx/sites-available/80.conf <<EOF
+    cat > "$stage/sites-available/80.conf" <<EOF
 # 253-byte DNS key plus 64-bit hash entry/sentinel; nginx aligns to cache lines.
 server_names_hash_bucket_size 272;
 # \$host is normalized by nginx and validated by the managed vhosts.
@@ -849,9 +844,18 @@ server {
 }
 EOF
     [[ $? == 0 ]] || return 1
-    rm -f /etc/nginx/sites-enabled/default || return 1
-    ln -sf /etc/nginx/sites-available/80.conf /etc/nginx/sites-enabled/80.conf || return 1
+}
+
+setup_acme_http() { (
+    local stage ipv6=n
+    if ipv6_available; then ipv6=y; fi
+    local -A params=([domain]="$domain" [reality_domain]="$reality_domain" [ipv6]="$ipv6")
+    prepare_acme_webroot || return 1
+    stage=$(mktemp -d) || return 1
+    trap 'rm -rf -- "$stage"' EXIT
+    render_acme_nginx "$stage" params && activate_install_nginx "$stage" acme || return 1
     nginx -t && systemctl enable --now nginx && systemctl reload nginx && systemctl is-active --quiet nginx
+)
 }
 
 get_ssl_certs() {
@@ -896,24 +900,64 @@ get_ssl_certs() {
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURE NGINX
 # ─────────────────────────────────────────────────────────────────────────────
-configure_nginx() {
-    install -d -o root -g root -m 0755 /etc/nginx/snippets/x-ui-auto-optional || return 1
-    install -d -o root -g root -m 0755 /etc/nginx/stream-sni.d /etc/nginx/stream-upstreams.d || return 1
-    mkdir -p /etc/nginx/stream-enabled /etc/nginx/snippets || return 1
+managed_stream_block() {
+    local router='include /etc/nginx/stream-enabled/*.conf;' dot='include /etc/nginx/stream-dot.d/*.conf;'
+    if [[ $1 == y ]]; then printf 'stream { %s %s }\n' "$router" "$dot"
+    else printf 'stream { %s }\n' "$router"; fi
+}
 
-    # nginx >= 1.25.1 deprecates "listen ... http2" in favor of "http2 on;";
-    # older versions (Ubuntu 24.04) don't know the new directive
-    local ngx_ver http2_listen="" http2_on="" ipv6_listen=''
-    if ipv6_available; then ipv6_listen='listen     [::]:443;'; fi
-    ngx_ver=$(nginx -v 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo 0)
-    if [[ "$(printf '%s\n' 1.25.1 "$ngx_ver" | sort -V | head -1)" == "1.25.1" ]]; then
+render_nginx_main() {
+    local source=$1 candidate=$2 tree=$3 stream with_dot
+    stream=$(managed_stream_block n)
+    with_dot=$(managed_stream_block y)
+    cp -p -- "$source" "$candidate" || return 1
+    if ! grep -Fxq -e "$stream" -e "$with_dot" "$source" && ! grep -FxRq -e "$stream" -e "$with_dot" "$tree"/*; then
+        printf '%s\n' "$stream" >> "$candidate" || return 1
+    fi
+    if ! grep -Fq 'load_module /usr/lib/nginx/modules/ngx_stream_module.so;' "$source" &&
+       ! grep -FxRq 'load_module modules/ngx_stream_module.so;' "$tree"/*; then
+        sed -i '1s/^/load_module \/usr\/lib\/nginx\/modules\/ngx_stream_module.so; /' "$candidate" || return 1
+    fi
+    grep -Fxq 'worker_rlimit_nofile 16384;' "$source" || grep -FxRq 'worker_rlimit_nofile 16384;' "$tree"/* ||
+        printf '%s\n' 'worker_rlimit_nofile 16384;' >> "$candidate" || return 1
+    sed -i '/worker_connections/c\worker_connections 4096;' "$candidate"
+}
+
+render_hysteria_cover() {
+    local reality_domain=$1
+    cat <<EOF
+# Managed by 3x-ui Auto Nginx: Hysteria2 cover
+server {
+    listen unix:/run/3x-ui-hysteria-cover.sock;
+    server_name ${reality_domain};
+    server_tokens off;
+    absolute_redirect off;
+    autoindex off;
+    root /var/www/html/cover-reality;
+    index index.html;
+    if (\$host !~* ^${reality_domain//./\\.}\$) { return 404; }
+    location / { error_page 404 /404.html; try_files \$uri \$uri/ =404; }
+}
+EOF
+}
+
+render_core_nginx() {
+    local stage=$1 name
+    local -n inputs=$2
+    for name in domain reality_domain sub_path json_path panel_path panel_port sub_port xhttp_path \
+                diag_path diag_token mtr_backend_port ws_port ws_path trojan_port trojan_path INSTALL_WS_GRPC; do
+        local "$name=${inputs[$name]-}"
+    done
+    local http2_listen='' http2_on='' ipv6_listen=''
+    [[ ${inputs[ipv6]} != y ]] || ipv6_listen='listen     [::]:443;'
+    if [[ $(printf '%s\n' 1.25.1 "${inputs[nginx_version]}" | sort -V | head -1) == 1.25.1 ]]; then
         http2_on="http2 on;"
     else
         http2_listen=" http2"
     fi
-
+    mkdir -p "$stage/sites-available" "$stage/stream-enabled" "$stage/snippets" || return 1
     # SNI-based stream: reality → 8443, domain → 7443
-    cat > /etc/nginx/stream-enabled/stream.conf <<EOF
+    cat > "$stage/stream-enabled/stream.conf" <<EOF
 # 253-byte DNS key plus 64-bit hash entry/sentinel; nginx aligns to cache lines.
 map_hash_bucket_size 272;
 map \$ssl_preread_server_name \$sni_name {
@@ -943,16 +987,8 @@ server {
 EOF
     [[ $? -eq 0 ]] || return 1
 
-    grep -xqFR "stream { include /etc/nginx/stream-enabled/*.conf; }" /etc/nginx/* \
-        || echo "stream { include /etc/nginx/stream-enabled/*.conf; }" >> /etc/nginx/nginx.conf
-    grep -xqFR "load_module modules/ngx_stream_module.so;" /etc/nginx/* \
-        || sed -i '1s/^/load_module \/usr\/lib\/nginx\/modules\/ngx_stream_module.so; /' /etc/nginx/nginx.conf
-    grep -xqFR "worker_rlimit_nofile 16384;" /etc/nginx/* \
-        || echo "worker_rlimit_nofile 16384;" >> /etc/nginx/nginx.conf
-    sed -i "/worker_connections/c\worker_connections 4096;" /etc/nginx/nginx.conf
-
     # Shared proxy locations for xray inbounds (included by both vhosts)
-    cat > /etc/nginx/snippets/includes.conf <<EOF
+    cat > "$stage/snippets/includes.conf" <<EOF
     #Subscription — prefix location covers all sub-paths (assets, JS, etc.)
     # Local error_page overrides inherited cover-page redirects; backend 5xx retain their status.
     location /${sub_path}/ {
@@ -1080,7 +1116,7 @@ EOF
     # snippet, which is included by BOTH vhosts, so they live in their own
     # always-loaded file — never inside a single vhost, or the other vhost's
     # include would reference an undefined var ("unknown ... variable").
-    cat > /etc/nginx/sites-available/00-maps.conf <<EOF
+    cat > "$stage/sites-available/00-maps.conf" <<EOF
 # Detect Clash/Mihomo clients by User-Agent
 map \$http_user_agent \$is_clash_ua {
     ~*(clash|clashx|clashn|mihomo|stash|surfboard)  1;
@@ -1098,8 +1134,8 @@ EOF
     [[ $? -eq 0 ]] || return 1
 
     # Main domain vhost (TLS termination at 7443, proxy_protocol)
-    install -o root -g root -m 0600 /dev/null "/etc/nginx/sites-available/${domain}" || return 1
-    cat > "/etc/nginx/sites-available/${domain}" <<EOF
+    install -m 0600 /dev/null "$stage/sites-available/${domain}" || return 1
+    cat > "$stage/sites-available/${domain}" <<EOF
 # Rate limiting zones (http context)
 limit_req_zone  \$binary_remote_addr zone=diag_api:10m  rate=6r/m;
 limit_req_zone  \$binary_remote_addr zone=diag_page:10m rate=30r/m;
@@ -1304,7 +1340,7 @@ EOF
     [[ $? -eq 0 ]] || return 1
 
     # REALITY forwards the trusted source via PROXY v1 to this loopback fallback.
-    cat > "/etc/nginx/sites-available/${reality_domain}" <<EOF
+    cat > "$stage/sites-available/${reality_domain}" <<EOF
 server {
     server_tokens off;
     absolute_redirect off;
@@ -1331,38 +1367,55 @@ EOF
     [[ $? -eq 0 ]] || return 1
 
     # Static-only local HTTP/3 cover backend; no additional public listener.
-    install -o root -g root -m 0600 /dev/null /etc/nginx/sites-available/hysteria-cover.conf || return 1
-    cat > /etc/nginx/sites-available/hysteria-cover.conf <<EOF
-# Managed by 3x-ui Auto Nginx: Hysteria2 cover
-server {
-    listen unix:/run/3x-ui-hysteria-cover.sock;
-    server_name ${reality_domain};
-    server_tokens off;
-    absolute_redirect off;
-    autoindex off;
-    root /var/www/html/cover-reality;
-    index index.html;
-    if (\$host !~* ^${reality_domain//./\\.}\$) { return 404; }
-    location / { error_page 404 /404.html; try_files \$uri \$uri/ =404; }
+    render_hysteria_cover "$reality_domain" > "$stage/sites-available/hysteria-cover.conf" || return 1
 }
-EOF
-    [[ $? -eq 0 ]] || return 1
-    ln -sf /etc/nginx/sites-available/hysteria-cover.conf /etc/nginx/sites-enabled/hysteria-cover.conf || return 1
 
-    # Activate configs
-    if [[ -f "/etc/nginx/sites-available/${domain}" ]]; then
-        rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default || return 1
-        ln -sf "/etc/nginx/sites-available/00-maps.conf"       /etc/nginx/sites-enabled/ || return 1
-        ln -sf "/etc/nginx/sites-available/${domain}"          /etc/nginx/sites-enabled/ || return 1
-        ln -sf "/etc/nginx/sites-available/${reality_domain}"  /etc/nginx/sites-enabled/ || return 1
-        ln -sf "/etc/nginx/sites-available/80.conf"            /etc/nginx/sites-enabled/ || return 1
+activate_install_nginx() {
+    local stage=$1 phase=$2 file site
+    local -a sites
+    mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/snippets || return 1
+    if [[ $phase == acme ]]; then
+        sites=(80.conf)
+        rm -f /etc/nginx/sites-enabled/default || return 1
     else
-        msg_err "${domain} nginx config not found!" && exit 1
+        sites=(00-maps.conf "$domain" "$reality_domain" hysteria-cover.conf)
+        rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-available/default || return 1
+        install -d -o root -g root -m 0755 /etc/nginx/snippets/x-ui-auto-optional || return 1
+        install -d -o root -g root -m 0755 /etc/nginx/stream-sni.d /etc/nginx/stream-upstreams.d || return 1
+        mkdir -p /etc/nginx/stream-enabled || return 1
+        cp -- "$stage/stream-enabled/stream.conf" /etc/nginx/stream-enabled/stream.conf || return 1
+        cat "$stage/nginx.conf" > /etc/nginx/nginx.conf || return 1
     fi
+    for file in "$stage"/snippets/*.conf; do
+        cp -- "$file" /etc/nginx/snippets/ || return 1
+    done
+    for site in "${sites[@]}"; do
+        if [[ $site == "$domain" || $site == hysteria-cover.conf ]]; then
+            install -m 0600 -- "$stage/sites-available/$site" "/etc/nginx/sites-available/$site" || return 1
+        else
+            cp -- "$stage/sites-available/$site" "/etc/nginx/sites-available/$site" || return 1
+        fi
+        ln -sf "/etc/nginx/sites-available/$site" "/etc/nginx/sites-enabled/$site" || return 1
+    done
+}
 
+configure_nginx() { (
+    local stage name
+    local -A params=([ipv6]=n)
+    for name in domain reality_domain sub_path json_path panel_path panel_port sub_port xhttp_path \
+                diag_path diag_token mtr_backend_port ws_port ws_path trojan_port trojan_path INSTALL_WS_GRPC; do
+        params[$name]=${!name-}
+    done
+    if ipv6_available; then params[ipv6]=y; fi
+    params[nginx_version]=$(nginx -v 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' || echo 0)
+    stage=$(mktemp -d) || return 1
+    trap 'rm -rf -- "$stage"' EXIT
+    render_core_nginx "$stage" params &&
+        render_nginx_main /etc/nginx/nginx.conf "$stage/nginx.conf" /etc/nginx &&
+        activate_install_nginx "$stage" core || return 1
     nginx -t || { msg_err "$(ui_text 'nginx configuration test failed; see nginx error above.' 'Проверка конфигурации nginx не пройдена; см. ошибку nginx выше.')"; return 1; }
-
     systemctl reload nginx || return 1
+)
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1557,21 +1610,12 @@ PY
     msg_ok "$(ui_text '3X-UI %s archive verified before deployment cleanup.' 'Архив 3X-UI %s проверен до удаления существующей установки.' "$PANEL_TAG")"
 }
 
-install_panel() {
-    local tag_version="${PANEL_TAG:?Release preflight is required}" archive="${PANEL_ARCHIVE:?Release preflight is required}"
-    [[ -f "$archive" ]] || { msg_err "$(ui_text 'Verified release archive is unavailable.' 'Проверенный архив релиза недоступен.')"; return 1; }
-    cd /usr/local/ || return 1
-    ui_text 'Installing 3X-UI %s ...\n' 'Установка 3X-UI %s ...\n' "$tag_version"
+prepare_panel_binaries() { (
+    local archive=$1 dest=$2
+    tar zxvf "$archive" -C "$dest" || return 1
 
-    [[ -d /usr/local/x-ui/ ]] && systemctl stop x-ui 2>/dev/null; rm -rf /usr/local/x-ui/
-    if ! tar zxvf "$archive" -C /usr/local; then
-        rm -f "$archive"
-        return 1
-    fi
-    rm -f "$archive"
-
-    cd x-ui || return 1
-    chmod +x x-ui x-ui.sh
+    cd "$dest/x-ui" || return 1
+    chmod +x x-ui x-ui.sh || return 1
 
     local xray_name="xray-linux-$(_arch)"
     case "$(_arch)" in
@@ -1581,12 +1625,15 @@ install_panel() {
     esac
     chmod +x "bin/$xray_name" || return 1
     [[ -f "bin/$xray_name" && -x "bin/$xray_name" ]] || return 1
+)
+}
 
-    install -m 0755 x-ui.sh /usr/bin/x-ui || return 1
+install_panel_cli() {
+    install -m 0755 "$1/x-ui.sh" /usr/bin/x-ui
+}
 
-    _panel_initial_config || return 1
-
-    cp -f x-ui.service.debian /etc/systemd/system/x-ui.service || return 1
+install_panel_unit() {
+    cp -f "$1/x-ui.service.debian" /etc/systemd/system/x-ui.service || return 1
     if grep -qx 'NoNewPrivileges=yes' /etc/systemd/system/x-ui.service &&
        grep -qx 'ProtectSystem=full' /etc/systemd/system/x-ui.service &&
        grep -qx 'SystemCallArchitectures=native' /etc/systemd/system/x-ui.service; then
@@ -1597,6 +1644,21 @@ install_panel() {
         grep -q '^SystemCallFilter=' /etc/systemd/system/x-ui.service ||
             sed -i '/^\[Service\]$/a SystemCallFilter=@system-service' /etc/systemd/system/x-ui.service || return 1
     fi
+}
+
+install_panel() {
+    local tag_version="${PANEL_TAG:?Release preflight is required}" archive="${PANEL_ARCHIVE:?Release preflight is required}"
+    [[ -f "$archive" ]] || { msg_err "$(ui_text 'Verified release archive is unavailable.' 'Проверенный архив релиза недоступен.')"; return 1; }
+    cd /usr/local/ || return 1
+    ui_text 'Installing 3X-UI %s ...\n' 'Установка 3X-UI %s ...\n' "$tag_version"
+
+    [[ -d /usr/local/x-ui/ ]] && systemctl stop x-ui 2>/dev/null; rm -rf /usr/local/x-ui/
+    prepare_panel_binaries "$archive" /usr/local || return 1
+    rm -f "$archive"
+    cd /usr/local/x-ui || return 1
+    install_panel_cli /usr/local/x-ui || return 1
+    _panel_initial_config || return 1
+    install_panel_unit /usr/local/x-ui || return 1
     systemctl daemon-reload || return 1
 
     msg_ok "$(ui_text '3X-UI %s installed.' '3X-UI %s установлен.' "$tag_version")"
@@ -1638,22 +1700,6 @@ configure_xui_db() {
     output=$("$xray_bin" x25519) || return 1
     private_key=$(echo "$output" | grep "^PrivateKey:" | awk '{print $2}')
     public_key=$(echo "$output"  | grep "^Password"   | awk '{print $3}')
-    # Per-host group_id: without it the panel cannot edit or delete the host.
-    # The column only exists since 3x-ui v3.5.0 (pinnable via -version), so
-    # probe the migrated schema and skip it on older releases.
-    local gid_col="" gid_reality="" gid_ws="" gid_xhttp="" gid_trojan="" gid_hysteria=""
-    if sqlite3 "$XUIDB" "PRAGMA table_info(hosts);" | grep -qw "group_id"; then
-        gid_col='"group_id",'
-        gid_reality="'$(gen_group_id)',"
-        if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then
-            gid_ws="'$(gen_group_id)',"
-        fi
-        gid_xhttp="'$(gen_group_id)',"
-        if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then
-            gid_trojan="'$(gen_group_id)',"
-        fi
-        gid_hysteria="'$(gen_group_id)',"
-    fi
     emoji_flag=$(country_flag)
 
     local sub_uri="https://${domain}/${sub_path}/"
@@ -1710,174 +1756,14 @@ INSERT INTO "settings" ("key","value") VALUES ("subJsonMux",          '');
 INSERT INTO "settings" ("key","value") VALUES ("subJsonRules",        '');
 INSERT INTO "settings" ("key","value") VALUES ("datepicker",          'gregorian');
 
-INSERT INTO "inbounds"
-    ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
-VALUES (
-    '1','0','0','0','${emoji_flag} reality','1','0','127.0.0.1','8443','vless',
-    '{
-  "clients": [],
-  "decryption": "none",
-  "encryption": "none",
-  "fallbacks": []
-}',
-    '{
-  "network": "tcp",
-  "security": "reality",
-  "realitySettings": {
-    "show": false,
-    "xver": 1,
-    "target": "127.0.0.1:9443",
-    "serverNames": ["${reality_domain}"],
-    "privateKey": "${private_key}",
-    "minClient": "",
-    "maxClient": "",
-    "maxTimediff": 0,
-    "shortIds": [
-      "${shor[0]}","${shor[1]}","${shor[2]}","${shor[3]}",
-      "${shor[4]}","${shor[5]}","${shor[6]}","${shor[7]}"
-    ],
-    "settings": {
-      "publicKey": "${public_key}",
-      "fingerprint": "firefox",
-      "serverName": "",
-      "spiderX": "/"
-    }
-  },
-  "tcpSettings": {
-    "acceptProxyProtocol": true,
-    "header": {"type":"none"}
-  }
-}',
-    'inbound-8443',
-    '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
-);
-
-$(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then cat <<WS_SQL
-INSERT INTO "inbounds"
-    ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
-VALUES (
-    '1','0','0','0','${emoji_flag} ws','1','0','127.0.0.1','${ws_port}','vless',
-    '{
-  "clients": [],
-  "decryption": "none",
-  "encryption": "none",
-  "fallbacks": []
-}',
-    '{
-  "network": "ws",
-  "security": "none",
-  "wsSettings": {
-    "acceptProxyProtocol": false,
-    "path": "/${ws_port}/${ws_path}",
-    "host": "${domain}",
-    "headers": {}
-  }
-}',
-    'inbound-${ws_port}',
-    '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
-);
-WS_SQL
-fi)
-
-INSERT INTO "inbounds"
-    ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
-VALUES (
-    '1','0','0','0','${emoji_flag} xhttp','1','0','/dev/shm/uds2023.sock,0666','0','vless',
-    '{
-  "clients": [],
-  "decryption": "none",
-  "encryption": "none",
-  "fallbacks": []
-}',
-    '{
-  "network": "xhttp",
-  "security": "none",
-  "xhttpSettings": {
-    "path": "/${xhttp_path}",
-    "mode": "stream-up"
-  },
-  "sockopt": {
-    "trustedXForwardedFor": ["X-Forwarded-For"]
-  }
-}',
-    'inbound-/dev/shm/uds2023.sock,0666:0|',
-    '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
-);
-
-$(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then cat <<TROJAN_SQL
-INSERT INTO "inbounds"
-    ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
-VALUES (
-    '1','0','0','0','${emoji_flag} trojan-grpc','1','0','127.0.0.1','${trojan_port}','trojan',
-    '{
-  "clients": [],
-  "fallbacks": []
-}',
-    '{
-  "network": "grpc",
-  "security": "none",
-  "grpcSettings": {
-    "serviceName": "/${trojan_port}/${trojan_path}|${trojan_path}-multi",
-    "authority": "${domain}",
-    "multiMode": false
-  }
-}',
-    'inbound-${trojan_port}',
-    '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
-);
-TROJAN_SQL
-fi)
-
-INSERT INTO "inbounds"
-    ("user_id","up","down","total","remark","enable","expiry_time","listen","port","protocol","settings","stream_settings","tag","sniffing")
-VALUES (
-    '1','0','0','0','${emoji_flag} hysteria2','1','0','','443','hysteria',
-    '{"version":2,"clients":[]}',
-    '{
-  "network": "hysteria",
-  "security": "tls",
-  "hysteriaSettings": {
-    "version": 2,
-    "udpIdleTimeout": 60,
-    "masquerade": {"type":"proxy","url":"unix:/run/3x-ui-hysteria-cover.sock","rewriteHost":false}
-  },
-  "tlsSettings": {
-    "serverName": "${reality_domain}",
-    "rejectUnknownSni": true,
-    "alpn": ["h3"],
-    "certificates": [{
-      "certificateFile": "/etc/letsencrypt/live/${reality_domain}/fullchain.pem",
-      "keyFile": "/etc/letsencrypt/live/${reality_domain}/privkey.pem",
-      "ocspStapling": 0,
-      "oneTimeLoading": false,
-      "usage": "encipherment",
-      "buildChain": false
-    }]
-  }
-}',
-    'inbound-443-udp',
-    '{"enabled":true,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
-);
-
--- Hosts supersede the legacy externalProxy arrays: one host per inbound,
--- rendered as the share-link endpoint at subscription time.
--- REALITY and Hysteria keep their own TLS params (security=same);
--- WS/XHTTP/Trojan front through nginx at :443 with TLS.
-INSERT INTO "hosts" ("inbound_id",${gid_col}"sort_order","remark","address","port","security","fingerprint","alpn")
-VALUES
-    ((SELECT id FROM inbounds WHERE tag='inbound-8443'),           ${gid_reality} 0, 'reality', '${domain}', 443, 'same', '',        '[]'),
-$(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then cat <<WS_HOST_SQL
-    ((SELECT id FROM inbounds WHERE tag='inbound-${ws_port}'),     ${gid_ws}      0, 'ws',      '${domain}', 443, 'tls',  'firefox', '["http/1.1"]'),
-WS_HOST_SQL
-fi)
-    ((SELECT id FROM inbounds WHERE tag='inbound-/dev/shm/uds2023.sock,0666:0|'), ${gid_xhttp} 0, 'xhttp', '${domain}', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
-$(if [[ ${INSTALL_WS_GRPC:-n} == y ]]; then cat <<TROJAN_HOST_SQL
-    ((SELECT id FROM inbounds WHERE tag='inbound-${trojan_port}'), ${gid_trojan}  0, 'trojan',  '${domain}', 443, 'tls',  'firefox', '["h2","http/1.1"]'),
-TROJAN_HOST_SQL
-fi)
-    ((SELECT id FROM inbounds WHERE tag='inbound-443-udp'),        ${gid_hysteria} 0, 'hysteria2', '${reality_domain}', 443, 'same', '', '[]');
 EOF
     [[ $? -eq 0 ]] || return 1
+
+    local service_name="/${trojan_port:-}/$trojan_path|$trojan_path-multi"
+    printf '%s\0' "$domain" "$reality_domain" "$emoji_flag" "$private_key" "$public_key" \
+        "${INSTALL_WS_GRPC:-n}" "${ws_port:-}" "/${ws_port:-}/$ws_path" "${trojan_port:-}" "$service_name" \
+        "/$xhttp_path" "/etc/letsencrypt/live/$reality_domain/fullchain.pem" "/etc/letsencrypt/live/$reality_domain/privkey.pem" \
+        "${shor[@]}" | python3 -I "$PANEL_STAGE/inbounds.py" "$XUIDB" > "$PANEL_STAGE/core-roles.json" || return 1
 
     # v3.9.0 updateCert sets BOTH web and subscription TLS settings before first start.
     /usr/local/x-ui/x-ui cert \
@@ -1888,14 +1774,17 @@ EOF
 # ─────────────────────────────────────────────────────────────────────────────
 # INSTALL FAKE SITE
 # ─────────────────────────────────────────────────────────────────────────────
+render_clash_template() {
+    sed -i -f <(printf 's|\${DOMAIN}|%s|g\ns|\${SUB_PATH}|%s|g\n' "$2" "$3") "$1"
+}
+
 install_clash_sub() {
     local clash_dir="/var/www/subpage"
     mkdir -p "${clash_dir}" || return 1
     if curl -fsSL "${GITHUB_RAW}/assets/clash/clash.yaml" -o "${clash_dir}/clash.yaml.tpl"; then
         # Substitute domain and sub_path; leave ${EMAIL} for mtr-backend to fill per-request
-        sed -i "s|\${DOMAIN}|${domain}|g"     "${clash_dir}/clash.yaml.tpl" || return 1
-        sed -i "s|\${SUB_PATH}|${sub_path}|g" "${clash_dir}/clash.yaml.tpl" || return 1
-        chown -R www-data:www-data "${clash_dir}" 2>/dev/null || return 1
+        render_clash_template "${clash_dir}/clash.yaml.tpl" "$domain" "$sub_path" || return 1
+        chown www-data:www-data "$clash_dir" "$clash_dir/clash.yaml.tpl" || return 1
         chmod 644 "${clash_dir}/clash.yaml.tpl" || return 1
         msg_ok "$(ui_text 'Clash subscription template installed.' 'Шаблон подписки Clash установлен.')"
     else
@@ -1911,11 +1800,16 @@ preflight_cover_sites() {
     curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 \
         "https://codeload.github.com/xPROMSx/3x-ui-auto-nginx/tar.gz/$PROJECT_SOURCE_SHA" -o "$archive" || return 1
     python3 - "$archive" "$PANEL_STAGE/cover-source" "$PROJECT_SOURCE_SHA" <<'PYCOVER' || return 1
-import pathlib, sys, tarfile
+import ast, pathlib, sys, tarfile
 archive, target, sha = sys.argv[1:]
 target = pathlib.Path(target)
 prefix = '3x-ui-auto-nginx-'+sha+'/assets/cover-sites/'
 with tarfile.open(archive, 'r:gz') as bundle:
+    core = bundle.getmember('3x-ui-auto-nginx-'+sha+'/assets/inbounds/managed.py')
+    if not core.isfile() or core.size > 1024*1024: raise ValueError('Invalid core inbound definitions')
+    code = bundle.extractfile(core).read()
+    ast.parse(code)
+    (target.parent/'inbounds.py').write_bytes(code)
     selected = [m for m in bundle.getmembers() if m.name.startswith(prefix) and not m.isdir()]
     if not selected or len(selected) > 400 or sum(m.size for m in selected) > 8*1024*1024:
         raise ValueError('Invalid cover source bundle')
@@ -1945,51 +1839,13 @@ install_fake_site() {
 # ─────────────────────────────────────────────────────────────────────────────
 # INSTALL NETWORK DIAGNOSTICS PAGE
 # ─────────────────────────────────────────────────────────────────────────────
-install_diagnostics() {
-    local diag_webroot="/var/www/diagnostics"
-    local backend_script="/usr/local/lib/3x-ui-pro/mtr-backend.py"
+render_diagnostics_page() {
+    sed -i -f <(printf 's|__DIAG_PATH__|%s|g\ns|__SERVER_DOMAIN__|%s|g\ns|__SERVER_IP__|%s|g\n' "$2" "$3" "$4") "$1"
+}
 
-    # Diagnostics HTML page
-    mkdir -p "${diag_webroot}" || return 1
-    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/index.html" -o "${diag_webroot}/index.html" || return 1
-    sed -i \
-        -e "s|__DIAG_PATH__|${diag_path}|g" \
-        -e "s|__SERVER_DOMAIN__|${domain}|g" \
-        -e "s|__SERVER_IP__|${IP4}|g" \
-        "${diag_webroot}/index.html" || return 1
-
-    # LibreSpeed engine (speed test frontend, LGPL — github.com/librespeed/speedtest)
-    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/librespeed/speedtest.js" \
-        -o "${diag_webroot}/speedtest.js" || return 1
-    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/librespeed/speedtest_worker.js" \
-        -o "${diag_webroot}/speedtest_worker.js" || return 1
-
-    # Test download files
-    local testfiles="${diag_webroot}/testfiles"
-    mkdir -p "${testfiles}" || return 1
-    [[ -f "${testfiles}/test-15k.bin"  ]] || dd if=/dev/zero bs=1024    count=15   of="${testfiles}/test-15k.bin"  status=none || return 1
-    [[ -f "${testfiles}/test-17k.bin"  ]] || dd if=/dev/zero bs=1024    count=17   of="${testfiles}/test-17k.bin"  status=none || return 1
-    [[ -f "${testfiles}/test-100m.bin" ]] || dd if=/dev/zero bs=1048576 count=100  of="${testfiles}/test-100m.bin" status=none || return 1
-    [[ -f "${testfiles}/test-1g.bin"   ]] || dd if=/dev/zero bs=1048576 count=1024 of="${testfiles}/test-1g.bin"   status=none || return 1
-    rm -f "${testfiles}/test-512m.bin" || return 1   # only used by the old single-stream speed test
-    chown -R www-data:www-data "${diag_webroot}" 2>/dev/null || return 1
-
-    # MTR backend Python script
-    mkdir -p "$(dirname "${backend_script}")" || return 1
-    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/mtr-backend.py" -o "${backend_script}" || return 1
-    chmod 755 "${backend_script}" || return 1
-
-    # Grant mtr raw socket capability (runs as restricted user, no root needed)
-    # mtr-packet is the helper that actually opens the raw socket
-    command -v setcap &>/dev/null && setcap cap_net_raw+ep "$(command -v mtr)"        2>/dev/null || true
-    command -v setcap &>/dev/null && setcap cap_net_raw+ep "$(command -v mtr-packet)" 2>/dev/null || true
-
-    # Dedicated system user for mtr-backend
-    id mtr-backend &>/dev/null || \
-        useradd --system --no-create-home --shell /usr/sbin/nologin mtr-backend || return 1
-
-    # Systemd service for mtr-backend
-    cat > /etc/systemd/system/mtr-backend.service <<EOF
+render_mtr_unit() {
+    local backend_script=$1 mtr_backend_port=$2
+    cat <<EOF
 [Unit]
 Description=3x-ui Auto Nginx MTR diagnostics backend
 After=network.target
@@ -2028,6 +1884,50 @@ SyslogIdentifier=mtr-backend
 [Install]
 WantedBy=multi-user.target
 EOF
+}
+
+install_diagnostics() {
+    local diag_webroot="/var/www/diagnostics"
+    local backend_script="/usr/local/lib/3x-ui-pro/mtr-backend.py"
+
+    # Diagnostics HTML page
+    mkdir -p "${diag_webroot}" || return 1
+    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/index.html" -o "${diag_webroot}/index.html" || return 1
+    render_diagnostics_page "$diag_webroot/index.html" "$diag_path" "$domain" "$IP4" || return 1
+
+    # LibreSpeed engine (speed test frontend, LGPL — github.com/librespeed/speedtest)
+    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/librespeed/speedtest.js" \
+        -o "${diag_webroot}/speedtest.js" || return 1
+    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/librespeed/speedtest_worker.js" \
+        -o "${diag_webroot}/speedtest_worker.js" || return 1
+
+    # Test download files
+    local testfiles="${diag_webroot}/testfiles"
+    mkdir -p "${testfiles}" || return 1
+    [[ -f "${testfiles}/test-15k.bin"  ]] || dd if=/dev/zero bs=1024    count=15   of="${testfiles}/test-15k.bin"  status=none || return 1
+    [[ -f "${testfiles}/test-17k.bin"  ]] || dd if=/dev/zero bs=1024    count=17   of="${testfiles}/test-17k.bin"  status=none || return 1
+    [[ -f "${testfiles}/test-100m.bin" ]] || dd if=/dev/zero bs=1048576 count=100  of="${testfiles}/test-100m.bin" status=none || return 1
+    [[ -f "${testfiles}/test-1g.bin"   ]] || dd if=/dev/zero bs=1048576 count=1024 of="${testfiles}/test-1g.bin"   status=none || return 1
+    rm -f "${testfiles}/test-512m.bin" || return 1   # only used by the old single-stream speed test
+    chown www-data:www-data "$diag_webroot" "$diag_webroot"/{index.html,speedtest.js,speedtest_worker.js} \
+        "$testfiles" "$testfiles"/test-{15k,17k,100m,1g}.bin 2>/dev/null || return 1
+
+    # MTR backend Python script
+    mkdir -p "$(dirname "${backend_script}")" || return 1
+    curl -fsSL "${GITHUB_RAW}/assets/diagnostics/mtr-backend.py" -o "${backend_script}" || return 1
+    chmod 755 "${backend_script}" || return 1
+
+    # Grant mtr raw socket capability (runs as restricted user, no root needed)
+    # mtr-packet is the helper that actually opens the raw socket
+    command -v setcap &>/dev/null && setcap cap_net_raw+ep "$(command -v mtr)"        2>/dev/null || true
+    command -v setcap &>/dev/null && setcap cap_net_raw+ep "$(command -v mtr-packet)" 2>/dev/null || true
+
+    # Dedicated system user for mtr-backend
+    id mtr-backend &>/dev/null || \
+        useradd --system --no-create-home --shell /usr/sbin/nologin mtr-backend || return 1
+
+    # Systemd service for mtr-backend
+    render_mtr_unit "$backend_script" "$mtr_backend_port" > /etc/systemd/system/mtr-backend.service
     [[ $? -eq 0 ]] || return 1
 
     systemctl daemon-reload || return 1
@@ -2868,9 +2768,9 @@ render_adguard_dot() {
 
 configure_adguard_dot() {
     local nginx_conf=/etc/nginx/nginx.conf directory=/etc/nginx/stream-dot.d ipv6=n
-    local router_include='include /etc/nginx/stream-enabled/*.conf;'
     local dot_include='include /etc/nginx/stream-dot.d/*.conf;'
-    local stream="stream { $router_include }"
+    local stream with_dot
+    stream=$(managed_stream_block n); with_dot=$(managed_stream_block y)
     local fragment="$directory/adguard-dot.conf"
     if [[ $(grep -Fxc -- "$stream" "$nginx_conf") != 1 ]] || grep -Fq -- "$dot_include" "$nginx_conf"; then
         msg_err 'Cannot insert the DoT include in /etc/nginx/nginx.conf: expected one managed stream block without a DoT include.'
@@ -2894,7 +2794,7 @@ configure_adguard_dot() {
     install -o root -g root -m 0644 "$AGH_TEMP/adguard-dot.conf" "$fragment" || return 1
     cp -a "$nginx_conf" "$AGH_TEMP/nginx.conf" || return 1
     AGH_DOT_INCLUDE_ATTEMPTED=1
-    awk -v old="$stream" -v new="stream { $router_include $dot_include }" \
+    awk -v old="$stream" -v new="$with_dot" \
         '$0 == old { $0 = new } { print }' "$AGH_TEMP/nginx.conf" > "$nginx_conf"
 }
 
@@ -3758,7 +3658,7 @@ main() {
         if ! check_installation; then CORE_RESULT=failed_unverified; install_result=1; fi
     fi
     if [[ "$CORE_RESULT" == configured ]]; then
-        write_managed_state || { msg_err "$(ui_text 'Managed-state could not be recorded; core data retained.' 'Не удалось записать сведения об управляемой установке; данные основного стека сохранены.')"; install_result=1; }
+        write_managed_state "$install_result" || { msg_err "$(ui_text 'Managed-state could not be recorded; core data retained.' 'Не удалось записать сведения об управляемой установке; данные основного стека сохранены.')"; install_result=1; }
         # The Backup helper is already installed from PROJECT_REF. Keep its shell state private.
         ( . /usr/local/bin/x-ui-backup && tune_conntrack ) ||
             msg_warn 'Conntrack: shared tuning helper could not run.'
@@ -3773,9 +3673,11 @@ main() {
 write_managed_state() {
     [[ ${CORE_RESULT:-} == configured && ${PROJECT_SOURCE_SHA:-} =~ ^[0-9a-f]{40}$ ]] || return 1
     python3 - "$XUIDB" "$PROJECT_SOURCE_SHA" "$domain" "$reality_domain" \
-        "${VISION_RESULT:-not_requested}" "${AWG_RESULT:-not_requested}" "${AGH_RESULT:-not_requested}" "${XHTTP_CDN_RESULT:-not_requested}" <<'PYSTATE'
+        "${1:-1}" "${PANEL_STAGE:-}" "${INSTALL_AGH_DOT:-n}" "${INSTALL_SECURITY:-n}" \
+        "${VISION_RESULT:-not_requested}" "${AWG_RESULT:-not_requested}" "${AGH_RESULT:-not_requested}" "${XHTTP_CDN_RESULT:-not_requested}" \
+        3< <(printf '%s\0' "${diag_path:-}" "${diag_token:-}" "${mtr_backend_port:-}") <<'PYSTATE'
 import json, os, pathlib, sqlite3, tempfile, sys
-path,revision,panel,reality,vision_result,awg_result,agh_result,cdn_result=sys.argv[1:]
+path,revision,panel,reality,result,stage,dot,security,vision_result,awg_result,agh_result,cdn_result=sys.argv[1:]
 roles={}; vision=None; cdn=None
 with sqlite3.connect('file:'+path+'?mode=ro',uri=True) as db:
     settings=dict(db.execute('SELECT key,value FROM settings'))
@@ -3814,12 +3716,29 @@ with sqlite3.connect('file:'+path+'?mode=ro',uri=True) as db:
     for role,iid in roles.items():
         if role!='amneziawg' and not db.execute('SELECT 1 FROM hosts WHERE inbound_id=? AND address=? AND port=443',
                 (iid,vision if role=='vision' else reality if role=='hysteria2' else panel)).fetchone(): raise ValueError('Missing Host relationship: '+role)
+    if result == '0':
+        identities = json.loads((pathlib.Path(stage)/'core-roles.json').read_text())
+        if vision_result == 'configured':
+            identities['vision'] = json.loads((pathlib.Path(stage)/'vision-role.json').read_text())
+        host_roles = {}
+        if set(identities) != set(roles) - {'amneziawg','xhttp_cdn'}:
+            raise ValueError('Created Host roles differ from installed roles')
+        for role, (iid, hid) in identities.items():
+            if roles[role] != iid or not db.execute('SELECT 1 FROM hosts WHERE id=? AND inbound_id=?',(hid,iid)).fetchone():
+                raise ValueError('Created Host relationship differs: '+role)
+            host_roles[role] = hid
 if agh_result=='installed':
     if json.loads(pathlib.Path('/opt/AdGuardHome/managed.json').read_text()).get('domain')!=panel:
         raise ValueError('AGH domain relationship differs')
 state=dict(format=1,layout='nginx-stream-v1',installed_by='source@'+revision,source_ref=revision,
            domains=dict(panel=panel,reality=reality,vision=vision),inbound_roles=roles,
            features=dict(adguard=agh_result=='installed',vision=vision_result=='configured',amneziawg=awg_result=='configured'))
+if result == '0':
+    with os.fdopen(3, 'rb') as params:
+        diag_path, token, port, _ = params.read().decode().split('\0')
+    state.update(update_contract=1, host_roles=host_roles,
+                 diagnostics=dict(diag_path=diag_path,diag_token=token,mtr_backend_port=int(port)),
+                 install_options=dict(adguard_dot=dot=='y',security=security=='y'))
 if cdn is not None:
     state['xhttp_cdn']=cdn
     state['features']['xhttp_cdn']=True
@@ -4176,13 +4095,14 @@ prepare_domains_tools() {
         cat "$DOMAINS_STAGE/adguard.sh"
         local name
         for name in check_certificate_identity check_webroot_lineage check_no_legacy_certbot_cron check_acme_http \
-                    check_certificate_renewal render_certificate_hook check_xray_runtime check_configured_xray_runtime check_installation check_awg_reinstall_owner ui_text msg_err render_adguard_dot; do
+                    check_certificate_renewal render_certificate_hook check_xray_runtime check_configured_xray_runtime check_installation check_awg_reinstall_owner ui_text msg_err render_adguard_dot render_hysteria_cover; do
             declare -f "$name" || return 1
         done
         cat <<'DOMAIN_CHECKS'
 case "$1" in
     lineage) check_certificate_identity "$2" && check_webroot_lineage "$2" ;;
     render-hook) render_certificate_hook "$2" "$3" ;;
+    render-hysteria) render_hysteria_cover "$2" ;;
     render-dot) render_adguard_dot "$2" "$3" "$4" ;;
     hook)
         matched=n

@@ -1270,6 +1270,7 @@ manager_menu
         marker=dbpath.parent/'auto-nginx-managed.json';old=marker.read_bytes();state=json.loads(old)
         self.assertEqual(set(state['inbound_roles']),{'reality','ws','grpc','xhttp','hysteria2'})
         self.assertTrue(all(i>=20 for i in state['inbound_roles'].values()))
+        self.assertNotIn('update_contract',state)
         self.assertFalse(any(state['features'].values()));self.assertIsNone(state['domains']['vision'])
         self.assertEqual(marker.stat().st_mode&0o777,0o600)
         # Official 3x-ui normalizes native AWG stream_settings to the empty string.
@@ -1295,6 +1296,28 @@ manager_menu
         with sqlite3.connect(dbpath) as db:db.execute("UPDATE hosts SET address='other.example' WHERE inbound_id=?",(state['inbound_roles']['ws'],))
         result=subprocess.run(['bash','-c',code,'fixture',str(dbpath)],capture_output=True,text=True)
         self.assertNotEqual(result.returncode,0);self.assertEqual(marker.read_bytes(),old)
+
+    def test_contract_matches_created_ids_and_keeps_diagnostics_private(self):
+        from test_domains import DomainFixture
+        from test_personal_backup import function
+        fixture = DomainFixture(self.f.root/'contract')
+        marker = fixture.p(fixture.module.MANIFEST)
+        ctx = fixture.operation.discover()
+        created = {role:[ctx['inbound_roles'][role], host['id']] for role,host in ctx['hosts'].items()}
+        (fixture.root/'core-roles.json').write_text(json.dumps(created))
+        command = function('write_managed_state') + '\nwrite_managed_state 0'
+        env = dict(os.environ, CORE_RESULT='configured', PROJECT_SOURCE_SHA='a'*40, PANEL_STAGE=str(fixture.root),
+                   XUIDB=str(fixture.p(fixture.module.DB)), domain=fixture.panel,reality_domain=fixture.reality,
+                   diag_path='/fixture/', diag_token='fixture-private-token', mtr_backend_port='18081')
+        result = subprocess.run(['bash','-eu','-c',command],env=env,capture_output=True)
+        self.assertEqual(result.returncode,0)
+        self.assertNotIn(env['diag_token'].encode(), result.stdout+result.stderr)
+        state = json.loads(marker.read_bytes())
+        self.assertEqual(state['update_contract'],1)
+        self.assertEqual(state['host_roles'],{role:pair[1] for role,pair in created.items()})
+        self.assertTrue(state['diagnostics'] == dict(diag_path=env['diag_path'],diag_token=env['diag_token'],mtr_backend_port=18081))
+        self.assertEqual(state['install_options'], dict(adguard_dot=False,security=False))
+        self.assertEqual((marker.stat().st_uid, marker.stat().st_gid, marker.stat().st_mode & 0o777),(0,0,0o600))
 
     def test_managed_state_allows_absent_ws_and_grpc_but_refuses_duplicates(self):
         from test_domains import DomainFixture

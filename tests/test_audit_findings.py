@@ -82,9 +82,7 @@ class AuditInstaller(unittest.TestCase):
     def test_hostile_country_cannot_inject_sqlite_cli(self):
         self.assertIn('emoji_flag=$(country_flag)',function('configure_xui_db'))
         self.assertNotIn('.flag.emoji',function('configure_xui_db'))
-        from test_personal_xhttp import render
-        sqlite = shutil.which('sqlite3')
-        self.assertIsNotNone(sqlite, 'sqlite3 CLI is required for the injection regression')
+        from test_personal_xhttp import seed
         with tempfile.TemporaryDirectory() as tmp:
             marker = Path(tmp) / 'executed'
             hostile = ["FI'", 'FI\n.shell touch ' + str(marker),
@@ -94,17 +92,9 @@ class AuditInstaller(unittest.TestCase):
                     emoji = self.flag(json.dumps({'success': True, 'country_code': value,
                                                   'flag': {'emoji': value}}))
                     self.assertEqual(emoji, '🌐')
-                    sql = render('sqlite3 $XUIDB', emoji_flag=emoji)
-                    blocks = re.findall(r'^INSERT INTO "inbounds"\s.*?^\);', sql, re.M | re.S)
-                    columns = re.search(r'\(("user_id".*?)\)\s*VALUES', blocks[0], re.S)[1]
-                    db = Path(tmp) / 'seed.db'
-                    db.unlink(missing_ok=True)
-                    result = subprocess.run([sqlite, str(db)], input='CREATE TABLE inbounds (id INTEGER PRIMARY KEY,' +
-                                            columns + ');\n' + '\n'.join(blocks), text=True, capture_output=True)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    with sqlite3.connect(db) as conn:
-                        self.assertEqual(conn.execute('SELECT count(*) FROM inbounds').fetchone()[0], 5)
-                        self.assertTrue(all(row[0].startswith('🌐 ') for row in conn.execute('SELECT remark FROM inbounds')))
+                    rows, _ = seed(emoji_flag=emoji)
+                    self.assertEqual(len(rows),5)
+                    self.assertTrue(all(row['remark'].startswith('🌐 ') for row in rows.values()))
                     self.assertFalse(marker.exists())
 
     def test_initial_panel_loopback_persisted_before_start(self):
@@ -436,7 +426,8 @@ class DiagnosticsFiles(unittest.TestCase):
                         os.chown(target,65534,65534)
                     observation=root/'observations'; observation.write_text('')
                     result=subprocess.run(['bash','-c','umask 022;\n'+observer+script],
-                        env={**os.environ,**FIXTURE,'TARGET':str(target),'OBSERVATIONS':str(observation)},
+                        env={**os.environ,**FIXTURE,'stage':str(target.parent.parent),
+                             'TARGET':str(target),'OBSERVATIONS':str(observation)},
                         capture_output=True,text=True,timeout=10)
                     self.assertEqual(result.returncode,0,'Private vhost creation failed')
                     self.assertEqual(observation.read_text().strip(),'0:0:600','Vhost was exposed when writing began')

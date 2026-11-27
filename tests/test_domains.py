@@ -80,7 +80,7 @@ class DomainFixture:
         # The actual map file is a dependency of the actual panel vhost.
         self.write('/etc/nginx/sites-available/00-maps.conf', render('cat > /etc/nginx/sites-available/00-maps.conf'))
         self.p('/etc/nginx/sites-enabled/00-maps.conf').symlink_to('/etc/nginx/sites-available/00-maps.conf')
-        if 'cat > /etc/nginx/sites-available/hysteria-cover.conf' in self.source:
+        if 'sites-available/hysteria-cover.conf' in self.source:
             self.write(self.module.HYSTERIA, render('cat > /etc/nginx/sites-available/hysteria-cover.conf',self.source),0o600)
             self.p(self.module.HYSTERIA_ENABLED).symlink_to(self.module.HYSTERIA)
         self.p('/etc/nginx/snippets/x-ui-auto-optional').mkdir()
@@ -154,7 +154,7 @@ class DomainFixture:
         with self.operation.connection(False) as db:
             row=dict(db.execute("SELECT * FROM inbounds WHERE id=?",(self.operation.discover()['inbound_roles']['xhttp'],)).fetchone())
             row.update(id=99,remark='user renamed this inbound',enable=0,listen='127.0.0.1',port=port,
-                       tag='inbound-12345',stream_settings=json.dumps(cdn.inbound(port,path,'🇫🇮')['streamSettings']))
+                       tag='inbound-12345',stream_settings=json.dumps(cdn.inbound(port,path,'🇫🇮', dict(encryption='fixture', decryption='fixture'))['streamSettings']))
             if legacy:row['sniffing']=json.dumps(dict(enabled=True,destOverride=['http','tls'],routeOnly=False))
             db.execute('INSERT INTO inbounds ('+','.join(row)+') VALUES ('+','.join('?' for _ in row)+')',tuple(row.values()))
             host=dict(db.execute("SELECT * FROM hosts WHERE remark='xhttp'").fetchone())
@@ -308,6 +308,8 @@ class DomainFixture:
                     raise subprocess.CalledProcessError(1,[action])
                 if action == 'render-hook':
                     return rendered_hook(*args)
+                if action == 'render-hysteria':
+                    return render('cat > /etc/nginx/sites-available/hysteria-cover.conf', reality_domain=args[0])
                 if action == 'render-dot':
                     panel, port, ipv6 = args
                     if str(port) != '18082':
@@ -355,7 +357,7 @@ curl() {
             names = ('check_certificate_identity', 'check_webroot_lineage', 'check_no_legacy_certbot_cron',
                      'check_acme_http', 'check_certificate_renewal', 'render_certificate_hook',
                      'check_xray_runtime', 'check_configured_xray_runtime', 'check_installation',
-                     'check_awg_reinstall_owner', 'ui_text', 'msg_err', 'render_adguard_dot')
+                     'check_awg_reinstall_owner', 'ui_text', 'msg_err', 'render_adguard_dot','render_hysteria_cover')
             body += '\n'.join(function(name) for name in names)+'\n'+source+'\nprepare_domains_tools\n'
             result = subprocess.run(['bash', '-c', body], capture_output=True, text=True,
                                     env={**os.environ, 'REPOSITORY': str(ROOT)})
@@ -513,7 +515,18 @@ curl() {
                 f=self.fixture()
                 if mode=='both': f.cdn()
                 owned=f.telemt(True); before=f.state(); stream=f.p(f.module.STREAM).read_text()
+                marker_path = f.p(f.module.MANIFEST)
+                marker = json.loads(marker_path.read_text())
+                owned_hosts = {r:h['id'] for r,h in f.operation.discover()['hosts'].items() if r != 'xhttp_cdn'}
+                extension = dict(update_contract=1, host_roles=owned_hosts,
+                                 diagnostics=dict(diag_path='/fixture/',diag_token='fixture',mtr_backend_port=12345),
+                                 install_options=dict(adguard_dot=False,security=True))
+                marker.update(extension, source_ref='a'*40)
+                marker_path.write_text(json.dumps(marker))
                 f.change('new-panel.example' if mode!='reality' else None,'new-cover.example' if mode!='panel' else None)
+                changed = json.loads(marker_path.read_text())
+                self.assertTrue(all(changed[k] == marker[k] for k in (*extension, 'source_ref','installed_by')))
+                self.assertEqual(changed['domain_change_source'], SOURCE)
                 context=f.operation.discover()
                 self.assertEqual(context['telemt']['domains'],['telegram.example'])
                 self.assertTrue({path:f.p(path).read_bytes() for path in owned}==owned,'Telemt files changed')
@@ -1273,6 +1286,40 @@ curl() {
             f.operation.candidate_nginx(record)
         self.assertEqual(f.p(f.module.STREAM).read_bytes(),old)
 
+    def test_generated_tree_passes_real_nginx_in_private_namespace(self):
+        from test_client_restore import restore
+        from test_personal_xhttp import FIXTURE
+        f = self.fixture()
+        live = f.p('/etc/nginx')
+        external = f.root/'third-party.conf'
+        external.write_text('map $arg_probe $third_party { default 0; }\n')
+        (live/'sites-enabled/foreign.conf').symlink_to(external)
+        f.write('/etc/nginx/stream-sni.d/twpm.conf','proxy.example third_party;\n')
+        f.write('/etc/nginx/stream-upstreams.d/twpm.conf','upstream third_party { server 127.0.0.1:12900; }\n')
+        foreign = [external,live/'stream-sni.d/twpm.conf',live/'stream-upstreams.d/twpm.conf']
+        before = [path.read_bytes() for path in foreign]
+        original = (live/'nginx.conf').read_bytes()
+        stage = f.root/'candidate'
+        shutil.copytree(live, stage, symlinks=True)
+        env = {**os.environ, **FIXTURE, 'stage':str(stage)}
+        fields = ('domain reality_domain panel_path panel_port sub_path sub_port json_path diag_token diag_path '
+                  'mtr_backend_port xhttp_path INSTALL_WS_GRPC ws_port ws_path trojan_port trojan_path')
+        code = '\n'.join(function(name) for name in ('render_acme_nginx','render_core_nginx','render_nginx_main'))
+        # All includes resolve at their production paths inside the private mount.
+        # The actual Certbot fixture stays in its temporary directory.
+        code = code.replace('/etc/letsencrypt/live/',str(f.p('/etc/letsencrypt/live'))+'/')
+        code += '\ndeclare -A params=([ipv6]=n [nginx_version]=1.24.0)\n'
+        code += 'for key in '+fields+'; do params[$key]=${!key}; done\n'
+        code += 'render_acme_nginx "$stage" params && render_core_nginx "$stage" params && render_nginx_main "$1" "$stage/nginx.conf" "$2"'
+        subprocess.run(['bash','-eu','-c',code,'fixture',str(live/'nginx.conf'),str(live)],env=env,check=True)
+        restore.candidate_nginx(stage, Path('/etc/nginx'))
+        (stage/'snippets/includes.conf').write_text('invalid_fixture_directive;\n')
+        with self.assertRaises(subprocess.CalledProcessError):
+            restore.candidate_nginx(stage, Path('/etc/nginx'))
+        self.assertEqual((live/'nginx.conf').read_bytes(), original)
+        self.assertEqual([path.read_bytes() for path in foreign], before)
+        self.assertEqual((stage/'sites-enabled/foreign.conf').readlink(),external)
+
     def test_sqlite_wal_and_unhealthy_source_before_mutations(self):
         f=self.fixture(); connection=sqlite3.connect(f.p(f.module.DB));self.addCleanup(connection.close)
         self.assertEqual(connection.execute('PRAGMA journal_mode=WAL').fetchone()[0],'wal')
@@ -1440,6 +1487,12 @@ curl() {
                     db.execute('UPDATE inbounds SET enable=? WHERE id=99',(enabled,))
                     if enabled:db.execute("UPDATE hosts SET address='edge.example',sni='cdn.example' WHERE id=99")
                 f.change('second.example')
+                path=f.p(f.module.MANIFEST)
+                meta=json.loads(path.read_text())
+                meta.update(update_contract=1,diagnostics=dict(diag_path='/fixture/',diag_token='fixture',mtr_backend_port=12345),
+                            host_roles={r:h['id'] for r,h in f.operation.discover()['hosts'].items()},
+                            install_options=dict(adguard_dot=False,security=False))
+                path.write_text(json.dumps(meta))
                 backup,_,state=self.backup_fixture(f)
                 before=state();route=backup.path('/etc/nginx/snippets/x-ui-auto-optional/xhttp-cdn.conf')
                 contents=route.read_bytes();marker=backup.path(f.module.MANIFEST).read_bytes()
@@ -1505,6 +1558,15 @@ curl() {
                 'fixture',str(backup.script),str(stage)],env=backup.env,capture_output=True,text=True)
         self.assertEqual(preflight().returncode,0,'Valid retained ownership was refused')
         staged_marker=stage/'files'/str(marker).lstrip('/');staged_original=staged_marker.read_bytes()
+        # Origins and applied revisions diverge after an in-place update.
+        revised = json.loads(original)
+        revised['source_ref'] = 'c' * 40
+        marker.write_text(json.dumps(revised))
+        self.assertNotEqual(preflight().returncode, 0)
+        revised['update_contract'] = 1
+        marker.write_text(json.dumps(revised))
+        self.assertEqual(preflight().returncode, 0)
+        marker.write_bytes(original)
         for fault in ('missing-record','archive-evidence-only','wrong-hash','renewal-edit','invalid-renewal','per-lineage-hook',
                       'wrong-current-domains','unknown-format','invalid-source','duplicate-key','public-manifest',
                       'unowned-manifest','manifest-symlink','manifest-hardlink','unsafe-parent',

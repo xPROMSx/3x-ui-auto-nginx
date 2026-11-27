@@ -45,6 +45,26 @@ New installs generate independent static Panel/REALITY cover sites once from six
 
 WARP tests real HTTP through the candidate before saving, then verifies the saved template and synthetic routes. The shell checks native Xray health and invokes one full-template rollback on failure. Helper/API budgets are 180 seconds for apply and 60 seconds for rollback; direct shell health checks can extend the total. WARP snapshots and sessions are removed after the step, including an unverified rollback. Updating the project does not enable WARP on an existing server.
 
+## Rendering managed resources
+
+Installation selects domains, allocates ports and paths, and obtains keys before rendering. The Bash functions `render_acme_nginx` and `render_core_nginx` take a private directory and a Bash associative array of installation parameters, including IPv6 support and the installed nginx version. Both emit files containing the final absolute include and certificate paths. The ACME and core phases activate only their respective files and links. `render_nginx_main` takes the existing main file, a separate destination and the configuration directory. It preserves the managed stream block with either its router include alone or its router and DoT includes. Change Domains and Installation share the static Hysteria cover renderer. The stream SNI, upstream and optional snippet directories remain integration points for other services.
+
+[Core inbound definitions](../assets/inbounds/managed.py) accept existing keys, short IDs, endpoint paths and certificate paths. Only the fresh SQLite adapter initializes empty clients, enabled state, tags, counters and Host groups. The installer obtains this module from the same source archive as the cover resources before managed cleanup. Vision keeps its native API and nginx generators. The CDN definition takes an existing native VLESS encryption pair; its installation step obtains a new pair from the panel. AmneziaWG sends empty settings only for initial native server generation. Client records, inbound bindings, limits, counters, enabled flags, extra Hosts, outbounds and routing belong to the running database.
+
+`prepare_panel_binaries` consumes the preflight-verified upstream archive in a caller-selected destination, including ARM executable normalization. CLI and unit installation are separate operations. Only fresh installation runs `_panel_initial_config`. The Clash template, diagnostics page, MTR unit and certificate deploy hooks can be rendered using supplied values. Service changes, certificate issuance and OS user creation belong to the invoking operation.
+
+For newly chosen cover roles, private `cover-sites.json` records the template, four variant indices, a per-site rendering seed and the reference date. The seed and date reproduce palette adjustments, artwork and other generated files with the same generator. `prepare --from-saved` stages a new rendering. Ordinary publication still skips existing roles. Restore preserves published files and historical selections.
+
+## Installation metadata
+
+The root-owned, atomically replaced 0600 file `/etc/x-ui/auto-nginx-managed.json` retains format 1 and layout `nginx-stream-v1`. After successful core and selected-component checks, fresh installation writes the integer `update_contract: 1`. A partial installation with a healthy core retains the existing metadata used by maintenance. A legacy adoption or a newly downloaded manager cannot confer compatibility.
+
+* `installed_by` records origin. `source_ref` identifies the applied configuration. Change Domains tracks its own source in `domain_change_source`.
+* `inbound_roles` identifies installed rows. `host_roles` records the assigned SQLite or API Host IDs, verified against the associated inbound. CDN retains its existing initial Host record in `xhttp_cdn.host`. AmneziaWG uses its share address.
+* `diagnostics` contains `diag_path`, `diag_token` and `mtr_backend_port`. `install_options` records the original AdGuard DoT and VPS Security choices independently of host-specific runtime state. Change Domains retains its existing `features` comparison.
+
+Backup v3 includes both private JSON files under `/etc/x-ui` and restores the archived configuration revision. Future in-place updates can use these inputs to stage current project definitions. Updating a running database, switching binaries, and scoped recovery remain separate implementation work.
+
 ## Network and ports
 
 - Public TCP/443 belongs to nginx stream SNI routing: REALITY → loopback 8443, panel TLS → loopback 7443, optional Vision → its own loopback listener.

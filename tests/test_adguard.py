@@ -745,12 +745,12 @@ main
             source = (ROOT/name).read_text()
             for code in re.findall(r"<<'PY'\n(.*?)^PY$", source, re.M | re.S):
                 self.assertFalse(any(isinstance(node, ast.Assert) for node in ast.walk(ast.parse(code))), name)
-        self.assertIn('install -d -o root -g root -m 0755', function('configure_nginx'))
+        self.assertIn('install -d -o root -g root -m 0755', function('activate_install_nginx'))
         self.assertNotIn('mkdir -p /etc/nginx/snippets/x-ui-auto-optional', INSTALLER)
         # Execute the actual directory-creation line under a restrictive umask.
         directory = self.root/'etc/nginx/snippets/x-ui-auto-optional'
         directory.chmod(0o700)
-        line = next(l.strip() for l in function('configure_nginx').splitlines() if 'install -d' in l and 'x-ui-auto-optional' in l)
+        line = next(l.strip() for l in function('activate_install_nginx').splitlines() if 'install -d' in l and 'x-ui-auto-optional' in l)
         r = self.run_shell((), 'umask 077; ' + relocate(line, self.root))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(directory.stat().st_mode & 0o777, 0o755)

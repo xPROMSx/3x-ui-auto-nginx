@@ -197,7 +197,7 @@ def wait_inbound(port):
             time.sleep(0.25)
 
 
-def configure(panel, domain, port, fallback, stream, site, enabled, cert, key, flag="🌐"):
+def configure(panel, domain, port, fallback, stream, site, enabled, cert, key, flag="🌐", *, identity=None):
     stage = 'validating Vision certificate'
     try:
         certificate(domain, cert, key)
@@ -220,8 +220,10 @@ def configure(panel, domain, port, fallback, stream, site, enabled, cert, key, f
         if any(row.get(k) != expected[k] for k in ('enable', 'listen', 'port', 'protocol', 'tag')):
             raise ValueError('Vision API topology mismatch')
         stage = 'creating Vision host via 3X-UI API'
-        panel.request('panel/api/hosts/add', {'inboundIds': [iid], 'remark': 'vision', 'hosts': [domain],
+        host_result = panel.request('panel/api/hosts/add', {'inboundIds': [iid], 'remark': 'vision', 'hosts': [domain],
                       'port': 443, 'security': 'same', 'sni': domain, 'alpn': ['http/1.1'], 'allowInsecure': False})
+        if identity is not None:
+            identity.extend((iid, host_result['obj'][0]['id']))
         stage = 'writing Vision nginx fallback and SNI route'
         site.write_text(fallback_config(domain, fallback, root='/var/www/html/cover-vision', rate_limit=True))
         site.chmod(0o644)
@@ -289,9 +291,11 @@ def main():
         os.chmod(directory, 0o700)
         panel = module.Panel(f'https://{domain}/{path}/', username, sys.stdin.read(), directory,
                              ['--resolve', f'{domain}:443:127.0.0.1'])
+        identity = []
         iid = configure(panel, vision, int(port), int(fallback), '/etc/nginx/stream-enabled/stream.conf',
                         '/etc/nginx/sites-available/vision.conf', '/etc/nginx/sites-enabled/vision.conf',
-                        f'/etc/letsencrypt/live/{vision}/fullchain.pem', f'/etc/letsencrypt/live/{vision}/privkey.pem', flag)
+                        f'/etc/letsencrypt/live/{vision}/fullchain.pem', f'/etc/letsencrypt/live/{vision}/privkey.pem', flag, identity=identity)
+        (Path(helper).parent/'vision-role.json').write_text(json.dumps(identity))
         print(json.dumps({'status': 'configured', 'inboundId': iid}))
 
 

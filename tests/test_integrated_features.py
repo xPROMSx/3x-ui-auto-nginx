@@ -29,10 +29,11 @@ class IntegratedFeatures(unittest.TestCase):
                                       env={**os.environ,'UI_LANG':lang})
                 self.assertEqual(result.returncode,0,result.stderr)
                 self.assertIn(prompt,result.stdout); self.assertIn('RESULT:'+expected,result.stdout)
-        row=cdn.inbound(12345,'/RandomPrefix12345/cookie','🇫🇮')
+        keys = dict(encryption='saved-public', decryption='saved-private')
+        row=cdn.inbound(12345,'/RandomPrefix12345/cookie','🇫🇮',keys)
         self.assertIs(row['enable'],False)
         self.assertEqual((row['remark'],row['protocol'],row['listen'],row['port']),('🇫🇮 xhttp CDN','vless','127.0.0.1',12345))
-        self.assertEqual(row['settings'],dict(clients=[],decryption='none',encryption='none',fallbacks=[]))
+        self.assertEqual(row['settings'],dict(clients=[],**keys))
         self.assertEqual(row['sniffing'],dict(enabled=True,destOverride=['http','tls','quic','fakedns'],routeOnly=False))
         self.assertEqual(row['streamSettings']['network'],'xhttp');self.assertEqual(row['streamSettings']['security'],'none')
         settings=row['streamSettings']['xhttpSettings']

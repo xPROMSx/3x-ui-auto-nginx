@@ -18,13 +18,24 @@ declare -F select_additional_connections >/dev/null || select_additional_connect
 
 
 def function(name, source=INSTALLER):
-    found = re.findall(r'^' + re.escape(name) + r'\(\)\s*\{.*?^\}', source, re.M | re.S)
-    assert len(found) == 1, name
-    body = found[0]
+    if name in ('render_acme_nginx','render_core_nginx','render_hysteria_cover','render_mtr_unit'):
+        # Nginx and unit heredocs contain column-zero closing braces.
+        segment = re.split(r'^\w+\(\)\s*\{', source.split('\n'+name+'() {', 1)[1], maxsplit=1, flags=re.M)[0]
+        body = name+'() {'+segment[:segment.rindex('\n}')+2]
+    else:
+        body = extract_function(name, source)
+    helpers = {
+        'install_panel': ['prepare_panel_binaries','install_panel_cli','install_panel_unit'],
+        'configure_nginx': ['render_nginx_main','render_core_nginx','activate_install_nginx'],
+        'setup_acme_http': ['render_acme_nginx','activate_install_nginx'],
+        'render_core_nginx': ['render_hysteria_cover'],
+        'render_nginx_main': ['managed_stream_block'],
+        'configure_adguard_dot': ['managed_stream_block'],
+        'install_clash_sub': ['render_clash_template'],
+        'install_diagnostics': ['render_diagnostics_page','render_mtr_unit'],
+    }.get(name, [])
     if name == 'main':
-        # Isolated main fixtures provide their own optional selector stubs.
         body = INSTALLER_OPTION_STUBS + body
-    helpers = []
     if 'ui_install_question ' in body:
         helpers.append('ui_install_question')
     if 'ui_wrap ' in body:
@@ -34,6 +45,12 @@ def function(name, source=INSTALLER):
     if name != 'ui_text' and 'ui_text ' in body:
         helpers.append('ui_text')
     return '\n'.join([*(function(helper, source) for helper in helpers), body])
+
+
+def extract_function(name, source):
+    found = re.findall(r'^' + re.escape(name) + r'\(\)\s*\{.*?^\}', source, re.M | re.S)
+    assert len(found) == 1, name
+    return found[0]
 
 
 def relocate(source, root):

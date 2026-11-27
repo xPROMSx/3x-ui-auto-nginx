@@ -108,23 +108,6 @@ def validate_schema(db):
             'Custom triggers on managed SQLite tables are unsupported.')
 
 
-def hysteria_cover(domain):
-    hostname(domain)
-    return """# Managed by 3x-ui Auto Nginx: Hysteria2 cover
-server {
-    listen unix:/run/3x-ui-hysteria-cover.sock;
-    server_name %s;
-    server_tokens off;
-    absolute_redirect off;
-    autoindex off;
-    root /var/www/html/cover-reality;
-    index index.html;
-    if ($host !~* ^%s$) { return 404; }
-    location / { error_page 404 /404.html; try_files $uri $uri/ =404; }
-}
-""" % (domain, domain.replace('.',r'\.'))
-
-
 def database_context(db, panel, reality, manifest=None):
     """Read roles by structure; names/tags alone never establish identity."""
     validate_schema(db)
@@ -464,7 +447,7 @@ class Operation:
         if context['hysteria_cover']:
             require(context['streams'][context['inbound_roles']['reality']]['realitySettings'].get('xver') == 1, 'Backup upstream requires REALITY PROXY v1.')
             expected = expected.replace('upstream xray { server 127.0.0.1:8443; }', 'upstream xray { server 127.0.0.1:8443 max_fails=0; server 127.0.0.1:9443 backup; }')
-            require(self.read(HYSTERIA) == hysteria_cover(reality), 'Unknown Hysteria2 static backend.')
+            require(self.read(HYSTERIA) == self.check('render-hysteria', reality), 'Unknown Hysteria2 static backend.')
             self.read(HYSTERIA_ENABLED, HYSTERIA)
         else:
             require(self.object(HYSTERIA)['kind'] == self.object(HYSTERIA_ENABLED)['kind'] == 'absent', 'Unexpected Hysteria2 static backend.')
@@ -896,7 +879,7 @@ class Operation:
                 add('/etc/nginx/sites-enabled/'+previous, None)
         add(STREAM, stream)
         if context['hysteria_cover']:
-            add(HYSTERIA, hysteria_cover(reality))
+            add(HYSTERIA, self.check('render-hysteria', reality))
         http = self.read(HTTP)
         names = self.http_names(http)
         allowed = {old['panel'], old['reality'], *((context['manifest'] or {}).get('retained_domains', {}))}

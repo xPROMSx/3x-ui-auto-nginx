@@ -15,6 +15,12 @@ import time
 from urllib.parse import urlencode
 
 
+def inbound_definition(domain, port, *, settings):
+    return {'enable':True,'listen':'0.0.0.0','port':port,'protocol':'amneziawg',
+            'remark':'AmneziaWG','tag':f'inbound-{port}-udp', 'shareAddrStrategy':'custom',
+            'shareAddr':domain,'settings': settings,'streamSettings':{},'sniffing':{}}
+
+
 def validate(inbound, domain, port=8443):
     if (inbound.get('protocol'), inbound.get('port'), inbound.get('listen'), inbound.get('enable'),
         inbound.get('shareAddrStrategy'), inbound.get('shareAddr')) != ('amneziawg', port, '0.0.0.0', True, 'custom', domain):
@@ -102,9 +108,7 @@ class Panel:
 
     def create(self, domain, port=8443):
         # {} invokes defaultAmneziaWGServer / GenerateObfuscation31 in official 3x-ui.
-        body = {'enable':True,'listen':'0.0.0.0','port':port,'protocol':'amneziawg',
-                'remark':'AmneziaWG','tag':f'inbound-{port}-udp', 'shareAddrStrategy':'custom',
-                'shareAddr':domain,'settings': {},'streamSettings':{},'sniffing':{}}
+        body = inbound_definition(domain, port, settings={})
         inbound = self.request('panel/api/inbounds/add',body)['obj']
         try:
             validate(inbound,domain,port)

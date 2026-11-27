@@ -58,6 +58,9 @@ class CoverResources(unittest.TestCase):
             def bundle(kind):
                 with tarfile.open(archive,'w:gz') as out:
                     prefix='3x-ui-auto-nginx-'+('b'*40 if kind=='wrong-tree' else sha)+'/assets/cover-sites/'
+                    if kind != 'missing-core':
+                        item = tarfile.TarInfo(prefix.replace('cover-sites/', 'inbounds/managed.py'))
+                        out.addfile(item, io.BytesIO(b''))
                     for relative in ('managed.py','tools/generate.py','tools/check.py','data/variants.json'):
                         name=prefix+relative
                         if kind=='escape' and relative=='managed.py':name=prefix+'../../outside'
@@ -71,7 +74,7 @@ pin_project_source() { PROJECT_SOURCE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 curl() { printf '%s\n' "$*" > "$URL_LOG"; cp "$FIXTURE_ARCHIVE" "${@: -1}"; }
 preflight_cover_sites
 '''
-            for kind in ('valid','symlink','escape','wrong-tree'):
+            for kind in ('valid','symlink','escape','wrong-tree','missing-core'):
                 stage=root/kind;stage.mkdir();bundle(kind);marker.unlink(missing_ok=True)
                 result=subprocess.run(['bash','-c',script],capture_output=True,text=True,env={**os.environ,
                     'PANEL_STAGE':str(stage),'PROJECT_REF':'main','FIXTURE_ARCHIVE':str(archive),'URL_LOG':str(log)})
@@ -81,7 +84,7 @@ preflight_cover_sites
             self.assertFalse((root/'outside').exists())
 
     def test_source_pin_and_preflight_order(self):
-        text=(ROOT/'x-ui-latest.sh').read_text();main=text[text.index('main() {'):]
+        text=(ROOT/'x-ui-latest.sh').read_text();main=text[text.index('\nmain() {'):]
         self.assertLess(main.index('preflight_cover_sites'),main.index('clean_previous_install'))
         self.assertLess(main.index('install_fake_site'),main.index('configure_nginx'))
         self.assertIn('/tar.gz/$PROJECT_SOURCE_SHA',text)
@@ -121,6 +124,18 @@ class CoverPublication(unittest.TestCase):
             files=self.m.tree(self.web/('cover-'+role))
             self.assertFalse(any(name.endswith(('.py','.json')) for name in files))
             self.assertEqual(files,before[role])
+
+    def test_saved_selection_reproduces_every_public_file(self):
+        roles = ['panel', 'reality']
+        original = self.prepare('first', roles)
+        self.m.publish(original, self.web, self.state, roles)
+        selection = self.state.read_bytes()
+        with patch.object(self.m, 'choose_selection', side_effect=AssertionError('new choice')):
+            replay = self.root/'replay'
+            self.m.prepare(replay, self.state, roles, from_saved=True)
+        self.assertEqual(self.state.read_bytes(), selection)
+        for role in roles:
+            self.assertEqual(self.m.tree(replay/('cover-'+role)), self.m.tree(original/('cover-'+role)))
 
     def test_public_root_is_searchable_with_private_caller_umask(self):
         stage=self.prepare('private-umask',['panel','reality'])

@@ -36,6 +36,8 @@ REAL_STAT=Path.stat
 
 
 def complete_function(name):
+    if name in ('configure_nginx', 'setup_acme_http', 'configure_adguard_dot'):
+        return function(name, SOURCE)
     # nginx heredocs contain column-zero braces; stop at the next shell function.
     text=SOURCE[SOURCE.index(name+'() {'):]
     headers=list(re.finditer(r'^\w+\(\)\s*\{',text,re.M))
@@ -301,6 +303,26 @@ install() { local -a args=(); while (($#)); do case "$1" in -o|-g) shift 2;; *) 
             self.assertEqual(snapshots[0],snapshots[1])
             self.assertEqual(policy.read_text(),'map_hash_bucket_size 128;\nmap $arg_probe $foreign_map { default 0; }\n')
             self.assertEqual(config.read_text().count('http  {'),1)
+
+    def test_render_nginx_main_preserves_dot_and_foreign_includes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); tree=root/'nginx'; tree.mkdir()
+            live=tree/'nginx.conf'
+            foreign=tree/'twpm.conf'
+            foreign.write_text('# external integration\n')
+            dot='include /etc/nginx/stream-dot.d/*.conf;'
+            live.write_text('load_module /usr/lib/nginx/modules/ngx_stream_module.so;\nevents {}\n'
+                            'stream { include /etc/nginx/stream-enabled/*.conf; '+dot+' }\n')
+            before=live.read_bytes()
+            script=function('render_nginx_main')+'\nrender_nginx_main "$1" "$2" "$3"'
+            first,second=root/'first', root/'second'
+            for source,candidate in ((live,first),(first,second)):
+                subprocess.run(['bash','-eu','-c',script,'fixture',str(source),str(candidate),str(tree)],check=True)
+            self.assertEqual(first.read_bytes(), second.read_bytes())
+            self.assertEqual(live.read_bytes(), before)
+            self.assertEqual(foreign.read_bytes(), b'# external integration\n')
+            self.assertEqual(second.read_text().count('stream {'),1)
+            self.assertEqual(second.read_text().count(dot),1)
 
     def test_real_nginx_http_all_permitted_hostname_lengths(self):
         nginx=os.environ.get('NGINX_BIN') or shutil.which('nginx')

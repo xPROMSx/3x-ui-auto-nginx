@@ -38,7 +38,7 @@ def restore_content():
         content = {name: db.execute('SELECT * FROM '+name+' ORDER BY rowid').fetchall()
                    for name in ('settings','inbounds','users','clients') if name in tables}
     result = {'sqlite': hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()}
-    for name in ('/etc/x-ui/pr2-persist', '/root/cert/panel.example.test/fullchain.pem',
+    for name in ('/etc/x-ui/pr2-persist', '/etc/x-ui/auto-nginx-managed.json', '/root/cert/panel.example.test/fullchain.pem',
                  '/root/cert/panel.example.test/privkey.pem'):
         result[name] = hashlib.sha256(Path(name).read_bytes()).hexdigest()
     for path in (Path('/etc/x-ui/cover-sites.json'), *Path('/var/www/html').glob('cover-*/*')):

@@ -29,19 +29,23 @@ PARAMETERS = {
 }
 
 
-def inbound(port, path, flag):
+def validate_endpoint(port, path):
     if not 1024 <= port <= 65535 or not re.fullmatch(r'/[A-Za-z0-9]{10,64}/cookie', path):
         raise ValueError('Invalid XHTTP CDN endpoint')
+
+
+def inbound(port, path, flag, keys):
+    validate_endpoint(port, path)
     return dict(enable=False, listen='127.0.0.1', port=port, protocol='vless',
                 remark=flag+' xhttp CDN', tag=f'inbound-{port}',
-                settings=dict(clients=[], decryption='none', encryption='none', fallbacks=[]),
+                settings=dict(clients=[], encryption=keys['encryption'], decryption=keys['decryption']),
                 streamSettings=dict(network='xhttp', security='none',
                                     xhttpSettings=dict(path=path, host='', headers={}, **PARAMETERS)),
                 sniffing=dict(enabled=True, destOverride=['http', 'tls', 'quic', 'fakedns'], routeOnly=False))
 
 
 def nginx(port, path):
-    inbound(port, path, '')  # Validate all interpolated values.
+    validate_endpoint(port, path)
     # Xray normalizes its base path with a terminal slash before session URLs.
     # Preserve that slash and the entire URI, query and Cookie upstream.
     return f'''# Managed by 3x-ui Auto Nginx: XHTTP CDN
@@ -70,25 +74,29 @@ def run(*args):
     subprocess.run(args, check=True, capture_output=True, timeout=30)
 
 
+def new_vless_keys(panel):
+    auths = panel.request('panel/api/server/getNewVlessEnc')['obj']['auths']
+    matches = [item for item in auths if isinstance(item, dict) and item.get('id') == 'mlkem768']
+    if len(matches) != 1 or any(
+            not isinstance(matches[0].get(key), str) or
+            not re.fullmatch(r'mlkem768x25519plus\.native\.[^.]+\.[^.]+', matches[0][key])
+            for key in ('encryption', 'decryption')):
+        raise ValueError('VLESS encryption key generation failed')
+    return {key: matches[0][key] for key in ('encryption', 'decryption')}
+
+
 def configure(panel, domain, port, path, flag, snippet):
     snippet = Path(snippet)
     if snippet.exists() or snippet.is_symlink():
         raise ValueError('Existing XHTTP CDN snippet; preserved')
-    expected = inbound(port, path, flag)
+    validate_endpoint(port, path)
+    tag = f'inbound-{port}'
     previous = panel.request('panel/api/inbounds/list')['obj']
-    if any(r['tag'] == expected['tag'] or r['port'] == port for r in previous):
+    if any(r['tag'] == tag or r['port'] == port for r in previous):
         raise ValueError('Conflicting XHTTP CDN endpoint')
     iid = None
     try:
-        auths = panel.request('panel/api/server/getNewVlessEnc')['obj']['auths']
-        matches = [item for item in auths if isinstance(item, dict) and item.get('id') == 'mlkem768']
-        if len(matches) != 1 or any(
-                not isinstance(matches[0].get(key), str) or
-                not re.fullmatch(r'mlkem768x25519plus\.native\.[^.]+\.[^.]+', matches[0][key])
-                for key in ('encryption', 'decryption')):
-            raise ValueError('VLESS encryption key generation failed')
-        expected['settings'].pop('fallbacks')  # Xray forbids even empty fallbacks with decryption.
-        expected['settings'].update({key: matches[0][key] for key in ('encryption', 'decryption')})
+        expected = inbound(port, path, flag, new_vless_keys(panel))
         row = panel.request('panel/api/inbounds/add', expected)['obj']; iid = row['id']
         if any(row.get(k) != expected[k] for k in ('enable', 'listen', 'port', 'protocol', 'tag', 'streamSettings')):
             raise ValueError('Unexpected XHTTP CDN API configuration')
@@ -109,7 +117,7 @@ def configure(panel, domain, port, path, flag, snippet):
     except Exception:
         try:
             rows = panel.request('panel/api/inbounds/list')['obj']
-            owned = [r for r in rows if r['tag'] == expected['tag'] and r['id'] not in {p['id'] for p in previous}]
+            owned = [r for r in rows if r['tag'] == tag and r['id'] not in {p['id'] for p in previous}]
             if len(owned) > 1: raise ValueError('Ambiguous XHTTP CDN creation')
             for row in owned:
                 if any(row.get(k) != expected[k] for k in ('enable', 'listen', 'port', 'protocol', 'tag', 'settings', 'streamSettings')):
@@ -121,7 +129,7 @@ def configure(panel, domain, port, path, flag, snippet):
                 snippet.unlink()
             run('nginx', '-t'); run('systemctl', 'reload', 'nginx')
             run('systemctl', 'is-active', '--quiet', 'x-ui')
-            if any(r['tag'] == expected['tag'] for r in panel.request('panel/api/inbounds/list')['obj']):
+            if any(r['tag'] == tag for r in panel.request('panel/api/inbounds/list')['obj']):
                 raise ValueError('XHTTP CDN rollback did not remove inbound')
             return 'failed_rolled_back'
         except Exception:

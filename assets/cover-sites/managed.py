@@ -6,10 +6,12 @@
 
 """One-time cover generation/publication. No network, service or database changes."""
 import argparse
+from datetime import date
 import importlib.util
 import json
 import os
 from pathlib import Path
+import random
 import secrets
 import shutil
 import stat
@@ -42,7 +44,7 @@ def read_state(path):
     generator = module('generate')
     for role, item in data.items():
         allowed = ('A1','A2','A3') if role == 'panel' else ('B1','B2','B3')
-        if not isinstance(item, dict) or set(item) != {'template','variants'} or item['template'] not in allowed:
+        if not isinstance(item, dict) or set(item) not in ({'template','variants'}, {'template','variants','render_seed','render_date'}) or item['template'] not in allowed:
             raise ValueError('Invalid cover selection')
         generator.selection(item['template'], ':'.join(map(str,item['variants'])))
     if data.get('reality',{}).get('template') == data.get('vision',{}).get('template') and 'vision' in data and 'reality' in data:
@@ -62,8 +64,29 @@ def write_state(path, data):
         if os.path.exists(name): os.unlink(name)
 
 
-def prepare(stage, state, roles):
-    """Generate only missing roles; an existing selection is never re-rendered."""
+def choose_selection(role, selections, generator):
+    candidates = ['A1','A2','A3'] if role == 'panel' else ['B1','B2','B3']
+    other = 'reality' if role == 'vision' else 'vision'
+    candidates = [c for c in candidates if c != selections.get(other,{}).get('template')]
+    code = secrets.choice(candidates); indexes = generator.selection(code, None)
+    return dict(template=code, variants=indexes, render_seed=secrets.token_hex(16), render_date=date.today().isoformat())
+
+
+def render_site(stage, role, selection, generator, checker):
+    site = stage/('cover-'+role)
+    generator.generate(selection['template'], site, selection['variants'],
+                       rng=random.Random(selection['render_seed']), now=date.fromisoformat(selection['render_date']))
+    problems, _, _ = checker.check_site(site)
+    if problems: raise ValueError('Invalid generated cover: '+str(problems))
+    # Only generated public content leaves this private stage.
+    for path in (site, *site.rglob('*')):
+        if path.is_symlink() or not (path.is_dir() or path.is_file()): raise ValueError('Unsafe generated cover')
+    for name in ('index.html','static/site.css','static/hero.svg','favicon.ico'):
+        if not (site/name).is_file(): raise ValueError('Missing cover resource: '+name)
+
+
+def prepare(stage, state, roles, *, from_saved=False):
+    """Prepare missing installation roles, or replay saved selections into a fresh stage."""
     data = read_state(state)
     generator, checker = module('generate'), module('check')
     template_files = ('index.html', 'static/site.css', 'favicon.svg', *sorted(checker.ERROR_PAGES))
@@ -74,21 +97,12 @@ def prepare(stage, state, roles):
     parents(stage.parent); stage.mkdir(mode=0o700)
     selections = dict(data)
     for role in roles:
-        if role in data: continue
-        candidates = ['A1','A2','A3'] if role == 'panel' else ['B1','B2','B3']
-        other = 'reality' if role == 'vision' else 'vision'
-        candidates = [c for c in candidates if c != selections.get(other,{}).get('template')]
-        code = secrets.choice(candidates); indexes = generator.selection(code, None)
-        selections[role] = dict(template=code, variants=indexes)
-        site = stage/('cover-'+role)
-        generator.generate(code, site, indexes)
-        problems, _, _ = checker.check_site(site)
-        if problems: raise ValueError('Invalid generated cover: '+str(problems))
-        # Only generated public content leaves this private stage.
-        for path in (site, *site.rglob('*')):
-            if path.is_symlink() or not (path.is_dir() or path.is_file()): raise ValueError('Unsafe generated cover')
-        for name in ('index.html','static/site.css','static/hero.svg','favicon.ico'):
-            if not (site/name).is_file(): raise ValueError('Missing cover resource: '+name)
+        if from_saved and 'render_seed' not in data.get(role, {}):
+            raise ValueError('No reproducible cover selection for '+role)
+        if role in data and not from_saved: continue
+        if role not in data:
+            selections[role] = choose_selection(role, selections, generator)
+        render_site(stage, role, selections[role], generator, checker)
     write_state(stage/'selection.json', selections)
 
 
@@ -152,11 +166,12 @@ def main():
     parser.add_argument('stage', type=Path)
     parser.add_argument('--web', type=Path, default=Path('/var/www/html'))
     parser.add_argument('--state', type=Path, default=Path('/etc/x-ui/cover-sites.json'))
+    parser.add_argument('--from-saved', action='store_true')
     parser.add_argument('--roles', nargs='+', choices=ROLES, default=['panel','reality'])
     args = parser.parse_args()
     if os.geteuid() != 0: raise ValueError('Cover publication requires root')
     if args.action == 'check': check_paths(args.web, args.state)
-    elif args.action == 'prepare': prepare(args.stage, args.state, args.roles)
+    elif args.action == 'prepare': prepare(args.stage, args.state, args.roles, from_saved=args.from_saved)
     elif args.action == 'publish': publish(args.stage, args.web, args.state, args.roles)
     else: rollback_vision(args.stage, args.web, args.state)
 

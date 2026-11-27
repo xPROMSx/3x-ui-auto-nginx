@@ -1,5 +1,6 @@
 """Invoke the unmodified production main() in a clean disposable systemd guest."""
 import hashlib
+import sqlite3
 import json
 import os
 from pathlib import Path
@@ -153,6 +154,19 @@ def install(scenario, ref):
                                capture_output=True, timeout=15)
             mtr_api()
             report['restricted_mtr_http'] = True
+        if scenario != 'dependency':
+            marker = Path('/etc/x-ui/auto-nginx-managed.json')
+            state = json.loads(marker.read_bytes())
+            assert marker.stat().st_mode & 0o777 == 0o600 and marker.stat().st_uid == 0
+            if result.returncode:
+                assert 'update_contract' not in state
+            else:
+                assert state['update_contract'] == 1 and state['source_ref'] == ref
+                assert set(state['host_roles']) == set(state['inbound_roles']) - {'amneziawg','xhttp_cdn'}
+                with sqlite3.connect('/etc/x-ui/x-ui.db') as db:
+                    for role, hid in state['host_roles'].items():
+                        assert db.execute('SELECT inbound_id FROM hosts WHERE id=?',(hid,)).fetchone() == (state['inbound_roles'][role],)
+                assert state['diagnostics']['mtr_backend_port'] > 0 and state['diagnostics']['diag_token']
         report['passed'] = True
     finally:
         (ROOT/'install-result.json').write_text(json.dumps(report))
