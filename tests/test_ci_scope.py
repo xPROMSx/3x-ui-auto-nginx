@@ -640,6 +640,10 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
                 events=[];calls=[];group_root=Path(directory)/group;group_root.mkdir()
                 env=dict(ROOT=group_root,phase='',re=re)
                 def record(kind):events.append((kind,env['phase']))
+                def ssh(command, *args, **kwargs):
+                    if command.startswith('systemctl '):
+                        calls.append(command)
+                    return SimpleNamespace(returncode=0,stdout=b'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n')
                 if group in ('all','agh'):
                     (group_root/'update-base-ref').write_text('b'*40+'\n')
                 installs=[]
@@ -648,7 +652,7 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
                     invoke=lambda expression,*args,**kwargs:(record('phase'),calls.append(expression)),
                     external_update_write=lambda:record('external-write'),
                     vm=SimpleNamespace(kill=lambda:record('kill'),wait=lambda **kwargs:record('wait')),
-                    ssh=lambda *args,**kwargs:SimpleNamespace(returncode=0,stdout=b'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n'))
+                    ssh=ssh)
                 exec(compile(ast.Module(body=functions,type_ignores=[]),'acceptance.py','exec'),env)
                 env['fresh_acceptance']('a'*40,group)
                 positive_phases=[positive[0],*positive[:6],'installed-renewal-hooks','cold-boot',*positive[6:],
@@ -672,7 +676,9 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
                     '__import__("update").project_update()','checks.installed()',
                     'checks.transports(positive_only=True, edge_profiles="pre-update-edge-profiles.json")',
                     '__import__("update").verify_mtr_recovery()',
-                    '__import__("update").remove_customer_fixture()','checks.native_agh_update()',
+                    '__import__("update").remove_customer_fixture()',
+                    'systemctl is-active --quiet x-ui.service && systemctl reset-failed x-ui.service',
+                    'checks.native_agh_update()',
                     '__import__("update").await_external()','__import__("update").retained()']
                 negative_calls=['dependency','dot-outage','checks.transports(vision=False, ws_grpc=False)']
                 debian_calls=['debian','checks.debian_stack()','checks.restore_source(dot=True, debian=True)',

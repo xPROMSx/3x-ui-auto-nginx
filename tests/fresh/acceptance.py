@@ -470,6 +470,9 @@ def fresh_acceptance(ref, group='all'):
         phase = 'mtr-start-intent-recovery'
         invoke('__import__("update").verify_mtr_recovery()', 'updated-mtr', 240)
         invoke('__import__("update").remove_customer_fixture()', 'end-update-fixture')
+        # Give AGH its own start budget after Update consumed starts in the same guest.
+        reset = ssh('systemctl is-active --quiet x-ui.service && systemctl reset-failed x-ui.service')
+        assert reset.returncode == 0, 'Cannot reset the start counter of the active x-ui service'
         phase = 'native-agh-update'
         invoke('checks.native_agh_update()', 'native-agh-update', 1200, tty=True)
         phase = 'external-write-before-commit'
