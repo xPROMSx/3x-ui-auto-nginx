@@ -133,6 +133,10 @@ def invoke(expression, result_name, timeout=180, tty=False):
             report['update_recovery_evidence'] = evidence
         for name, status in cases.items():
             print(f'Update recovery {name}: {status}', flush=True)
+    if phase == 'project-update':
+        status = re.search(rb'^CI Update saved profile HTTP: ([1-5][0-9]{2})\r?$', result.stdout, re.M)
+        if status:
+            report['update_saved_profile_http'] = int(status[1])
     diagnostics = ssh('cat /root/pilot/dns-diagnostics.jsonl', 15)
     if diagnostics.returncode == 0:
         probes = [json.loads(line) for line in diagnostics.stdout.splitlines()]

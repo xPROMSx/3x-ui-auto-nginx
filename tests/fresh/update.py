@@ -460,12 +460,22 @@ def save_transport_profiles(keys):
     from urllib.parse import quote, urlsplit
 
     with closing(sqlite3.connect(DB)) as db:
-        uri = db.execute("SELECT value FROM settings WHERE key='subJsonURI'").fetchone()[0]
+        settings = dict(db.execute("SELECT key,value FROM settings WHERE key IN ('subJsonURI','subPort')"))
+    until = time.monotonic() + 15
+    while True:
+        try:
+            with socket.create_connection(('127.0.0.1', int(settings['subPort'])), timeout=1):
+                break
+        except OSError:
+            if time.monotonic() >= until:
+                raise RuntimeError('Historical subscription listener did not start') from None
+            time.sleep(0.1)
     sub_id = json.loads(DB.with_name('initial-client.json').read_text())['identity']['subId']
-    url = urlsplit(uri)
+    url = urlsplit(settings['subJsonURI'])
     cert = '/etc/letsencrypt/live/' + url.hostname + '/fullchain.pem'
     op = module('domains').Operation('', '')
     code, body = op.request(url.hostname, url.path + quote(sub_id, safe=''), cert)
+    print(f'CI Update saved profile HTTP: {code}', flush=True)
     assert code == 200
     profiles = {}
     for config in json.loads(body):
