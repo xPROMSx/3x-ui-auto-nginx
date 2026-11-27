@@ -491,6 +491,21 @@ def enable_ufw(root=Path('/')):
         return {'status': 'failed_unverified' if attempted else 'failed', 'warnings': [str(error)]}
 
 
+def can_preserve_ssh_jail(root):
+    path = root / FILES[0].lstrip('/')
+    if path.exists() or path.is_symlink():
+        return False
+    service = SERVICES[0]
+    try:
+        if (command('systemctl', 'is-active', service) != 'active'
+                or command('systemctl', 'is-enabled', service) != 'enabled'):
+            return False
+        command('fail2ban-client', 'status', 'sshd')
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        return False
+    return True
+
+
 def configure(root=Path('/')):
     # DNS was prepared before cleanup. Neither component may change its files/service.
     result = {'status': 'partial', 'warnings': []}
@@ -533,15 +548,18 @@ def configure(root=Path('/')):
         ports = ssh_ports(effective, listen)
         if password_warning(effective):
             result['warnings'].append('SSH PASSWORD AUTHENTICATION IS ENABLED. SSH policy was preserved; review it separately.')
-        txn = Transaction(root, files=FILES[:1], services=SERVICES[:1])
-        stage = 'installing Fail2ban dependencies'
-        command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
-                '-o', 'Dpkg::Options::=--force-confold', '--no-remove', 'install', '-y', '--no-install-recommends', 'fail2ban', 'python3-systemd', 'nftables')
-        stage = 'configuring SSH Fail2ban jail'
-        backend = 'systemd' if command('journalctl', '-n', '1', '--no-pager', check=False) else 'auto'
-        if backend == 'auto' and not (root / 'var/log/auth.log').is_file():
-            raise ValueError('No SSH journaling/log backend')
-        txn.write(FILES[0], MARKER + f'''[sshd]
+        if can_preserve_ssh_jail(root):
+            result['fail2ban'] = 'preserved'
+        else:
+            txn = Transaction(root, files=FILES[:1], services=SERVICES[:1])
+            stage = 'installing Fail2ban dependencies'
+            command('apt-get', '-o', 'DPkg::Lock::Timeout=300', '-o', 'Dpkg::Options::=--force-confdef',
+                    '-o', 'Dpkg::Options::=--force-confold', '--no-remove', 'install', '-y', '--no-install-recommends', 'fail2ban', 'python3-systemd', 'nftables')
+            stage = 'configuring SSH Fail2ban jail'
+            backend = 'systemd' if command('journalctl', '-n', '1', '--no-pager', check=False) else 'auto'
+            if backend == 'auto' and not (root / 'var/log/auth.log').is_file():
+                raise ValueError('No SSH journaling/log backend')
+            txn.write(FILES[0], MARKER + f'''[sshd]
 enabled = true
 port = {','.join(map(str, ports))}
 backend = {backend}
@@ -549,12 +567,12 @@ maxretry = 5
 findtime = 1800
 bantime = 3600
 ''')
-        command('systemctl', 'daemon-reload')
-        command('systemctl', 'enable', 'fail2ban.service')
-        command('systemctl', 'restart', 'fail2ban.service')
-        stage = 'verifying SSH Fail2ban jail'
-        verify_fail2ban(ports)
-        result['fail2ban'] = 'configured'
+            command('systemctl', 'daemon-reload')
+            command('systemctl', 'enable', 'fail2ban.service')
+            command('systemctl', 'restart', 'fail2ban.service')
+            stage = 'verifying SSH Fail2ban jail'
+            verify_fail2ban(ports)
+            result['fail2ban'] = 'configured'
     except Exception as error:
         status = 'failed_rolled_back'; rollback_error = ''
         try:
@@ -566,7 +584,8 @@ bantime = 3600
         result['warnings'].append('Fail2ban failed during '+stage+': '+str(error)+'; rollback='+status+rollback_error+'; other components retained. Package changes remain.')
     finally:
         if txn is not None: txn.temp.cleanup()
-    if result['apt'] == result['fail2ban'] == 'configured': result['status'] = 'configured'
+    if result['apt'] == 'configured' and result['fail2ban'] in ('configured', 'preserved'):
+        result['status'] = 'configured'
     return result
 
 

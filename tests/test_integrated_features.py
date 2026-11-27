@@ -502,6 +502,92 @@ mv() { echo mv >> "$CALLS"; [[ "$CASE" != fstab ]] || return 1; command mv "$@";
                 self.assertFalse((root/security.FILES[4].lstrip('/')).exists())
                 self.assertEqual(global_policy.read_text(),original_policy)
 
+    def test_security_preserves_only_working_unmanaged_sshd_jail(self):
+        security = helper('security')
+        unit = security.SERVICES[0]
+        jail_status = ('fail2ban-client', 'status', 'sshd')
+        for case, expected in (
+            ('working', 'preserved'), ('apt_failure', 'preserved'),
+            ('inactive', 'configured'), ('disabled', 'configured'), ('missing_jail', 'configured'),
+            ('owned', 'configured'), ('foreign', 'failed_rolled_back'),
+            ('unsafe_mode', 'failed_rolled_back'), ('symlink', 'failed_rolled_back'),
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                managed = root / security.FILES[0].lstrip('/')
+                managed.parent.mkdir(parents=True)
+                (root/'etc/os-release').write_text('ID=ubuntu\nVERSION_ID="26.04"\n')
+                custom = managed.with_name('sshd.local')
+                custom.write_text('[sshd]\nenabled = true\nmaxretry = 3\nfindtime = 120m\nbantime = 4w\n'
+                                  'backend = systemd\nbanaction = nftables[type=multiport]\n')
+                original = custom.read_bytes()
+                if case == 'symlink':
+                    managed.symlink_to(managed.with_name('absent'))
+                elif case in ('owned', 'foreign', 'unsafe_mode'):
+                    managed.write_text('foreign configuration' if case == 'foreign' else security.MARKER)
+                    managed.chmod(0o666 if case == 'unsafe_mode' else 0o644)
+                calls = []
+
+                def run(args, **kwargs):
+                    calls.append(args)
+                    code, output = 0, ''
+                    if args == ('systemctl', 'is-active', unit):
+                        output = 'inactive' if case == 'inactive' else 'active'
+                    elif args == ('systemctl', 'is-enabled', unit):
+                        output = 'disabled' if case == 'disabled' else 'enabled'
+                    elif args == jail_status and case == 'missing_jail' and ('systemctl', 'restart', unit) not in calls:
+                        code, output = 1, 'Sorry but the jail does not exist'
+                    elif args[:3] == ('fail2ban-client', 'get', 'sshd'):
+                        policy = ('3', '7200', '2419200') if expected == 'preserved' else ('5', '1800', '3600')
+                        output = dict(zip(('maxretry', 'findtime', 'bantime'), policy))[args[-1]]
+                    elif args == ('fail2ban-client', '-d'):
+                        output = 'port 22'
+                    elif args == ('/usr/sbin/sshd', '-T'):
+                        output = 'port 22\npasswordauthentication yes\nauthenticationmethods any'
+                    elif args[0] == 'journalctl':
+                        output = 'SSH journal'
+                    elif args[0] == 'apt-get' and args[-1] == 'unattended-upgrades' and case == 'apt_failure':
+                        code = 1
+                    return subprocess.CompletedProcess(args, code, output, '')
+
+                actual_stat = Path.stat
+
+                def stat(path, *args, **kwargs):
+                    info = actual_stat(path, *args, **kwargs)
+                    return os.stat_result((*info[:4], 0, *info[5:]))
+
+                with patch.object(security.subprocess, 'run', side_effect=run), patch.object(Path, 'stat', stat), \
+                        patch.object(security, 'Transaction', wraps=security.Transaction) as transaction, \
+                        patch.object(security, 'verify_fail2ban', wraps=security.verify_fail2ban) as verify, \
+                        patch.object(security, 'verify_apt'):
+                    for _ in range(2 if case == 'working' else 1):
+                        result = security.configure(root)
+                        self.assertEqual(result['fail2ban'], expected, result)
+                        self.assertEqual(result['apt'], 'failed_rolled_back' if case == 'apt_failure' else 'configured')
+                        self.assertEqual(result['status'], 'partial' if case == 'apt_failure' or
+                                         expected == 'failed_rolled_back' else 'configured')
+                    self.assertEqual(custom.read_bytes(), original)
+                    jail_txn = any(call.kwargs['files'] == security.FILES[:1] for call in transaction.call_args_list)
+                    self.assertEqual(jail_txn, expected == 'configured')
+                    self.assertEqual(verify.call_count, int(expected == 'configured'))
+                    if expected == 'preserved':
+                        self.assertTrue(any('SSH PASSWORD AUTHENTICATION IS ENABLED' in w for w in result['warnings']))
+                        self.assertEqual(calls.count(jail_status), 2 if case == 'working' else 1)
+                        self.assertFalse(managed.exists() or managed.is_symlink())
+                        self.assertFalse(any(
+                            args[0] == 'apt-get' and {'fail2ban', 'python3-systemd', 'nftables'}.intersection(args)
+                            or args[0] == 'systemctl' and unit in args and args[1] not in ('is-active', 'is-enabled')
+                            or args[0] == 'fail2ban-client' and args != jail_status for args in calls))
+                    elif expected == 'configured':
+                        verify.assert_called_once_with([22])
+                        self.assertIn(('systemctl', 'restart', unit), calls)
+                    else:
+                        self.assertNotIn(jail_status, calls)
+                        warning = 'Unsafe owner/permissions' if case == 'unsafe_mode' else 'Unowned project configuration'
+                        self.assertTrue(any(warning in w for w in result['warnings']), result)
+                        if case == 'symlink':
+                            self.assertTrue(managed.is_symlink())
+
     def test_security_components_are_independent_of_dns_and_each_other(self):
         for fault in ('none','fail2ban','apt'):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as directory:
@@ -999,16 +1085,19 @@ python3() {
 show_results() { echo "FINAL:$DOT_RESULT:$F2BAN_RESULT:$APT_RESULT:$config_username:$config_password"; echo "FINALIZED=$DNS_FINALIZED"; }
 '''
         script=stubs+function('prepare_system_dns')+'\n'+function('install_security')+'\n'+function('main')+'\nmain'
-        for status,apt,f2ban in (('configured','configured','configured'),('failed_rolled_back','configured','configured'),
+        for status,apt,f2ban in (('configured','configured','configured'),('configured','configured','preserved'),
+                                  ('configured','failed_rolled_back','preserved'),('failed_rolled_back','configured','preserved'),
+                                  ('failed_rolled_back','configured','configured'),
                                   ('failed_unverified','configured','configured'),('configured','configured','failed_rolled_back'),
                                   ('configured','failed_rolled_back','configured')):
             with self.subTest(dot=status,apt=apt,fail2ban=f2ban):
                 result=subprocess.run(['bash','-u','-c',script],capture_output=True,text=True,timeout=10,
                     env={**os.environ,'DNS_CASE':status,'APT_CASE':apt,'F2BAN_CASE':f2ban,
-                         'COMPONENT_STATUS':'configured' if apt==f2ban=='configured' else 'partial','INSTALL_SECURITY':'y','INSTALL_VISION':'n',
+                         'COMPONENT_STATUS':'configured' if apt=='configured' and f2ban in ('configured','preserved') else 'partial',
+                         'INSTALL_SECURITY':'y','INSTALL_VISION':'n',
                          'INSTALL_AWG':'n','INSTALL_AGH':'n','CREATE_CLIENT':'n','PANEL_STAGE':'/private-fixture',
                          'config_username':'fixture-user','config_password':'fixture-password'})
-                self.assertEqual(result.returncode,0 if status==apt==f2ban=='configured' else 1,result.stderr)
+                self.assertEqual(result.returncode,0 if status==apt=='configured' and f2ban in ('configured','preserved') else 1,result.stderr)
                 if status!='failed_unverified':
                     self.assertIn('install_panel',result.stdout)
                     self.assertIn('SECURITY_COMPONENTS_REACHED',result.stderr)

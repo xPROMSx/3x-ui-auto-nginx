@@ -3160,6 +3160,7 @@ show_results() {
         state=${component#*:}; component=${component%%:*}
         case "$state" in
             configured) server_details_row "[✓] $component" "$(ui_text 'Configured' 'Настроен')" ok "$columns" ;;
+            preserved) server_details_row "[✓] $component" "$(ui_text 'Existing protection preserved' 'Существующая защита сохранена')" ok "$columns" ;;
             failed_rolled_back) server_details_row "[!] $component" "$(ui_text 'Failed, rolled back / unchanged' 'Ошибка, выполнен откат / без изменений')" warn "$columns" ;;
             failed_unverified) server_details_row "[!] $component" "$(ui_text 'Failed, rollback not verified' 'Ошибка, откат не подтверждён')" err "$columns" ;;
         esac
@@ -3490,7 +3491,8 @@ install_security() {
     values=$(printf '%s' "$output" | python3 -c 'import json,sys; r=json.load(sys.stdin); print(r["fail2ban"],r["apt"])') || return 1
     read -r F2BAN_RESULT APT_RESULT <<< "$values"
     printf '%s' "$output" | python3 -c 'import json,sys; [print("[!] "+w) for w in json.load(sys.stdin)["warnings"]]'
-    [[ "$F2BAN_RESULT" == configured && "$APT_RESULT" == configured && "${DOT_RESULT:-not_requested}" == configured ]]
+    [[ ( "$F2BAN_RESULT" == configured || "$F2BAN_RESULT" == preserved ) &&
+       "$APT_RESULT" == configured && "${DOT_RESULT:-not_requested}" == configured ]]
 }
 
 install_initial_client() {
@@ -3950,9 +3952,12 @@ if apt == 'y':
     warnings(data)
     for label, key in (('APT', 'apt'), ('Fail2ban', 'fail2ban')):
         value = data.get(key)
-        results[label] = {'configured':'CONFIGURED', 'failed_rolled_back':'FAILED',
-                          'failed_unverified':'FAILED_UNVERIFIED'}.get(value, 'FAILED_UNVERIFIED')
-    if apt_code != '0' and all(results[k] == 'CONFIGURED' for k in ('APT', 'Fail2ban')):
+        if key == 'fail2ban' and value == 'preserved':
+            results[label] = 'PRESERVED'
+        else:
+            results[label] = {'configured':'CONFIGURED', 'failed_rolled_back':'FAILED',
+                              'failed_unverified':'FAILED_UNVERIFIED'}.get(value, 'FAILED_UNVERIFIED')
+    if apt_code != '0' and results['APT'] == 'CONFIGURED' and results['Fail2ban'] in ('CONFIGURED', 'PRESERVED'):
         results['APT'] = results['Fail2ban'] = 'FAILED_UNVERIFIED'
 if ufw == 'y':
     data = read('ufw.json')

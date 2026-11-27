@@ -791,6 +791,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             self.assertEqual(Path('/etc/network/interfaces').read_bytes(),original_network)
             # Failed DoT with verified native DNS recovery cannot block the
             # independently requested APT timers and SSH jail.
+            run('systemctl','disable','--now','fail2ban.service')
             independent=security.Transaction()
             try:
                 fail_tls.set()
@@ -804,6 +805,50 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             finally:
                 fail_tls.clear(); independent.rollback(); independent.temp.cleanup()
             print('REAL DoT failure / verified original DNS / independent Fail2ban and APT: PASS',flush=True)
+            # Reproduce the administrator's sshd.local with native Fail2ban.
+            unit = 'fail2ban.service'
+            managed = Path(security.FILES[0])
+            custom = managed.with_name('sshd.local')
+            self.assertFalse(custom.exists() or custom.is_symlink())
+            self.assertFalse(managed.exists() or managed.is_symlink())
+            preserved_snapshot = security.Transaction(files=security.FILES[:4], services=security.SERVICES[:3])
+            self.addCleanup(preserved_snapshot.temp.cleanup)
+            try:
+                original_jail = (b'[sshd]\nenabled = true\nmaxretry = 3\nfindtime = 120m\nbantime = 4w\n'
+                                 b'backend = systemd\nbanaction = nftables[type=multiport]\n')
+                custom.write_bytes(original_jail)
+                run('systemctl', 'reset-failed', unit)
+                run('systemctl', 'enable', '--now', unit)
+                # Type=simple reports active before the Fail2ban socket is ready.
+                status = ('fail2ban-client', 'status', 'sshd')
+                deadline = time.monotonic() + 10
+                while subprocess.run(status, capture_output=True, timeout=10).returncode != 0:
+                    if time.monotonic() >= deadline:
+                        self.fail('Administrator SSH jail did not start')
+                    time.sleep(.1)
+                expected_jail = {'maxretry': '3', 'findtime': '7200', 'bantime': '2419200'}
+                for name, value in expected_jail.items():
+                    self.assertEqual(run('fail2ban-client', 'get', 'sshd', name).strip(), value)
+                invocation = ('systemctl', 'show', unit, '-p', 'InvocationID', '--value')
+                invocation_id = run(*invocation).strip()
+                self.assertRegex(invocation_id, r'^(?!0{32}$)[0-9a-f]{32}$')
+                preserved = security.configure()
+                self.assertEqual(run(*invocation).strip(), invocation_id)
+                self.assertEqual(preserved['status'], 'configured', preserved)
+                self.assertEqual(preserved['fail2ban'], 'preserved', preserved)
+                self.assertEqual(preserved['apt'], 'configured', preserved)
+                security.verify_apt(prepared_os, expected_origins)
+                self.assertEqual(run('systemctl', 'is-active', unit).strip(), 'active')
+                self.assertEqual(run('systemctl', 'is-enabled', unit).strip(), 'enabled')
+                run(*status)
+                for name, value in expected_jail.items():
+                    self.assertEqual(run('fail2ban-client', 'get', 'sshd', name).strip(), value)
+                self.assertEqual(custom.read_bytes(), original_jail)
+                self.assertFalse(managed.exists() or managed.is_symlink())
+            finally:
+                custom.unlink(missing_ok=True)
+                preserved_snapshot.rollback()
+            print('REAL administrator SSH jail / unchanged invocation and settings / independent APT: PASS', flush=True)
             # A different provider also passes real preparation and round-trip
             # rollback; no Google/Cloudflare ownership classification remains.
             other_dns=b'nameserver 9.9.9.9\n'

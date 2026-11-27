@@ -453,7 +453,7 @@ ui_back '0. Back'
 timedatectl() { printf UTC; }; ufw() { printf 'Status: active'; }
 domain=panel.example; reality_domain=reality.example; panel_path=fixture
 config_username=fixture-user; config_password='fixture%25\\n$(literal)'
-AWG_RESULT=configured; CORE_RESULT=${CORE_FIXTURE:-configured}
+AWG_RESULT=configured; CORE_RESULT=${CORE_FIXTURE:-configured}; F2BAN_RESULT=preserved
 show_results "$RESULT_FIXTURE"
 '''
         for language in ('en','ru'):
@@ -471,6 +471,40 @@ show_results "$RESULT_FIXTURE"
                 self.assertTrue(result.stdout.rstrip().endswith(notice+'\n'+'='*60),result.stdout)
                 self.assertEqual('PARTIAL' in result.stdout,bool(status))
                 if status:self.assertNotIn('INSTALLATION COMPLETED',result.stdout)
+                preserved = 'Existing protection preserved' if language == 'en' else 'Существующая защита сохранена'
+                self.assertRegex(result.stdout, r'\[✓\] Fail2ban\s+' + preserved)
+                self.assertNotIn('[!] Fail2ban', result.stdout)
+
+    def test_post_restore_security_handles_preserved_fail2ban(self):
+        with tempfile.TemporaryDirectory() as directory:
+            helper = Path(directory) / 'managed.py'
+            helper.write_text('''import json, os, sys
+if sys.argv[1:]:
+    print(json.dumps({'status': os.environ['UFW_STATE']}))
+    sys.exit(int(os.environ['UFW_STATE'] == 'failed'))
+apt = os.environ['APT_STATE']
+print(json.dumps({'status': 'configured' if apt == 'configured' else 'partial',
+                  'apt': apt, 'fail2ban': 'preserved'}))
+sys.exit(int(apt != 'configured' or os.environ['HELPER_FAIL'] == '1'))
+''')
+            for apt, ufw, helper_fail, states, overall in (
+                ('configured', 'preserved', '0', ('CONFIGURED', 'PRESERVED', 'PRESERVED'), 'SUCCESS'),
+                ('failed_rolled_back', 'preserved', '0', ('FAILED', 'PRESERVED', 'PRESERVED'), 'PARTIAL'),
+                ('configured', 'failed', '0', ('CONFIGURED', 'PRESERVED', 'FAILED'), 'PARTIAL'),
+                ('configured', 'preserved', '1', ('FAILED_UNVERIFIED', 'FAILED_UNVERIFIED', 'PRESERVED'), 'PARTIAL'),
+            ):
+                with self.subTest(apt=apt, ufw=ufw, helper_fail=helper_fail):
+                    result = subprocess.run(
+                        ['bash', '-c', 'source "$1"; post_restore_security "$2" y y',
+                         'fixture', str(ROOT/'x-ui-latest.sh'), directory],
+                        env={**os.environ, 'APT_STATE':apt, 'UFW_STATE':ufw, 'HELPER_FAIL':helper_fail},
+                        capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, int(overall != 'SUCCESS'), result.stdout + result.stderr)
+                    for label, state in zip(('APT', 'Fail2ban', 'UFW', 'Overall'), (*states, overall)):
+                        self.assertIn(f'{label}: {state}', result.stdout.splitlines())
+                    if overall == 'PARTIAL':
+                        self.assertIn('Security: ' + ('STATE_UNVERIFIED' if helper_fail == '1' else 'PARTIAL'),
+                                      result.stdout.splitlines())
 
     def test_language_precedes_required_recovery_and_preserves_failure_code(self):
         with tempfile.TemporaryDirectory() as temporary:
