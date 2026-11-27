@@ -34,10 +34,19 @@ def run(*args):
 def restore_content(debian=False):
     """Private content digests, never credentials or database rows in reports."""
     with sqlite3.connect('/etc/x-ui/x-ui.db') as db:
+        db.row_factory = sqlite3.Row
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        content = {name: db.execute('SELECT * FROM '+name+' ORDER BY rowid').fetchall()
-                   for name in ('settings','inbounds','users','clients','client_inbounds') if name in tables}
-    result = {'sqlite': hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()}
+        managed = ('settings', 'inbounds', 'users', 'clients')
+        if debian:
+            managed += ('client_inbounds',)
+        content = {name: [dict(row) for row in db.execute('SELECT * FROM '+name+' ORDER BY rowid')]
+                   for name in managed if name in tables}
+    result = {}
+    if debian:
+        # The real consumers increase these counters between Restore and reboot.
+        result['inbound_traffic'] = {str(row['id']): [row.pop('up'), row.pop('down')]
+                                     for row in content['inbounds']}
+    result['sqlite'] = hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest()
     paths = [Path('/etc/x-ui/pr2-persist'), Path('/etc/x-ui/auto-nginx-managed.json'),
              Path('/root/cert/panel.example.test/fullchain.pem'), Path('/root/cert/panel.example.test/privkey.pem')]
     if debian:
@@ -250,10 +259,18 @@ def restore_dot_target(debian=False):
     return checks
 
 
-def restore_dot_verified(debian=False):
+def restore_dot_verified(debian=False, cold=False):
     assert run('ufw', 'status').strip() == 'Status: inactive'
     evidence = json.loads((ROOT/'restore-expected.json').read_text())
-    assert restore_content(debian) == evidence['content']
+    current, expected = restore_content(debian), evidence['content']
+    if cold:
+        traffic, saved = current.pop('inbound_traffic'), expected.pop('inbound_traffic')
+        assert traffic.keys() == saved.keys()
+        for inbound, (up, down) in saved.items():
+            assert traffic[inbound][0] >= up and traffic[inbound][1] >= down, 'Restored traffic counters decreased'
+        if traffic != saved:
+            print('Debian Restore: inbound counters increased after traffic', flush=True)
+    assert current == expected, 'Restored managed data changed'
     assert all(hashlib.sha256(Path(path).read_bytes()).hexdigest() == digest
                for path, digest in evidence['nginx'].items())
     if debian:
@@ -510,7 +527,7 @@ def debian_stack(cold=False, restored=False):
     assert {'ufw allow '+port for port in ports} <= rules
     assert run('ufw', 'status').splitlines()[0] == ('Status: inactive' if restored else 'Status: active')
     if restored and cold:
-        checks.update(restore_dot_verified(debian=True))
+        checks.update(restore_dot_verified(debian=True, cold=True))
     elif not restored and cold:
         evidence = json.loads((ROOT/'restore-expected.json').read_text())
         assert adguard_state() == evidence['adguard']

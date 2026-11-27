@@ -132,6 +132,10 @@ def invoke(expression, result_name, timeout=180, tty=False):
                 'Debian Restore: Restore SUCCESS, Overall SUCCESS, gpgv installed'):
             if message.encode() in result.stdout.splitlines():
                 print(message, flush=True)
+    if phase == 'debian-target-cold-boot':
+        message = 'Debian Restore: inbound counters increased after traffic'
+        if message.encode() in result.stdout.splitlines():
+            print(message, flush=True)
     if phase == 'update-failure-and-recovery':
         cases = update_recovery_results(result.stdout)
         report['update_recovery'] = cases
