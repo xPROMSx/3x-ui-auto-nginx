@@ -491,6 +491,7 @@ E: Sub-process /usr/bin/dpkg returned an error code (1)
             'CI Update recovery start: '+secret+'\n'
             'CI Update recovery '+secret+': PASS\n'
             '  File "/root/pilot/update.py", line 198, in rollback_cases\n'
+            '  File "/root/pilot/checks.py", line 31, in run\n'
             'ValueError: '+secret+'\n'
         ).encode()
         def ssh(command,*args,**kwargs):

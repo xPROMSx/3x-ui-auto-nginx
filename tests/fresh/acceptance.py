@@ -46,7 +46,8 @@ def failure_location(output):
     output = re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', output)
     frames = re.findall(rb'File "/root/pilot/(checks|install|client|session|update)\.py", line ([0-9]+)', output)
     if frames:
-        name, line = frames[-1]
+        # A generic command wrapper otherwise hides which recovery probe failed.
+        name, line = next((frame for frame in reversed(frames) if frame[0] == b'update'), frames[-1])
         report['failure_location'] = name.decode()+'.py:'+line.decode()
 
 

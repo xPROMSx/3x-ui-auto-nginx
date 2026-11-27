@@ -25,6 +25,7 @@ WORK = Path('/var/lib/3x-ui-auto-nginx/update')
 JOURNAL = WORK.parent / 'change-domains/journal.json'
 LIMIT = Path('/etc/nginx/snippets/xui-cover-limit.conf')
 NGX_RECOVERY_SITE = Path('/etc/nginx/conf.d/pilot-recovery.conf')
+NGX_RECOVERY_SOCKET = Path('/run/pilot-recovery-nginx.sock')
 COVER = Path('/var/www/html/cover-panel/index.html')
 BACKEND = Path('/usr/local/lib/3x-ui-pro/mtr-backend.py')
 FOREIGN = COVER.with_name('customer.txt')
@@ -308,10 +309,12 @@ def rollback_case(fault, old):
 
 def interrupt_switch():
     # This independent vhost must boot even when x-ui remains blocked.
+    listener = f'listen unix:{NGX_RECOVERY_SOCKET};'
     NGX_RECOVERY_SITE.write_text(
-        'server { listen unix:/run/pilot-recovery-nginx.sock; location / { return 200 "foreign-site"; } }\n'
+        'server { '+listener+' location / { return 200 "foreign-site"; } }\n'
     )
-    checks.run('nginx', '-t')
+    checks.run('sync', str(NGX_RECOVERY_SITE), str(NGX_RECOVERY_SITE.parent))
+    assert listener in checks.run('nginx', '-T')
     assert invoke_fault('cold', background=True) == 0
     deadline = time.monotonic() + 300
     while not (ROOT / 'hit-cold').exists() and time.monotonic() < deadline:
@@ -329,8 +332,15 @@ def verify_cold_recovery():
     return dict(coherent_old_stack=True)
 
 
+def verify_recovery_site():
+    assert NGX_RECOVERY_SOCKET.is_socket()
+    assert checks.run('curl', '-qfsS', '--noproxy', '*', '--unix-socket', str(NGX_RECOVERY_SOCKET),
+                      'http://localhost/') == 'foreign-site'
+
+
 def failed_boot():
     assert (WORK / 'test-held-before.db').is_file() and not (WORK / 'before.db').exists()
+    assert NGX_RECOVERY_SITE.is_file()
     until = time.monotonic() + 90
     while (
         checks.run('systemctl', 'show', 'xui-update-files', '-p', 'ActiveState', '--value').strip()
@@ -347,8 +357,7 @@ def failed_boot():
         if time.monotonic() > until:
             raise RuntimeError('SQLite recovery failure prevented independent nginx startup')
         time.sleep(0.2)
-    assert checks.run('curl', '-qfsS', '--noproxy', '*', '--unix-socket', '/run/pilot-recovery-nginx.sock',
-                      'http://localhost/') == 'foreign-site'
+    verify_recovery_site()
     assert checks.run('systemctl', 'show', 'x-ui', '-p', 'MainPID', '-p',
                       'ExecMainStartTimestampMonotonic', '--value').split() == ['0', '0']
     NGX_RECOVERY_SITE.unlink()
