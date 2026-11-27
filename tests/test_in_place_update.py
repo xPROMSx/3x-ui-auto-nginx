@@ -294,6 +294,7 @@ os._exit(0)
             patch.object(update, 'BASE', self.root),
             patch.object(update, 'SYSTEM', system),
             patch.object(update, 'apply_update'),
+            patch.object(update.os, 'umask'),
             patch.object(sys, 'argv', args),
         ):
             update.main()
