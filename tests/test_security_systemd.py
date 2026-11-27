@@ -628,11 +628,20 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
         from test_integrated_features import helper
         security = helper('security')
         run = lambda *args: subprocess.check_output(args, text=True, stderr=subprocess.STDOUT, timeout=90)
-        def configure_scenario():
+        unit = 'fail2ban.service'
+        def reset_fail2ban():
             # Independent cases must not share a consumed start budget. KVM can
             # run them within systemd's five-start/ten-second window. Preserve
             # native unit limits and every within-operation failure/rollback.
-            run('systemctl','reset-failed','fail2ban.service')
+            try:
+                run('systemctl', 'reset-failed', unit)
+            except subprocess.CalledProcessError as error:
+                # systemd can unload the stopped fixture unit, including its counters.
+                if f'Unit {unit} not loaded.' not in error.output:
+                    raise
+
+        def configure_scenario():
+            reset_fail2ban()
             return security.configure()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); cert, key = root/'cert.pem', root/'key.pem'
@@ -791,7 +800,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
             self.assertEqual(Path('/etc/network/interfaces').read_bytes(),original_network)
             # Failed DoT with verified native DNS recovery cannot block the
             # independently requested APT timers and SSH jail.
-            run('systemctl','disable','--now','fail2ban.service')
+            run('systemctl', 'disable', '--now', unit)
             independent=security.Transaction()
             try:
                 fail_tls.set()
@@ -806,7 +815,6 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                 fail_tls.clear(); independent.rollback(); independent.temp.cleanup()
             print('REAL DoT failure / verified original DNS / independent Fail2ban and APT: PASS',flush=True)
             # Reproduce the administrator's sshd.local with native Fail2ban.
-            unit = 'fail2ban.service'
             managed = Path(security.FILES[0])
             custom = managed.with_name('sshd.local')
             self.assertFalse(custom.exists() or custom.is_symlink())
@@ -817,7 +825,7 @@ nginx() { command nginx "$@" -p "$ROOT/" -c "$ROOT/nginx.conf"; }
                 original_jail = (b'[sshd]\nenabled = true\nmaxretry = 3\nfindtime = 120m\nbantime = 4w\n'
                                  b'backend = systemd\nbanaction = nftables[type=multiport]\n')
                 custom.write_bytes(original_jail)
-                run('systemctl', 'reset-failed', unit)
+                reset_fail2ban()
                 run('systemctl', 'enable', '--now', unit)
                 # Type=simple reports active before the Fail2ban socket is ready.
                 status = ('fail2ban-client', 'status', 'sshd')
