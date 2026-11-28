@@ -7,11 +7,24 @@ set -eo pipefail
 src=$(cd -- "$(dirname -- "$0")/../.." && pwd)
 action=$1
 shift
+update_lang=${UI_LANG:-en}
 source "$src/x-ui-latest.sh"
 case "$action" in
     worker|recover|boot)
-        if [[ $action == boot ]] && /usr/bin/python3 -I "$src/assets/update/managed.py" boot-ready; then exit 0; fi
-        acquire_stack_lock || exit $?
+        export UI_LANG=$update_lang
+        if [[ $action == boot ]] && /usr/bin/python3 -I "$src/assets/update/managed.py" boot-ready >/dev/null; then exit 0; fi
+        acquire_stack_lock 2>/dev/null || {
+            status=$?
+            if (( status == 75 )); then
+                message=$(ui_text '  Result: FAILED — another stack or Backup operation is running (exit %d).' '  Результат: FAILED — выполняется другая операция со стеком или резервной копией (код %d).' "$status")
+            else
+                message=$(ui_text '  Result: FAILED — cannot acquire /run/3x-ui-auto-nginx/operation.lock (exit %d).' '  Результат: FAILED — не удалось получить блокировку /run/3x-ui-auto-nginx/operation.lock (код %d).' "$status")
+            fi
+            # The manager has already evaluated TERM and NO_COLOR.
+            if [[ ${XUI_UPDATE_COLOR:-0} == 1 ]]; then TERM=xterm msg_err "$message"
+            else printf '%s\n' "$message"; fi
+            exit "$status"
+        }
         exec /usr/bin/python3 -I "$src/assets/update/managed.py" "$action" "$@"
         ;;
     backup)

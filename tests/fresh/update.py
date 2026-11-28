@@ -257,9 +257,11 @@ def rollback_cases():
         STATE.write_text(json.dumps(legacy))
         log = ROOT / 'legacy.private.log'
         try:
-            checks.manager_tty(b'1\n7\n', log, 45)
+            checks.manager_tty(b'2\n7\n', log, 45)
         except AssertionError:
-            assert b'update_contract 1' in log.read_bytes()
+            refused = log.read_text()
+            assert 'update_contract 1' in refused and 'Результат: FAILED' in refused
+            assert 'ROLLBACK' not in refused and refused.count('FAILED') == 1
         else:
             raise AssertionError('Legacy manager operation accepted')
         assert set(Path('/var/backups/x-ui').glob('*.tar.gz')) == backups
@@ -580,8 +582,39 @@ def project_update():
     assert json.loads(STATE.read_bytes()) == before
     save_transport_profiles(keys)
     stages = set(WORK.parent.glob('source.*'))
-    output = checks.manager_tty(b'1\n7\ny\n0\n', ROOT / 'update.private.log', 600)
-    assert b'Update verified' in output
+    backups = Path('/var/backups/x-ui')
+    existing = set(backups.glob('*.tar.gz'))
+    rendered = checks.manager_tty(
+        b'2\n7\ny\n0\n', ROOT / 'update.private.log', 600, term='xterm-256color', color=True,
+    ).decode()
+    headings = (
+        '[1/5] ПРОВЕРКА СОВМЕСТИМОСТИ',
+        '[2/5] ПОДГОТОВКА ОБНОВЛЕНИЯ',
+        '[3/5] СОЗДАНИЕ РЕЗЕРВНОЙ КОПИИ',
+        '[4/5] ПРИМЕНЕНИЕ ОБНОВЛЕНИЯ',
+        '[5/5] ФИНАЛЬНАЯ ПРОВЕРКА',
+        'ОБНОВЛЕНИЕ ЗАВЕРШЕНО',
+    )
+    for heading in headings:
+        assert f'\x1b[1;36m  {heading}\x1b[0m' in rendered
+    checks_rendered = [line for line in rendered.splitlines() if '[✓]' in line]
+    assert checks_rendered and all(
+        line.startswith('\x1b[1;32m  [✓]') and line.endswith('\x1b[0m') for line in checks_rendered
+    )
+    assert '\x1b[38;5;208m  Может потребоваться обновить подписки или клиентские профили.\x1b[0m' in rendered
+    output = re.sub(r'\x1b\[[0-9;]*m', '', rendered)
+    steps = [
+        *headings[:2],
+        'Подготовка обновления 3x-ui и Xray',
+        *headings[2:4],
+        'Обновление 3x-ui и Xray',
+        *headings[4:],
+        'Результат: SUCCESS',
+    ]
+    positions = [output.index(step) for step in steps]
+    assert positions == sorted(positions) and '\x1b[' not in output
+    created = set(backups.glob('*.tar.gz')) - existing
+    assert len(created) == 1 and str(next(iter(created))) in output
     assert set(WORK.parent.glob('source.*')) == stages
     after = json.loads(STATE.read_bytes())
     for key in before.keys() - {'source_ref', 'xhttp_cdn'}:
@@ -621,8 +654,14 @@ def project_update():
         ]
 
     previous = starts()
-    output = checks.manager_tty(b'1\n7\ny\n0\n', ROOT / 'repeat.private.log', 300)
-    assert b'Already up to date' in output and starts() == previous
+    existing = set(backups.glob('*.tar.gz'))
+    output = checks.manager_tty(b'1\n7\ny\n0\n', ROOT / 'repeat.private.log', 300, term='xterm-256color')
+    assert b'UPDATE NOT REQUIRED' in output and b'Result: UP TO DATE' in output
+    assert b'[5/5] FINAL VERIFICATION' in output
+    for absent in (b'[3/5]', b'[4/5]', b'Updating 3x-ui and Xray', b'\x1b['):
+        assert absent not in output
+    assert starts() == previous and set(backups.glob('*.tar.gz')) == existing
+    assert json.loads(STATE.read_bytes()) == after
     return dict(pinned_update=True, user_data=True, individual_cover=True, no_op=True, migration=True,
                 vless_encryption_preserved=True, source_stage_cleaned=True)
 
@@ -647,7 +686,8 @@ def remove_customer_fixture():
     checks.run('systemctl', 'start', 'x-ui')
     # Reconcile the original public paths before resuming shared AGH tests.
     output = checks.manager_tty(b'1\n7\ny\n0\n', ROOT / 'restore-transport.private.log', 300)
-    assert b'Update verified' in output
+    assert b'UPDATE COMPLETE' in output and b'Result: SUCCESS' in output
+    assert b'/var/backups/x-ui/' in output and b'Updating 3x-ui and Xray' not in output
     return dict(customer_fixture_removed=True)
 
 
