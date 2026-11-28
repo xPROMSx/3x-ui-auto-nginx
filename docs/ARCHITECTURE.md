@@ -63,7 +63,7 @@ The root-owned, atomically replaced 0600 file `/etc/x-ui/auto-nginx-managed.json
 * `inbound_roles` identifies installed rows. `host_roles` records the assigned SQLite or API Host IDs, verified against the associated inbound. CDN retains its existing initial Host record in `xhttp_cdn.host`. AmneziaWG uses its share address.
 * `diagnostics` contains `diag_path`, `diag_token` and `mtr_backend_port`. `install_options` records the original AdGuard DoT and VPS Security choices independently of host-specific runtime state. Change Domains retains its existing `features` comparison.
 
-Backup v3 includes both private JSON files under `/etc/x-ui` and restores the archived configuration revision. Future in-place updates can use these inputs to stage current project definitions. Updating a running database, switching binaries, and scoped recovery remain separate implementation work.
+Backup v3 includes both private JSON files under `/etc/x-ui` and restores the archived configuration revision. In-place Update uses these inputs to stage current project definitions, migrate the running database when needed, switch verified binaries, and recover from failures. See [In-place Update](#in-place-update).
 
 ## Network and ports
 
@@ -98,7 +98,7 @@ Panel credentials, client UUIDs/passwords/keys, API sessions/tokens, subscriptio
 
 ## CI
 
-`tests/run_ci.py` has an explicit registry of TestCase classes (check with `--check-completeness`). Suites: `nonroot`, `root` (private Backup/ownership/recovery fixtures), `integration` (real pinned x-ui/Xray/nginx/Mihomo), `services` (real AGH/DNS/DoH, Certbot/Pebble), `systemd` (root inside a disposable QEMU guest). Required job names: `Stack XHTTP and security`, `Stack Backup and restore`, `Real services (ubuntu-24.04)`, `Real services (ubuntu-26.04)`, `Full fresh installer (ubuntu-26.04)`. `tests/ci_scope.py` limits the lightweight docs-only mode to the listed root READMEs, Markdown under `docs/` and PNG under `assets/support/`; everything else runs full CI. Upstream Canary is daily/manual and non-required; integration PASS is not full installer acceptance (public DNS/Let's Encrypt, provider UFW, full reboot and whole-system recovery need live acceptance). Details: [CONTRIBUTING.md](../CONTRIBUTING.md); history of acceptance boundaries: [V2_AUDIT.md](V2_AUDIT.md).
+`tests/run_ci.py` has an explicit registry of TestCase classes (check with `--check-completeness`). Suites: `nonroot`, `root` (private Backup/ownership/recovery fixtures), `integration` (real pinned x-ui/Xray/nginx/Mihomo), `services` (real AGH/DNS/DoH, Certbot/Pebble), `systemd` (root inside a disposable QEMU guest). Required job names: `Stack XHTTP and security`, `Stack Backup and restore`, `Real services (ubuntu-24.04)`, `Real services (ubuntu-26.04)`, `Full fresh installer (ubuntu-26.04)`. `tests/ci_scope.py` limits the lightweight docs-only mode to the allowlisted regular documentation files described in [CONTRIBUTING.md](../CONTRIBUTING.md#documentation-only-ci); everything else runs full CI. Upstream Canary is daily/manual and non-required; integration PASS is not full installer acceptance (public DNS/Let's Encrypt, provider UFW, full reboot and whole-system recovery need live acceptance). Details: [CONTRIBUTING.md](../CONTRIBUTING.md); history of acceptance boundaries: [V2_AUDIT.md](V2_AUDIT.md).
 
 ## In-place Update
 
