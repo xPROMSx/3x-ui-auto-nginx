@@ -47,7 +47,7 @@ hide:
 
 -   :material-shield-lock:{ .lg .middle } **Личный DNS**
 
-    AdGuard Home, блокировка рекламы, DNS-over-HTTPS, ClientID и частный DNS на Android.
+    AdGuard Home, блокировка рекламы, DNS-over-HTTPS в Happ, необязательный ClientID и частный DNS на Android.
 
     [Настроить AdGuard Home и DNS](dns.md)
 
@@ -59,7 +59,7 @@ hide:
 
 -   :material-update:{ .lg .middle } **Обновление проекта и переход на новую версию**
 
-    Как переустановить проект на том же или новом VPS, сохранить клиентов и подписки и вернуть свои настройки.
+    Обновление на месте с v3.0.0, переход с 2.x через новую установку и восстановление клиентов и подписок.
 
     [Перейти на новую версию](update.md)
 

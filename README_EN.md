@@ -6,7 +6,7 @@
 
 ### Automated deployment of 3X-UI / XRAY-CORE on your own VPS
 
-**REALITY · XHTTP · HYSTERIA2 · CASCADE · ADGUARD HOME · BACKUP / RESTORE**
+**REALITY · XHTTP · HYSTERIA2 · CASCADE · ADGUARD HOME · UPDATE · BACKUP / RESTORE**
 
 Two domains, a clean VPS, and a few minutes to install.
 
@@ -16,11 +16,13 @@ Two domains, a clean VPS, and a few minutes to install.
 [![Debian](https://img.shields.io/badge/Debian-13-A81D33?logo=debian&logoColor=white)](#technical-details)
 [![Support](https://img.shields.io/badge/Support-Donate-EA4AAA)](docs/SUPPORT.en.md)
 
-[📦 Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [🔗 Cascade](#cascade) · [🌐 Cover websites](#cover-sites) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ Support](#support-development) · [💬 Feedback](https://t.me/promsdev)
+[📦 Releases](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [🔗 Cascade](#cascade) · [🌐 Cover websites](#cover-sites) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ Support](#support-development) · [💬 Feedback](https://t.me/promsdev) · [🔄 Update](#installation-vs-update)
+
+[📚 Documentation website (in Russian)](https://xpromsx.github.io/3x-ui-auto-nginx/)
 
 </div>
 
-**3X-UI AUTO NGINX** is a free installer for [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray on your own VPS. Enter two domains and run a single command. The installer configures Nginx, HTTPS certificates, REALITY, XHTTP, Hysteria2, a subscription link, and a cover website. The menu lets you change domains, manage backups, set up a two-VPS Cascade and run your own DNS server.
+**3X-UI AUTO NGINX** is a free installer for [3x-ui](https://github.com/MHSanaei/3x-ui) and Xray on your own VPS. Enter two domains and run a single command. The installer configures Nginx, HTTPS certificates, REALITY, XHTTP, Hysteria2, a subscription link, and a cover website. The menu lets you change domains, manage backups, set up a two-VPS Cascade and run your own DNS server. Compatible installations can now be updated in place, without reinstalling the server.
 
 **More than a basic placeholder:** fresh installations get multi-page cover websites with navigation, articles and images. At least 2,592 variations are available. Unauthenticated Hysteria2 HTTP/3 requests receive the same website. Everything runs on Nginx and Xray, without Docker or extra web servers.
 
@@ -30,7 +32,7 @@ Two domains, a clean VPS, and a few minutes to install.
 | --- | --- |
 | **Ready in minutes**<br>Two domains, a clean VPS and one command. You receive the panel URL and subscription link with REALITY, XHTTP and Hysteria2 configured. | **Looks like a regular website**<br>Multi-page cover sites with navigation, articles and illustrations. At least 2,592 variations, including Hysteria2 HTTP/3 cover. |
 | **Two-server Cascade**<br>Connect two VPS servers so devices use the entry server and access the internet through the exit server, for example in another country. Configure it through the menu. | **Private DNS with ad blocking**<br>AdGuard Home blocks ads and tracking. Connect devices using DNS-over-HTTPS (DoH) or optional DNS-over-TLS (DoT). |
-| **Backups and domain changes**<br>Backup / Restore v3 transfers clients and websites to another VPS. Change panel and REALITY domains without reinstalling. | **Security without extra setup**<br>The panel and subscriptions use HTTPS, internal service ports stay local, and certificates renew automatically. Optional SSH protection and VPS security updates are available. |
+| **Updates and backups**<br>Update compatible v3.0.0+ installations without reinstalling. Backup v3 restores the full managed stack; clients and subscriptions can also be transferred to a fresh installation. | **Security without extra setup**<br>The panel and subscriptions use HTTPS, internal service ports stay local, and certificates renew automatically. Optional SSH protection and VPS security updates are available. |
 
 **Only the essentials by default.** The three primary connections are installed automatically. WebSocket, Trojan gRPC, XTLS Vision, AmneziaWG and CDN-ready XHTTP are installed only if you select them. No Docker or additional web server is needed.
 
@@ -40,18 +42,25 @@ Two domains, a clean VPS, and a few minutes to install.
 
 Use a clean VPS with Ubuntu 24.04, Ubuntu 26.04 or Debian 13, and connect by SSH as **root**. Point two domains to the VPS IP address, one for the panel and one for REALITY. Allow inbound TCP **80** and **443** and UDP **443**. If you enable DoT, you also need TCP **853**. [Technical details](#technical-details).
 
+Already running this project? Read [Updating the project](#installation-vs-update) before selecting Installation.
+
 ```bash
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
 After launching, choose **1 — English** or **2 — Русский**. Then the main menu opens:
 
+<p align="center">
+  <img src="docs-site/assets/readme/menu-en.png" alt="3X-UI AUTO NGINX English main menu" width="512">
+</p>
+
 - **1 — Installation:** set up a new server or perform a full reinstall.
 - **2 — Change Domains:** change the panel domain, REALITY domain, or both without reinstalling.
-- **3 — Backups:** create, list, and restore backups.
+- **3 — Backups:** Create, list and restore backups, or restore clients and subscriptions only.
 - **4 — Telegram Web Proxy Manager:** launch or install the separate Telegram proxy manager.
 - **5 — Cascade:** connect two servers, check status, or disconnect.
-- **6 - My Server Details:** display panel, subscription and AdGuard Home addresses and usernames. Does not change settings or reveal passwords.
+- **6 - My server details:** display panel, subscription and AdGuard Home addresses and usernames. Does not change settings or reveal passwords.
+- **7 — Update:** Update a compatible installation in place, preserving clients and settings.
 - **0 — Exit.**
 
 The menu requires an interactive SSH terminal.
@@ -69,9 +78,22 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 
 <a id="installation-vs-update"></a>
 
-On installations running version 3.0.0 or later, open the current manager and select **7. Update**. The manager automatically creates a backup and updates the project in place, preserving clients, subscriptions, keys and user settings.
+### Updating the project
 
-To move from 2.x, perform a fresh installation and then restore clients and subscriptions.
+**Compatible installations from v3.0.0 onwards:** download the current stable manager using the command above, select **7 — Update** and confirm. The manager checks compatibility, creates and verifies a Backup v3 before making changes, updates the managed configuration and, if needed, 3x-ui and Xray to the verified versions. Clients, subscriptions, keys, panel settings, Cascade and routing rules are preserved.
+
+`SUCCESS` means the update completed; `UP TO DATE` means no update was needed. Afterwards, check the panel and a client connection, and keep the new backup off the VPS if one was created. Connections may briefly be interrupted, managed cover sites may be regenerated, and manual changes to managed Nginx or transport settings may be replaced. Refresh client profiles if needed.
+
+Update requires a compatible installation (`update_contract=1`) and does not add installation options you did not select. If 3x-ui or Xray is newer than the version verified for the project release, Update refuses to downgrade it. On failure, check the error and rollback result. With `ROLLBACK UNVERIFIED`, stop and preserve the backup and recovery files; do not reinstall.
+
+**Upgrading from 2.x to v3.0.0 or later, or deliberately starting with a clean configuration:**
+
+1. Create a Backup v3 and download it off the VPS. Save custom outbounds, routing rules and other settings separately.
+2. Install the new release on the same or a new VPS. Use the previous panel domain to retain subscription URLs, and skip automatic client creation.
+3. Select **3 — Backups → 4 — Restore clients and subscriptions** and choose your archive.
+4. Reapply your custom settings, refresh subscriptions and test connections.
+
+A full Restore returns the archived configuration; it does not upgrade the project.
 
 > [!CAUTION]
 > **Installation is not an update!**
@@ -86,17 +108,7 @@ To move from 2.x, perform a fresh installation and then restore clients and subs
 >
 > **Change Domains** and **Backups** are separate operations that do not reinstall the panel.
 
-<details>
-<summary><strong>How do I update?</strong></summary>
-
-- **3X-UI and Xray:** use the panel's built-in update tools. New versions may not yet be verified with this project's configuration.
-- **3X-UI AUTO NGINX:** select **7. Update** on compatible installations. For 2.x, see the [upgrade guide (Russian)](https://xpromsx.github.io/3x-ui-auto-nginx/guides/update/).
-- **Backup / Restore:** saves and restores data; it does not update the stack.
-- **What version 2.7.0 changes on existing servers:** menu item **6 - My Server Details** can display available saved information. Random DoH paths, the additional-connection question and DoT require a fresh installation. Existing WebSocket and Trojan gRPC profiles remain as before, and existing DoH uses `/dns-query`.
-
-**Do not select Installation just to update!** Update nginx, the Linux kernel and other system packages using your operating system's tools.
-
-</details>
+Use the project's Update for verified 3x-ui and Xray releases. Updating them independently in the panel may block Update until a compatible project release is available. Update nginx, the Linux kernel and other system packages separately using OS tools. To access new manager-only features, download the current manager.
 
 There are seven main installation questions, some with follow-up questions. The defaults are suitable for most users.
 
@@ -106,7 +118,7 @@ There are seven main installation questions, some with follow-up questions. The 
 | 2 | REALITY domain | - | REALITY connection and cover website |
 | 3 | Enhanced VPS security | `Y` | Fail2ban, encrypted DNS for the VPS itself, security updates |
 | 4 | Additional connections (chosen separately) | `N` | WebSocket, Trojan gRPC, XTLS Vision, AmneziaWG, CDN-ready XHTTP |
-| 5 | Russian websites via Cloudflare WARP | `Y` in Russian menu | Hide the VPS IP from Russian sites |
+| 5 | Russian websites via Cloudflare WARP | `N` (English), `Y` (Russian) | Hide the VPS IP from Russian sites |
 | 6 | AdGuard Home | `N` | Personal DNS with DoH and optional DoT |
 | 7 | Client and subscription | `Y` | Subscription link at the end of installation |
 
@@ -159,7 +171,7 @@ The installer configures Fail2ban for SSH protection, encrypted system DNS (DoT)
 Choosing `Y` enables the additional security settings. Swap setup runs independently of this choice:
 
 - **1 GiB swap.** If no swap is active, the filesystem is supported and at least 4 GiB is free, the installer creates and enables a swap file. Existing swap settings remain unchanged. If these conditions are not met, this step is skipped without stopping installation.
-- **SSH protection — Fail2ban.** Limits repeated unsuccessful logins using the actual SSH ports. Existing SSH authentication settings are not changed.
+- **SSH protection — Fail2ban.** Limits repeated unsuccessful logins using the actual SSH ports. Existing SSH authentication settings are not changed. A working, compatible existing SSH jail is preserved.
 - **Encrypted DNS for the VPS itself (DoT).** This protects the server's own DNS queries and is separate from AdGuard Home for your devices. Global Cloudflare and Google resolvers use strict DNS-over-TLS through `systemd-resolved`. Interface/VPN DNS routes and search domains are preserved; their queries may remain unencrypted. If DoT preparation fails and the original DNS is successfully restored, core, Fail2ban and automatic update installation continues independently of DoT; the final result reports the failure and exits nonzero.
 - **Automatic security updates.** Package lists are updated at 02:30, with security updates installed at 02:50.
 - **Automatic reboot — 04:38.** If updates require a reboot, it occurs at the scheduled time, **even when users are connected**. This may interrupt active connections.
@@ -312,29 +324,29 @@ After installation you can access:
 - **DNS-over-HTTPS:** `https://panel.example.com/dns-XXXXXXXXXXXX`. The `dns-XXXXXXXXXXXX` path is random for each installation.
 - **DNS-over-TLS** (if selected): `panel.example.com`, port 853.
 
-These addresses are shown after installation and later under **6 - My Server Details**. The AdGuard Home password cannot be retrieved there; save it during installation.
+These addresses are shown after installation and later under **6 - My server details**. The AdGuard Home password cannot be retrieved there; save it during installation.
 
 Public **53/tcp and 53/udp** are not opened. AdGuard Home needs only one extra public port, **853/tcp**, and only if you enable DoT. Its configuration and data are included in **Backup / Restore v3**. Servers installed before 2.7.0 retain `https://panel.example.com/dns-query`.
 
-**⚠️ Security recommendation**
+**Using DoH and optional ClientID**
 
-A random DoH path is harder to guess, but it is saved on your devices. Create a separate [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) for each device.
+AdGuard Home is separate from the VPS's system DNS. Installing it does not automatically redirect the VPS, Xray or client applications to it. Configure DNS in the intended device or application and check the AdGuard Home query log.
 
-In AdGuard Home, open **Settings → DNS settings → Access settings → Allowed clients** and add the ClientIDs you created. You do not need IP addresses or subnets, except `127.0.0.1` if you use DoT (see below).
+The generated random DoH path is sufficient for personal use when no allowed-clients list is configured. Keep the URL private: a random path is harder to guess, but it is not authentication.
 
-Use DoH addresses like:
+`https://panel.example.com/dns-XXXXXXXXXXXX`
+
+A [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) is optional. It helps identify devices, assign individual rules and restrict access, especially on older installations using the predictable `/dns-query` path. Create persistent clients with long random identifiers, then add them in **Settings → DNS settings → Access settings → Allowed clients** if you want to restrict access. Keep any other required entries.
 
 `https://panel.example.com/dns-XXXXXXXXXXXX/<ClientID>`
 
-Requests without an allowed ClientID will be rejected. Use long, randomly generated identifiers. See the [official AdGuard Home security guide](https://adguard-dns.io/kb/adguard-home/running-securely/).
+When the list is enabled, queries without a matching identifier or another allowed entry are rejected. See the [official AdGuard Home security guide](https://adguard-dns.io/kb/adguard-home/running-securely/).
 
-**DoT and allowed clients:** DoT does not send a ClientID. Enabling the allowed-clients list therefore makes DoT stop working because requests are rejected. Add `127.0.0.1` to the allowed clients to restore DoT. This lets anyone who knows your server address use DoT, just as when no list is configured.
+**DoT and allowed clients:** DoT does not transmit a ClientID. If you use DoT and enable the list, add `127.0.0.1`; otherwise DoT stops responding. This allows anyone who knows the server address to use DoT.
 
-Since **v2.4.1**, new installations can update AdGuard Home directly in its web interface. If you installed it with this script before **v2.4.1**, enable updates with this command on your VPS:
+**Happ example (RAW subscription):** in the active routing profile, set Remote DNS to DoH, enter the full URL in Remote DNS Domain and the VPS's public IP in Remote DNS IP. Save, reconnect and check the query log. With JSON subscriptions, Xray DNS may be defined by the JSON itself; Tunnel DNS is a separate setting.
 
-```bash
-sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.2; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
-```
+AdGuard Home can update through its web interface on installations from v2.4.1 onwards. For older installations, see the [legacy enablement instructions (Russian)](docs/ADGUARD_UPDATES.md).
 
 </details>
 
@@ -348,7 +360,7 @@ DoT is mainly useful for Android's **Private DNS** feature, which accepts a host
 - DoT listens on `panel.example.com`, port **853**. The installer adds the UFW rule and uses the panel domain certificate.
 - **Port 853 is open to the entire internet.** DoT does not send a ClientID, so anyone who knows the server address can use it. Concurrent connections are limited to about 50 per source IP to reduce overload.
 - AdGuard Home logs DoT queries as coming from `127.0.0.1`, because Nginx forwards them locally. Individual DoT devices are not distinguishable in its log.
-- If AdGuard Home has an allowed-clients list, DoT stops working. See the ClientID instructions above.
+- If an allowed-clients list is configured, add `127.0.0.1` to keep DoT working; see the ClientID instructions above.
 - DoT settings are saved in Backup / Restore v3 and handled when changing domains.
 
 **Android setup.** Find **Private DNS** in Android settings, choose the hostname option and enter the panel domain.
@@ -389,9 +401,11 @@ If an OS update requires a reboot, the installer will notify you. **The initial 
 
 **Complete websites instead of basic placeholders.** Fresh installations automatically create separate multi-page websites for the panel and REALITY. The project offers at least 2,592 ready-made design and text combinations, with working navigation, illustrations, and mobile-friendly layouts. Optional XTLS Vision gets its own website.
 
-**Every installation looks different.** Site names, colors, images, icons, and text are personalized automatically. Additional pages have different articles and publication dates. The chosen site is preserved across Backup/Restore and domain changes.
+**Every installation looks different.** Site names, colors, images, icons, and text are personalized automatically. Additional pages have different articles and publication dates. The chosen site is preserved across Backup/Restore and domain changes. During Update, managed cover sites may be regenerated.
 
 **Hysteria2 with HTTP/3 cover.** Ordinary HTTPS requests over TCP and unauthenticated HTTP/3 requests over UDP on the REALITY domain receive the same complete website. The panel and subscriptions remain isolated from this public HTTP/3 cover.
+
+**Protection against excessive HTTP requests.** Nginx limits public cover websites to 20 requests per second per IP per site and 200 per second per site overall, with bursts allowed. Excess requests receive HTTP 429 with a matching error page. These limits do not apply to proxy connections, the panel, subscriptions, AdGuard Home or Telegram WEB Proxy. This is not a replacement for DDoS protection.
 
 ## 🚀 Connection profiles
 
@@ -431,9 +445,13 @@ Only recognized project installations are supported, including compatible v2.1.7
 
 Open **3 — Backups** in the main menu to create a backup, list archives or run Restore. You can use a backup after reinstalling the OS or to move to another VPS. To restore it, the operating system, its version and the CPU architecture must match the backup.
 
+A full Backup v3 restores the archived managed stack; **Restore clients and subscriptions** transfers only user data into a fresh installation. Use [Update](#installation-vs-update) for compatible installations. The current manager supports Backup v3; older v2 archives require the corresponding older utility. TWPM data is managed separately, and full Restore is blocked on a target VPS with TWPM installed.
+
 On a fresh VPS, Restore from the manager waits for automatic system updates to finish (up to 60 minutes). Do not restart the server during that time.
 
 For command-line use, run the following as root:
+
+**Before restoring:** the restore command replaces managed data. Unlike the menu, it does not enable UFW or configure additional Security settings. Replace `ARCHIVE.tar.gz` with your trusted backup's filename.
 
 ```bash
 # Create a new backup
@@ -443,7 +461,7 @@ x-ui-backup backup
 x-ui-backup list
 
 # Restore a selected backup
-x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
+x-ui-backup restore /var/backups/x-ui/ARCHIVE.tar.gz
 ```
 
 Archives are saved in `/var/backups/x-ui/`.
@@ -460,13 +478,15 @@ The destination must be new; original paths are preserved under `files/` and lin
 
 [Recovery on a new VPS](#restore-on-new-vps).
 
+<a id="restore-clients"></a>
+
 ### Restore clients and subscriptions
 
-After installation on a new or reinstalled VPS, open **Backups → 4. Restore clients and subscriptions**. Select a regular Backup v3 archive by number or enter its absolute path. Enter the current panel credentials and the 2FA code if enabled. This option restores client data into a running installation without updating the project or restoring the full stack.
+After installation on a new or reinstalled VPS, open **3 — Backups → 4 — Restore clients and subscriptions**. Select a regular Backup v3 archive by number or enter its absolute path. Enter the new panel credentials and the 2FA code if enabled. This imports user data into the running installation without replacing the full stack.
 
-The archive supplies client identifiers and credentials, status, limits, expiry, supported counters, and shared RAW and JSON paths. Clients receive all eligible active local connections. The running installation supplies the domain, certificates, connection settings, and the rest of the infrastructure. The panel allocates AmneziaWG addresses from its current subnet.
+The archive supplies client identifiers and credentials, status, limits, expiry, supported counters, and shared RAW and JSON paths. Clients receive all eligible active local connections. The running installation supplies the domain, certificates, connection settings, and the rest of the infrastructure. The panel allocates AmneziaWG addresses from its current subnet. Custom inbounds and individual client assignments, outbounds, routing rules, balancers and other server settings are not imported; recreate the settings you need.
 
-Existing URLs work with the previous panel domain. If the IP changed, point that domain to the new VPS through DNS. Links this server previously issued with different paths may stop working. Refresh subscriptions manually in your client apps to load the new connections.
+Previous subscription URLs remain valid after successful import if you retain the panel domain and relevant subscription types. If the IP changes, point the domain to the new VPS through DNS. URLs previously issued by the new installation with different paths may stop working. Refresh subscriptions to load the new connection settings; individual connection links may change.
 
 If an email or subscription identifier matches, the existing record is preserved and the archived client is skipped. An empty identifier or one shared by multiple archive records also causes a skip. `PARTIAL` means the paths were applied and some clients were skipped, some records were incomplete, or verification could not confirm operation. Check the clients, limits, expiry, and connections in 3x-ui.
 
@@ -545,13 +565,13 @@ Each removal requires separate confirmation. Applying changes on the entry serve
 - **WARP:** it cannot be configured on the entry server. If present, remove its outbound and routing rules in the 3X-UI panel before connecting. WARP is allowed on the exit server.
 - **AmneziaWG:** these connections do not pass through the exit server.
 - **Routing rules:** earlier user-defined rules may direct some traffic elsewhere. The manager warns you before connecting.
-- **Exit unavailable:** traffic routed through the exit server stops working until the exit is reachable again. There is no automatic backup exit.
+- **Exit unavailable:** traffic routed through the exit server stops working until it becomes reachable again, unless you have configured a balancer with a backup exit.
 - **QUIC over Vision:** UDP/443 does not pass through this Cascade.
 - **Domain changes:** after changing domains on the exit VPS, reconnect it from the entry server.
 
 ### Backups
 
-Backup v3 saves Cascade settings. Restoring a backup on the entry server retains the Cascade configuration alongside the other 3X-UI data.
+Backup v3 saves Cascade settings. Restoring a backup on the entry server retains the Cascade configuration alongside the other 3X-UI data. Update in place also preserves Cascade; after a fresh installation with client-only import, configure Cascade again.
 
 Cascade has been tested on two real VPS servers using REALITY, XHTTP, and Hysteria2. Compatibility with every client app and configuration has not been confirmed.
 
@@ -578,6 +598,8 @@ Service interfaces are not exposed directly to the internet: the panel, subscrip
 
 Telegram Web Proxy Manager can be installed on Ubuntu 24.04 and 26.04.
 
+TWPM uses Telemt with real HTTPS, its own domain and the same Nginx instance. You can also configure its outbound traffic through SOCKS5 using an existing Cascade. Back up TWPM separately; its data is not part of the project's Backup v3.
+
 <a id="technical-details"></a>
 
 ## ⚙️ Technical details and compatibility
@@ -585,26 +607,24 @@ Telegram Web Proxy Manager can be installed on Ubuntu 24.04 and 26.04.
 - **Systems:** Ubuntu 24.04, Ubuntu 26.04, and Debian 13.
 - **UFW:** allows 80/tcp, 443/tcp and 443/udp (plus 8443/udp when AmneziaWG is selected and 853/tcp when DoT is selected). During Installation, inactive UFW is enabled only after SSH access has been checked; otherwise it remains off with a warning. The manager can enable UFW after Restore **only if explicitly selected** and the safety checks pass. Standalone `x-ui-backup restore` does not enable UFW.
 - **Certificates:** Let's Encrypt webroot and `certbot.timer` renew certificates automatically without stopping nginx.
-- **3x-ui version:** by default, the installer uses the latest version thoroughly tested for compatibility with 3X-UI AUTO NGINX, which may not be the latest upstream release. After installation, you can update 3x-ui using its built-in update mechanism, but the new version may not yet be verified against this configuration. You can also explicitly select another stable release with `-version <tag>` (minimum supported version: v3.8.0); the installer will warn that compatibility has not been verified.
+- **Connection tracking:** Installation, Restore and Update can raise the Linux conntrack limit according to RAM when supported, without reducing an existing higher limit.
+- **3x-ui version:** the installer uses the latest version verified for this project's configuration, which may differ from the newest upstream release. On compatible installations, use Update to obtain the verified 3x-ui and Xray versions. Independent updates in the panel are possible, but a newer version can block project Update. The installer also accepts another stable release with `-version <tag>` (minimum supported version: v3.8.0) and warns if compatibility has not been verified.
 
 <a id="restore-on-new-vps"></a>
 
 ### Recovery on a new VPS
 
-Match the backup's OS, OS version, and architecture. If the VPS IP address changes, update the DNS records for your domains. Do not run `x-ui-latest.sh` — install only the utility, then restore a trusted archive:
+Use a clean VPS with the same OS family, version and architecture as the backup. Copy your Backup v3 archive to a private directory on the VPS (for example `/var/backups/x-ui/`). Point your domains at the new IP if it changes.
 
-```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
-install -o root -g root -m 0755 /tmp/x-ui-backup /usr/local/bin/x-ui-backup
-rm -f /tmp/x-ui-backup
-x-ui-backup restore /root/<archive>.tar.gz
-```
+1. Connect by SSH as root and download and launch the stable manager using the command in [Quick start](#installation).
+2. Select **3 — Backups → 3 — Restore backup**, not Installation. Choose the archive and confirm.
+3. Follow the Security and UFW prompts. Check panel access, subscriptions, proxy connections and any additional services.
 
-SSH, OS configuration, and the base firewall remain the administrator's responsibility. For v2 archives, use the utility from the matching older release.
+Do not install the project first. Full Restore returns the archived configuration. SSH access, OS settings and unrelated services remain your responsibility. Full Restore is blocked if TWPM is installed on the target; save and manage its data separately.
 
 ## 🤝 Credits / Origins
 
-This project is based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) by mozaroc. It grew out of a fork of [x-ui-pro](https://github.com/mozaroc/x-ui-pro) and traces back to the original [x-ui-pro](https://github.com/GFW4Fun/x-ui-pro) by GFW4Fun. This project is now maintained independently. Since the fork, nginx/SNI routing and XHTTP configuration have been substantially reworked, TLS certificate issuance and automatic renewal redesigned, and Backup / Restore v3 introduced with recovery and rollback capabilities. Hysteria2 on UDP/443 was added, and identified security issues were fixed.
+This project is based on [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) by mozaroc. It grew out of a fork of [x-ui-pro](https://github.com/mozaroc/x-ui-pro) and traces back to the original [x-ui-pro](https://github.com/GFW4Fun/x-ui-pro) by GFW4Fun. This project is now maintained independently. Since the fork, nginx/SNI routing and XHTTP configuration have been substantially reworked, TLS certificate issuance and automatic renewal redesigned, and Backup / Restore v3 introduced with recovery and rollback capabilities. Hysteria2 on UDP/443 was added, and identified security issues were fixed. In-place Update with data preservation and verified rollback has also been introduced.
 
 The panel comes from [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). Third-party authors retain their rights and existing licenses.
 
