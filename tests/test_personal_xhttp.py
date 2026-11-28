@@ -333,6 +333,7 @@ CD_COUNT=0
                                         "domain": "panel.example.com" if provided else "",
                                         "reality_domain": "reality.example.com" if provided else ""})
                 self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, "")
                 self.assertTrue(result.stdout.endswith("panel.example.com|reality.example.com"))
                 for prompt in ("Enter the domain for your 3X-UI panel:", "Enter the domain for VLESS REALITY:"):
                     self.assertEqual(prompt in result.stdout, not provided)

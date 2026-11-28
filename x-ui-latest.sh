@@ -18,10 +18,10 @@ ui_text() {
     printf "$format" "$@"
 }
 
-msg_ok() { if ui_color_enabled; then printf '\e[1;32m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
-msg_err() { if ui_color_enabled; then printf '\e[1;31m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
-msg_inf() { if ui_color_enabled; then printf '\e[1;36m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
-ui_color_enabled() { [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; }
+msg_ok() { if msg_color_enabled; then printf '\e[1;32m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+msg_err() { if msg_color_enabled; then printf '\e[1;31m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+msg_inf() { if msg_color_enabled; then printf '\e[1;36m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
+msg_color_enabled() { [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; }
 msg_warn() { if [[ -t 1 && ${TERM:-dumb} != dumb && ! ${NO_COLOR+x} ]]; then printf '\e[1;33m%s\e[0m\n' "$1"; else printf '%s\n' "$1"; fi; }
 # 38;5;208 is orange: explanatory text of refusals and warnings (ui_note, ui_wrap).
 ui_note() {
@@ -4173,7 +4173,7 @@ recover_domain_operation() (
        python3 -I -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("operation") != "update")' /var/lib/3x-ui-auto-nginx/change-domains/journal.json; then
         [[ ${1:-} != menu ]] || return 0
         local color=0
-        if ui_color_enabled; then color=1; fi
+        if msg_color_enabled; then color=1; fi
         UI_LANG="$UI_LANG" XUI_UPDATE_COLOR=$color bash /var/lib/3x-ui-auto-nginx/update/source/assets/update/driver.sh recover
         exit $?
     fi
@@ -5088,7 +5088,7 @@ PYBUNDLE
     fi
     rm -f "$stage/source.tar.gz"
     local variable launch_error color=0
-    if ui_color_enabled; then color=1; fi
+    if msg_color_enabled; then color=1; fi
     local -a environment=("--setenv=UI_LANG=$UI_LANG" "--setenv=XUI_UPDATE_COLOR=$color")
     for variable in https_proxy HTTPS_PROXY http_proxy HTTP_PROXY no_proxy NO_PROXY CURL_CA_BUNDLE; do
         [[ ! -v $variable ]] || environment+=("--setenv=$variable")

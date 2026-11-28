@@ -142,7 +142,7 @@ class InPlaceUpdate(unittest.TestCase):
             ):
                 with self.subTest(tty=tty, settings=settings):
                     result = subprocess.run(
-                        ['bash', '-c', 'source "$1"; ui_color_enabled', 'bash', INSTALLER],
+                        ['bash', '-c', 'source "$1"; msg_color_enabled', 'bash', INSTALLER],
                         env=settings, stdout=terminal if tty else subprocess.PIPE,
                         check=False, timeout=5,
                     )
