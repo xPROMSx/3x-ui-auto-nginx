@@ -6,7 +6,7 @@
 
 ### 在自己的 VPS 上自动部署 3X-UI / XRAY-CORE
 
-**REALITY · XHTTP · HYSTERIA2 · CASCADE · ADGUARD HOME · BACKUP / RESTORE**
+**REALITY · XHTTP · HYSTERIA2 · CASCADE · ADGUARD HOME · UPDATE · BACKUP / RESTORE**
 
 两个域名，一台全新的 VPS，只需几分钟即可完成安装。
 
@@ -16,11 +16,13 @@
 [![Debian](https://img.shields.io/badge/Debian-13-A81D33?logo=debian&logoColor=white)](#technical-details)
 [![Support](https://img.shields.io/badge/Support-Donate-EA4AAA)](docs/SUPPORT_ZH_CN.md)
 
-[📦 发布版本](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [🔗 级联](#cascade) · [🌐 伪装网站](#cover-sites) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ 支持开发](#support-development) · [💬 交流反馈](https://t.me/promsdev)
+[📦 发布版本](https://github.com/xPROMSx/3x-ui-auto-nginx/releases) · [🔗 级联](#cascade) · [🌐 伪装网站](#cover-sites) · [✈️ Telegram Web Proxy Manager](#telemt-web-manager) · [❤️ 支持开发](#support-development) · [💬 交流反馈](https://t.me/promsdev) · [🔄 更新](#installation-vs-update)
+
+[📚 文档网站（俄语）](https://xpromsx.github.io/3x-ui-auto-nginx/)
 
 </div>
 
-**3X-UI AUTO NGINX** 是一款免费的安装工具，可在自己的 VPS 上部署 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray。只需填写两个域名并运行一条命令。脚本会配置 Nginx、HTTPS 证书、REALITY、XHTTP、Hysteria2、订阅链接及伪装网站。通过菜单还可更换域名、管理备份、配置两台 VPS 的级联，以及部署个人 DNS 服务器。
+**3X-UI AUTO NGINX** 是一款免费的安装工具，可在自己的 VPS 上部署 [3x-ui](https://github.com/MHSanaei/3x-ui) 和 Xray。只需填写两个域名并运行一条命令。脚本会配置 Nginx、HTTPS 证书、REALITY、XHTTP、Hysteria2、订阅链接及伪装网站。通过菜单还可更换域名、管理备份、配置两台 VPS 的级联，以及部署个人 DNS 服务器。 现在，兼容的安装可以直接就地更新，无需重装服务器。
 
 **不只是默认占位页。** 新安装会为面板和 REALITY 创建带导航、文章与图片的多页面网站，共有至少 2592 种变化。未经认证的 Hysteria2 HTTP/3 请求也会显示伪装网站。无需 Docker 或额外 Web 服务器。
 
@@ -30,7 +32,7 @@
 | --- | --- |
 | **几分钟即可使用**<br>两个域名、一台全新 VPS 和一条命令。自动配置 REALITY、XHTTP 和 Hysteria2，提供面板地址和订阅链接。 | **看起来像普通网站**<br>完整的多页面伪装站点，带导航、文章和图片，至少 2592 种变化，支持 Hysteria2 HTTP/3 伪装。 |
 | **两台 VPS 级联**<br>设备连接入口服务器，流量从另一个出口服务器访问互联网，例如不同国家的 VPS。通过菜单配置，无需手改文件。 | **个人去广告 DNS**<br>AdGuard Home 可以拦截广告和跟踪。设备可使用 DNS-over-HTTPS（DoH）或可选的 DNS-over-TLS（DoT）。 |
-| **备份和域名更换**<br>Backup / Restore v3 可将客户端及网站迁移到新的 VPS。更换面板和 REALITY 域名无需重装。 | **简便的安全保护**<br>面板和订阅通过 HTTPS 提供，内部端口仅本地使用，证书自动续期。可选择启用 SSH 防护和 VPS 安全更新。 |
+| **更新与备份**<br>兼容的 v3.0.0 及更高版本无需重装即可更新。Backup v3 支持完整恢复，也可以仅将客户端和订阅迁移到全新安装。 | **简便的安全保护**<br>面板和订阅通过 HTTPS 提供，内部端口仅本地使用，证书自动续期。可选择启用 SSH 防护和 VPS 安全更新。 |
 
 **默认仅安装必要连接。** REALITY、XHTTP、Hysteria2 始终创建。WebSocket、Trojan gRPC、XTLS Vision、AmneziaWG 和 CDN 专用 XHTTP 仅在选择后创建。无需 Docker。
 
@@ -40,18 +42,25 @@
 
 使用全新的 Ubuntu 24.04、Ubuntu 26.04 或 Debian 13 VPS，通过 SSH 以 **root** 身份登录。将两个域名的 DNS 指向 VPS IP，分别用于面板和 REALITY。需要开放 TCP **80**、**443** 及 UDP **443**。若开启 DoT，还需要 TCP **853**。参见[技术详情](#technical-details)。
 
+如果已经安装本项目，请先阅读[更新项目](#installation-vs-update)，不要直接选择 Installation。
+
 ```bash
 curl -fSL https://github.com/xPROMSx/3x-ui-auto-nginx/releases/latest/download/x-ui-latest.sh -o x-ui-latest.sh && bash x-ui-latest.sh
 ```
 
 运行脚本后，选择 **1 — English** 或 **2 — Русский**，即可进入主菜单：
 
+<p align="center">
+  <img src="docs-site/assets/readme/menu-en.png" alt="3X-UI AUTO NGINX 英文主菜单" width="512">
+</p>
+
 - **1 — Installation：**全新部署或完整重装服务器。
 - **2 — Change Domains：**无需重装即可更换面板域名、REALITY 域名或两者。
-- **3 — Backups：**创建、查看和恢复备份。
+- **3 — Backups：**创建、查看和恢复备份，也可以仅恢复客户端和订阅。
 - **4 — Telegram Web Proxy Manager：**启动或安装独立的 Telegram 代理管理器。
 - **5 — Cascade：**连接两台服务器、查看状态或断开级联。
-- **6 - My Server Details：**查看面板、订阅、AdGuard Home 地址及用户名，不更改配置，也不显示密码。
+- **6 - My server details：**查看面板、订阅、AdGuard Home 地址及用户名，不更改配置，也不显示密码。
+- **7 — Update：**就地更新兼容的安装，保留客户端和设置。
 - **0 — Exit：**退出。
 
 菜单需要在交互式 SSH 终端中使用。
@@ -69,9 +78,22 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 
 <a id="installation-vs-update"></a>
 
-对于 3.0.0 及更高版本的安装，请运行最新版管理器并选择 **7. Update**。管理器会自动创建备份并就地更新项目，保留客户端、订阅、密钥和用户设置，无需重装服务器。
+### 更新项目
 
-从 2.x 迁移时，请先执行全新安装，然后恢复客户端和订阅。
+**兼容的 v3.0.0 及更高版本：**使用上方命令下载当前稳定版管理器，选择 **7 — Update** 并确认。管理器会检查兼容性，在修改前创建并验证 Backup v3，更新项目管理的配置，并在需要时将 3x-ui 和 Xray 更新至已验证的版本。客户端、订阅、密钥、面板设置、级联及路由规则会保留。
+
+`SUCCESS` 表示更新完成，`UP TO DATE` 表示无需更新。之后检查面板和客户端连接，如创建了新备份，请在 VPS 之外保存。连接可能短暂中断；受管理的伪装网站可能重新生成，手动修改的受管理 Nginx 或传输配置可能被替换。必要时刷新客户端配置。
+
+Update 需要兼容的安装（`update_contract=1`），不会补装此前未选择的安装选项。如果已安装的 3x-ui 或 Xray 比项目发行版中验证过的版本更新，Update 会拒绝降级。更新失败时请查看错误及回滚结果。如果出现 `ROLLBACK UNVERIFIED`，请停止操作，保留备份和恢复文件，不要重装。
+
+**从 2.x 升级至 v3.0.0 或更高版本，或主动重新建立干净的配置：**
+
+1. 创建 Backup v3 并下载到 VPS 之外，另外保存自定义出站、路由规则及其他设置。
+2. 在当前或新的 VPS 上安装新版本。保留原面板域名以保留订阅 URL，并跳过自动创建客户端。
+3. 选择 **3 — Backups → 4 — Restore clients and subscriptions**，指定备份归档。
+4. 重新应用需要的自定义设置，刷新订阅并测试连接。
+
+完整 Restore 用于恢复归档中的配置，并非升级项目。
 
 > [!CAUTION]
 > **安装不等于更新！**
@@ -86,16 +108,7 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 >
 > **Change Domains** 和 **Backups** 是独立操作，不会重装面板。
 
-<details>
-<summary><strong>如何更新？</strong></summary>
-
-- **3X-UI 和 Xray：**使用面板自带的更新功能。新版本与项目配置的兼容性可能尚未验证。
-- **Backup / Restore：**用于保存和恢复数据，不会升级已安装的服务。
-- **对于 2.7.0 之前安装的服务器：**菜单 **6 - My Server Details** 会显示能够读取的旧数据。随机 DoH 路径、额外连接的配置问题和 DoT 仅适用于全新安装。已有的 WebSocket 和 Trojan gRPC 保持原状，DoH 继续使用 `/dns-query`。
-
-**不要为了更新而选择 Installation！** 请使用操作系统的软件包管理工具更新 nginx、Linux 内核和其他系统软件包。
-
-</details>
+建议通过项目的 Update 获取已验证的 3x-ui 和 Xray 版本。在面板中单独更新可能导致 Update 无法使用，直到项目发布兼容版本。请使用操作系统工具单独更新 nginx、Linux 内核及其他系统软件包。如只需使用管理器新增功能，下载当前管理器即可。
 
 安装包含七个主要问题，其中部分会有追问。大多数用户可以使用默认值。
 
@@ -105,7 +118,7 @@ curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/x-ui-l
 | 2 | REALITY 域名 | - | REALITY 连接、伪装网站 |
 | 3 | VPS 增强安全 | `Y` | Fail2ban、服务器自身的加密 DNS、安全更新 |
 | 4 | 额外连接（分别选择） | `N` | WebSocket、Trojan gRPC、XTLS Vision、AmneziaWG、CDN XHTTP |
-| 5 | 俄罗斯网站使用 WARP | 俄语菜单为 `Y` | 隐藏 VPS IP |
+| 5 | 俄罗斯网站使用 WARP | 英语菜单 `N`，俄语菜单 `Y` | 隐藏 VPS IP |
 | 6 | AdGuard Home | `N` | 含 DoH 和可选 DoT 的个人 DNS |
 | 7 | 客户端和订阅 | `Y` | 安装后提供订阅链接 |
 
@@ -158,7 +171,7 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 选择 `Y` 会启用额外的安全设置。swap 的配置与此选择无关：
 
 - **1 GiB swap。** 如果没有启用的 swap、文件系统受支持且至少有 4 GiB 可用空间，安装程序会创建并启用 swap 文件。现有 swap 设置不会被修改。如果不满足条件，将跳过此步骤而不中断安装。
-- **SSH 防护 — Fail2ban。** 根据实际 SSH 监听端口限制反复失败的登录尝试，不修改现有的 SSH 身份验证设置。
+- **SSH 防护 — Fail2ban。** 根据实际 SSH 监听端口限制反复失败的登录尝试，不修改现有的 SSH 身份验证设置。 已正常运行且兼容的现有 SSH jail 会保留。
 - **加密 DNS（DoT）。** 全局 Cloudflare 和 Google DNS 服务器通过 `systemd-resolved` 使用严格的 DNS-over-TLS。接口/VPN 的 DNS 路由和搜索域保持不变；其查询可能仍未加密。如果 DoT 准备失败但原有 DNS 已成功恢复，核心组件、Fail2ban 和自动更新将独立于 DoT 继续安装；最终结果会报告失败并返回非零退出码。
 - **自动安全更新。** 02:30 更新软件包列表，02:50 安装安全更新。
 - **自动重启 — 04:38。** 如果更新要求重启，系统将在指定时间重启，**即使用户仍有活动会话**，连接也可能因此中断。
@@ -311,29 +324,29 @@ bash x-ui-latest.sh -subdomain panel.example.com -reality_domain reality.example
 - **DNS-over-HTTPS：** `https://panel.example.com/dns-XXXXXXXXXXXX`，其中 `dns-XXXXXXXXXXXX` 为随机路径。
 - **DNS-over-TLS**（选择时）：`panel.example.com`，端口 853。
 
-安装完成后以及菜单 **6 - My Server Details** 中会显示这些地址。AdGuard Home 的密码之后无法查看，请在安装时保存。
+安装完成后以及菜单 **6 - My server details** 中会显示这些地址。AdGuard Home 的密码之后无法查看，请在安装时保存。
 
 不会开放公网 TCP/UDP **53**。只有选择 DoT 时才会为 AdGuard Home 额外开放公网 **853** 端口。配置和数据包含在 **Backup / Restore v3** 中。2.7.0 之前安装的服务器继续使用 `https://panel.example.com/dns-query`。
 
-**⚠️ 安全建议**
+**使用 DoH 与可选的 ClientID**
 
-随机 DoH 地址更难被猜测，但它会保存在设备的设置中。建议为每台设备创建一个独立的 [ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid)。
+AdGuard Home 与 VPS 的系统 DNS 相互独立。安装它不会自动将 VPS、Xray 或客户端应用的 DNS 查询转向它。请在需要使用的设备或应用中配置 DNS，然后检查 AdGuard Home 查询日志。
 
-在 AdGuard Home 中打开 **Settings → DNS settings → Access settings → Allowed clients**，填写创建的 ClientID。通常无需添加 IP 或网段；使用 DoT 时需要将 `127.0.0.1` 作为例外加入。
+如果未设置允许客户端列表，随机生成的 DoH 路径即可用于个人使用。请妥善保管 URL：随机路径难以猜测，但不等同于身份认证。
 
-DoH 地址示例：
+`https://panel.example.com/dns-XXXXXXXXXXXX`
+
+[ClientID](https://adguard-dns.io/kb/adguard-home/clients/#clientid) 是可选项，可用于区分设备、设置独立规则和限制访问，尤其适合仍使用可预测的 `/dns-query` 路径的旧安装。创建具有长随机标识的持久客户端；若需限制访问，在 **Settings → DNS settings → Access settings → Allowed clients** 中加入这些标识，并保留其他必要条目。
 
 `https://panel.example.com/dns-XXXXXXXXXXXX/<ClientID>`
 
-不带允许的 ClientID 的查询会被拒绝。请使用长且随机的标识符。阅读[官方安全指南](https://adguard-dns.io/kb/adguard-home/running-securely/)。
+启用列表后，未匹配允许标识或其他允许条目的查询将被拒绝。参见 [AdGuard Home 官方安全指南](https://adguard-dns.io/kb/adguard-home/running-securely/)。
 
-**DoT 与客户端允许列表：** DoT 不会传递 ClientID。启用允许列表后，DoT 查询会被拒绝而停止工作。将 `127.0.0.1` 添加到允许列表即可恢复；但这也意味着任何知道服务器地址的人都能使用 DoT，与未启用列表时一样。
+**DoT 与允许客户端列表：**DoT 不传递 ClientID。如果同时使用列表与 DoT，请加入 `127.0.0.1`，否则 DoT 将停止响应。这意味着知道服务器地址的人均可使用 DoT。
 
-自 **v2.4.1** 起，新安装可以直接在 AdGuard Home 网页界面更新。若此前使用该安装器安装的是旧版本，请在 VPS 上执行：
+**Happ 示例（RAW 订阅）：**在启用的路由配置中，将 Remote DNS 类型设为 DoH，Remote DNS Domain 填写完整 URL，Remote DNS IP 填写 VPS 公网 IP。保存后重新连接并检查查询日志。JSON 订阅中的 Xray DNS 可能由 JSON 本身定义；Tunnel DNS 是独立设置。
 
-```bash
-sudo bash -c 'set -euo pipefail; umask 077; d=$(mktemp -d); trap '\''rm -rf -- "$d"'\'' EXIT; cd "$d"; u=https://github.com/xPROMSx/3x-ui-auto-nginx/releases/download/v2.4.2; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh" -o x-ui-latest.sh; curl -fLsS --connect-timeout 15 --max-time 120 "$u/x-ui-latest.sh.sha256" -o x-ui-latest.sh.sha256; sha256sum --check --strict x-ui-latest.sh.sha256; bash ./x-ui-latest.sh --enable-agh-updates'
-```
+从 v2.4.1 起安装的 AdGuard Home 可通过网页界面更新。更早的安装请参见[旧版启用说明（俄语）](docs/ADGUARD_UPDATES.md)。
 
 </details>
 
@@ -347,7 +360,7 @@ DoT 主要用于 Android 的“私人 DNS”，该设置仅接收主机名。若
 - DoT 在 `panel.example.com` 的 **853** 端口接收查询。安装器会自动加入 UFW 规则并使用面板域名证书。
 - **853 端口向整个互联网开放。** DoT 不传递 ClientID，因此知道地址的人均可连接。每个来源 IP 同时连接数限制在约 50 个。
 - DoT 查询在 AdGuard Home 日志中显示为 `127.0.0.1`，因为 Nginx 在同一服务器上进行本地转发。因此无法在日志中区分各个 DoT 设备。
-- 启用允许客户端列表后，DoT 会停止工作。修复方法见上方 ClientID 说明。
+- 若设置了允许客户端列表，请加入 `127.0.0.1` 以保持 DoT 正常工作；参见上方 ClientID 说明。
 - DoT 配置保存在 Backup / Restore v3 中，并在更换域名时得到处理。
 
 **Android 设置。** 在手机设置中找到“私人 DNS”，选择主机名模式并填写面板域名。
@@ -388,9 +401,11 @@ ufw delete allow 853/tcp
 
 **告别简单的占位页，使用完整网站。**全新安装会自动为面板和 REALITY 创建不同的多页面网站。项目提供至少 2592 种现成的设计与文案组合，网站包含可用的导航、插图和适配手机的布局。启用可选的 XTLS Vision 后，它也会获得独立的网站。
 
-**每次安装都有自己的风格。**网站名称、配色、图片、图标和文案会自动个性化配置。附加页面包含不同内容和发布日期。执行 Backup/Restore 或更换域名时，已选定的网站会保留。
+**每次安装都有自己的风格。**网站名称、配色、图片、图标和文案会自动个性化配置。附加页面包含不同内容和发布日期。执行 Backup/Restore 或更换域名时，已选定的网站会保留。 Update 可能重新生成受项目管理的伪装网站。
 
 **Hysteria2 的 HTTP/3 伪装。**在 REALITY 域名下，普通 TCP HTTPS 请求和未经认证的 UDP HTTP/3 请求都会获得同一个完整网站。面板和订阅接口与公开的 HTTP/3 伪装服务保持隔离。
+
+**防止过量 HTTP 请求。** Nginx 对公开伪装网站限制每个 IP 对每个站点每秒 20 个请求，每站点总体每秒 200 个请求，并允许短时间突发流量。超额请求返回 HTTP 429 和与站点风格一致的错误页。限制不影响代理连接、面板、订阅、AdGuard Home 或 Telegram WEB Proxy，也不能替代 DDoS 防护。
 
 ## 🚀 连接配置
 
@@ -430,9 +445,13 @@ REALITY、XHTTP 和 Hysteria2 安装后即可使用。其他连接只有在第 4
 
 在主菜单中打开 **3 — Backups**，即可创建备份、查看备份文件或执行 Restore。重装操作系统后，或者迁移到另一台 VPS 时，都可以使用备份。恢复时，操作系统、其版本和处理器架构必须与备份一致。
 
+完整 Backup v3 恢复归档中的受管理服务，而 **Restore clients and subscriptions** 仅将用户数据迁移到全新安装。兼容安装请使用 [Update](#installation-vs-update)。当前管理器支持 Backup v3；v2 归档需使用对应旧版本工具。TWPM 数据单独管理，目标 VPS 已安装 TWPM 时将阻止完整 Restore。
+
 在全新 VPS 上通过菜单执行 Restore 时，安装器会等待自动系统更新结束（最长 60 分钟）；此期间不要重启服务器。
 
 也可以使用以下命令（以 root 身份运行）：
+
+**恢复前：**恢复命令会替换受管理的数据。与菜单不同，它不会启用 UFW 或配置额外的 Security 设置。将 `ARCHIVE.tar.gz` 替换为可信备份的文件名。
 
 ```bash
 # 创建备份
@@ -442,22 +461,32 @@ x-ui-backup backup
 x-ui-backup list
 
 # 恢复指定备份
-x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
+x-ui-backup restore /var/backups/x-ui/ARCHIVE.tar.gz
 ```
 
 备份文件保存在 `/var/backups/x-ui/`。
 
 > **备份包含敏感数据：** 客户端数据库、密码和证书私钥。请在 **VPS 之外** 保存副本，并且只恢复来源可信的备份文件。
 
+如果无法执行 Restore，可以提取文件以便手动恢复，无需安装软件包或启动服务。需要 Bash、Python 3 以及归档和目标目录的访问权限，不要求 root：
+
+```bash
+x-ui-backup extract /path/to/archive.tar.gz ./recovered-backup
+```
+
+目标目录必须是新目录；原始路径保存在 `files/` 中，符号链接会被跳过。数据包含敏感信息，覆盖运行中的服务器之前请仔细检查。
+
 [在新 VPS 上恢复](#restore-on-new-vps)。
+
+<a id="restore-clients"></a>
 
 ### 恢复客户端和订阅
 
-在新 VPS 或重装后的 VPS 上完成安装后，打开 **备份 → 4. 恢复客户端和订阅**。按编号选择普通的 Backup v3 归档，或输入其绝对路径。输入当前面板的登录凭据，启用双因素认证时还需输入验证码。此选项将客户端数据恢复到正在运行的安装中，无需更新项目或完整恢复整个系统。
+在新 VPS 或重装后的 VPS 上完成安装后，打开 **3 — Backups → 4 — Restore clients and subscriptions**。按编号选择普通的 Backup v3 归档，或输入绝对路径。输入新面板登录凭据及已启用时的 2FA 验证码。此操作将用户数据导入当前安装，不会替换整个服务栈。
 
-从归档恢复客户端标识、凭据、状态、限额、到期时间、受支持的计数器，以及共用的 RAW 和 JSON 路径。客户端会获得当前服务器上所有符合条件且已启用的本地连接。域名、证书、连接设置和其余基础设施沿用当前安装。AmneziaWG 地址由面板从当前子网分配。
+从归档恢复客户端标识、凭据、状态、限额、到期时间、受支持的计数器，以及共用的 RAW 和 JSON 路径。客户端会获得当前服务器上所有符合条件且已启用的本地连接。域名、证书、连接设置和其余基础设施沿用当前安装。AmneziaWG 地址由面板从当前子网分配。 不会导入自定义入站、客户端的单独绑定、出站、路由规则、负载均衡器及其他服务器设置；请重新创建所需配置。
 
-若要保留原订阅 URL，请使用原来的面板域名。IP 变更时，请通过 DNS 将该域名指向新 VPS。当前服务器此前用其他路径发放的链接可能失效。请在客户端应用中手动刷新订阅，以获取新的连接。
+成功导入后，若保留原面板域名及所需订阅类型，原订阅 URL 仍有效。若 IP 发生变化，通过 DNS 将域名指向新 VPS。新安装此前用不同路径生成的订阅可能失效。请在客户端应用中刷新订阅以加载新连接设置；单独的连接链接可能变化。
 
 若电子邮件地址或订阅标识冲突，会保留现有记录并跳过归档中的客户端。订阅标识为空或在归档中被多条记录共用时也会跳过。`PARTIAL` 表示订阅路径已应用，但有客户端被跳过、记录不完整或验证未能确认连接正常。请在 3x-ui 中检查客户端、限额、到期时间及连接。
 
@@ -536,13 +565,13 @@ x-ui-backup restore /var/backups/x-ui/<archive>.tar.gz
 - **WARP：**入口服务器不兼容 WARP。如果已配置，请先在 3X-UI 面板中删除对应出站连接和路由规则。出口服务器允许使用 WARP。
 - **AmneziaWG：**此类连接不会经过出口服务器。
 - **路由规则：**之前定义的规则可能将部分流量导向其他路径。管理器会在连接前提示。
-- **出口不可用：**经该出口转发的流量会停止，直到出口恢复。没有自动备用出口。
+- **出口不可用：**经该出口转发的流量会停止，直到出口恢复；除非已配置带备用出口的负载均衡器。
 - **Vision 上的 QUIC：**此级联无法转发 UDP/443。
 - **更换域名：**如果修改出口 VPS 的域名，需要在入口服务器重新连接出口。
 
 ### 备份
 
-Backup v3 会保存级联设置。在入口服务器恢复备份后，级联配置会与其他 3X-UI 数据一起保留。
+Backup v3 会保存级联设置。在入口服务器恢复备份后，级联配置会与其他 3X-UI 数据一起保留。 就地 Update 也会保留级联；全新安装后若仅导入客户端，则需重新配置级联。
 
 级联已在两台真实 VPS 上通过 REALITY、XHTTP 和 Hysteria2 测试，但尚未验证所有客户端应用和配置。
 
@@ -569,6 +598,8 @@ Backup v3 会保存级联设置。在入口服务器恢复备份后，级联配�
 
 Telegram Web Proxy Manager 可安装在 Ubuntu 24.04 和 26.04 上。
 
+TWPM 使用 Telemt、真实 HTTPS、独立域名及同一 Nginx 实例。也可以配置 SOCKS5，通过现有级联转发其出站流量。请单独备份 TWPM，其数据不包含在本项目的 Backup v3 中。
+
 <a id="technical-details"></a>
 
 ## ⚙️ 技术细节与兼容性
@@ -576,26 +607,24 @@ Telegram Web Proxy Manager 可安装在 Ubuntu 24.04 和 26.04 上。
 - **系统：** Ubuntu 24.04、Ubuntu 26.04 和 Debian 13。
 - **UFW：**允许 80/tcp、443/tcp 和 443/udp（选择 AmneziaWG 时开放 8443/udp，选择 DoT 时开放 853/tcp）。Installation 期间，只有确认 SSH 访问安全后才会启用 UFW；否则保持关闭并显示警告。通过菜单执行 Restore 后，**只有明确选择启用**且通过安全检查时，管理器才会启用 UFW。独立命令 `x-ui-backup restore` 不会启用 UFW。
 - **证书：** 通过 Let's Encrypt webroot 和系统 `certbot.timer` 自动续期，无需停止 nginx。
-- **3x-ui 版本：** 默认安装已针对 3X-UI AUTO NGINX 进行充分兼容性测试的最新版本，并不一定是 3x-ui 上游刚发布的最新版。安装完成后，你可以通过 3x-ui 自带的更新功能自行升级，但新版本与现有配置的兼容性可能尚未得到验证。也可以通过 `-version <tag>` 明确指定其他稳定版（最低支持 v3.8.0）；安装程序会提醒该版本尚未通过兼容性验证。
+- **连接跟踪：**在支持的环境中，安装器、Restore 和 Update 可根据 RAM 提高 Linux conntrack 上限，不会降低已有的更高上限。
+- **3x-ui 版本：**默认安装针对本项目配置验证过的最新版本，不一定是上游最新发行版。兼容安装请通过 Update 获取已验证的 3x-ui 和 Xray 版本。可以在面板中单独更新，但更高版本可能阻止项目 Update。安装器也接受通过 `-version <tag>` 指定其他稳定版（最低 v3.8.0），尚未验证兼容性时会显示警告。
 
 <a id="restore-on-new-vps"></a>
 
 ### 在新 VPS 上恢复
 
-操作系统、版本和 CPU 架构应与备份对应。如果 VPS 的 IP 地址发生变化，请更新域名的 DNS 记录。**不要运行** `x-ui-latest.sh`；仅安装备份工具，然后恢复可信的归档文件：
+使用与备份归档的操作系统系列、版本和架构一致的全新 VPS。将 Backup v3 归档复制到 VPS 上的私有目录，例如 `/var/backups/x-ui/`。如果 IP 已变更，将域名指向新的 IP。
 
-```bash
-curl -fSL https://raw.githubusercontent.com/xPROMSx/3x-ui-auto-nginx/main/assets/backup/x-ui-backup.sh -o /tmp/x-ui-backup
-install -o root -g root -m 0755 /tmp/x-ui-backup /usr/local/bin/x-ui-backup
-rm -f /tmp/x-ui-backup
-x-ui-backup restore /root/<archive>.tar.gz
-```
+1. 通过 SSH 以 root 身份连接，使用[快速开始](#installation)中的命令下载并运行稳定版管理器。
+2. 选择 **3 — Backups → 3 — Restore backup**，而不是 Installation。选择归档并确认。
+3. 按提示配置 Security 和 UFW。检查面板、订阅、代理连接及其他服务。
 
-SSH、系统配置及基础防火墙仍由管理员负责。对于 v2 备份，请使用对应旧版本中的恢复工具。
+不要预先安装项目。完整 Restore 会恢复归档中的配置。SSH 访问、操作系统设置及其他独立服务仍由管理员负责。目标 VPS 安装了 TWPM 时会阻止完整 Restore；请单独保存和管理 TWPM 数据。
 
 ## 🤝 致谢与项目来源
 
-本项目基于 mozaroc 的 [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) 开发。该项目由 [x-ui-pro](https://github.com/mozaroc/x-ui-pro) 的一个分支演变而来，最早可追溯至 GFW4Fun 的原始 [x-ui-pro](https://github.com/GFW4Fun/x-ui-pro) 项目。本项目目前独立维护。Fork 之后，对 nginx/SNI 路由和 XHTTP 配置进行了大幅重构，重新设计了 TLS 证书签发与自动续期流程，并引入支持恢复和回滚的 Backup / Restore v3。此外还增加了运行于 UDP/443 的 Hysteria2，并修复了已发现的安全问题。
+本项目基于 mozaroc 的 [3x-ui-pro](https://github.com/mozaroc/3x-ui-pro) 开发。该项目由 [x-ui-pro](https://github.com/mozaroc/x-ui-pro) 的一个分支演变而来，最早可追溯至 GFW4Fun 的原始 [x-ui-pro](https://github.com/GFW4Fun/x-ui-pro) 项目。本项目目前独立维护。Fork 之后，对 nginx/SNI 路由和 XHTTP 配置进行了大幅重构，重新设计了 TLS 证书签发与自动续期流程，并引入支持恢复和回滚的 Backup / Restore v3。此外还增加了运行于 UDP/443 的 Hysteria2，并修复了已发现的安全问题。 此外还实现了保留数据的就地更新，以及经过验证的回滚机制。
 
 面板本身来自 [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui)。第三方组件的权利及其现有许可仍归原作者所有。
 
