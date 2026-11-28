@@ -21,6 +21,8 @@ from urllib.parse import parse_qs, quote, urlsplit, urlunsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import database
+import update_ui as ui
+from update_ui import problem
 from resources import (
     DB,
     DRIVER,
@@ -87,12 +89,16 @@ def service(action, unit):
 
 def stopped():
     if prop('x-ui', 'ActiveState') not in ('inactive', 'failed') or prop('x-ui', 'MainPID') != '0':
-        raise RuntimeError('x-ui.service has not stopped')
+        raise problem(RuntimeError, 'x-ui.service has not stopped', 'Служба x-ui.service не остановилась')
     group = prop('x-ui', 'ControlGroup')
     if group:
         root = Path('/sys/fs/cgroup') / group.lstrip('/')
         if any(p.read_text().strip() for p in root.rglob('cgroup.procs')):
-            raise RuntimeError('x-ui.service still has running processes')
+            raise problem(
+                RuntimeError,
+                'x-ui.service still has running processes',
+                'У службы x-ui.service остались работающие процессы',
+            )
 
 
 def connect(ro=True):
@@ -179,12 +185,21 @@ def restore_archived_files(files):
             with archive.extractfile(member) as src, leaf.open('wb') as dest:
                 shutil.copyfileobj(src, dest)
             if database.digest(leaf) != expected:
-                raise RuntimeError(f'Archived binary checksum mismatch: {target}')
+                raise problem(
+                    RuntimeError,
+                    'Archived binary checksum mismatch: {target}',
+                    'Контрольная сумма бинарного файла в архиве не совпадает: {target}',
+                    target=target,
+                )
             os.chown(leaf, member.uid, member.gid)
             leaf.chmod(member.mode)
             publish(leaf, target)
     if selected:
-        raise RuntimeError('Missing Update binary in retained Backup v3')
+        raise problem(
+            RuntimeError,
+            'Missing Update binary in retained Backup v3',
+            'В сохранённой резервной копии Backup v3 отсутствует бинарный файл для обновления',
+        )
 
 
 def tune_runtime(tuning, forward):
@@ -194,10 +209,15 @@ def tune_runtime(tuning, forward):
     if current == desired:
         return
     if current != tuning['before' if forward else 'after']:
-        raise RuntimeError(f'{key} changed independently')
+        raise problem(
+            RuntimeError,
+            '{key} changed independently',
+            'Параметр {key} изменился вне операции обновления',
+            key=key,
+        )
     run('sysctl', '-q', '-w', f'{key}={desired}')
     if int(run('sysctl', '-n', key)) != desired:
-        raise RuntimeError(f'{key} was not applied')
+        raise problem(RuntimeError, '{key} was not applied', 'Параметр {key} не применён', key=key)
 
 
 def capture_db(target):
@@ -210,7 +230,11 @@ def backup():
     data = run('bash', DRIVER, 'backup', lock=True, timeout=3600)
     result = json.loads(data)
     if result['status'] != 'success':
-        raise RuntimeError('Backup v3 did not return a verified archive')
+        raise problem(
+            RuntimeError,
+            'Backup v3 did not return a verified archive',
+            'Backup v3 не вернул проверенный архив',
+        )
     archive = Path(result['archive'])
     fsync(archive)
     fsync(archive.parent)
@@ -275,7 +299,13 @@ def gate(j, unit):
     if unit == 'nginx.service' and prop(BOOT, 'ActiveState') == 'failed':
         # The distro unit's own ExecStartPre validates the live nginx config.
         return
-    raise RuntimeError(f'{unit} start blocked during Update phase {phase}')
+    raise problem(
+        RuntimeError,
+        '{unit} start blocked during Update phase {phase}',
+        'Запуск {unit} заблокирован на этапе обновления {phase}',
+        unit=unit,
+        phase=phase,
+    )
 
 
 def clear(j):
@@ -319,13 +349,18 @@ def restore_services(j):
         elif not active and current in ('active', 'activating'):
             service('stop', unit)
         if (prop(unit, 'ActiveState') == 'active') != active:
-            raise RuntimeError(f'Cannot restore original state of {unit}')
+            raise problem(
+                RuntimeError,
+                'Cannot restore original state of {unit}',
+                'Не удалось восстановить исходное состояние {unit}',
+                unit=unit,
+            )
 
 
 def workers():
     pid = int(prop('nginx', 'MainPID'))
     if not pid:
-        raise RuntimeError('nginx master is inactive')
+        raise problem(RuntimeError, 'nginx master is inactive', 'Главный процесс Nginx неактивен')
     children = Path(f'/proc/{pid}/task/{pid}/children').read_text().split()
     result = set()
     for child in children:
@@ -346,7 +381,11 @@ def reload_nginx():
         if workers() - previous:
             return
         time.sleep(0.1)
-    raise RuntimeError('nginx master did not start a new worker generation')
+    raise problem(
+        RuntimeError,
+        'nginx master did not start a new worker generation',
+        'Главный процесс Nginx не запустил новое поколение рабочих процессов',
+    )
 
 
 def subscription_client(db, protocols):
@@ -389,7 +428,12 @@ def subscription_health(op, domains, db, settings, panel, cert, clash):
                 return
         except (OSError, ValueError, http.client.HTTPException):
             pass
-        raise ValueError(f'{format} subscription validation failed.') from None
+        raise problem(
+            ValueError,
+            '{format} subscription validation failed.',
+            'Не удалось проверить подписку {format}.',
+            format=format,
+        ) from None
 
     for format, uri, path_key, supported in (
         ('RAW', 'subURI', 'subPath', protocols + ('amneziawg', 'tuic')),
@@ -404,7 +448,12 @@ def subscription_health(op, domains, db, settings, panel, cert, clash):
             path = configured.path.rstrip('/') + '/' + token
             route = urlunsplit(('', '', path, configured.query, ''))
         except ValueError:
-            raise ValueError(f'{format} subscription URI is invalid.') from None
+            raise problem(
+                ValueError,
+                '{format} subscription URI is invalid.',
+                'Некорректный URI в подписке {format}.',
+                format=format,
+            ) from None
         checked(format, route, client, {'User-Agent': 'x-ui-update-health',
                                        'Accept': 'application/json' if format == 'JSON' else 'text/plain'})
         if format == 'RAW':
@@ -423,7 +472,11 @@ def subscription_health(op, domains, db, settings, panel, cert, clash):
                 or parse_qs(provider.query).get('provider') != ['1']):
             raise ValueError
     except (OSError, ValueError, http.client.HTTPException):
-        raise ValueError('Managed Clash/Mihomo subscription validation failed.') from None
+        raise problem(
+            ValueError,
+            'Managed Clash/Mihomo subscription validation failed.',
+            'Не удалось проверить управляемую подписку Clash/Mihomo.',
+        ) from None
     if raw_client:
         provider_route = urlunsplit(('', '', provider.path, provider.query, ''))
         checked('Clash provider', provider_route, raw_client, {'User-Agent': 'mihomo', 'Accept': 'text/plain'})
@@ -437,20 +490,36 @@ def health(state, target=True):
         with closing(connect()) as db:
             rows = database.read_roles(db, state)
     if target and (edits or wanted.keys() - rows.keys()):
-        raise ValueError('Managed inbound definitions did not persist')
+        raise problem(
+            ValueError,
+            'Managed inbound definitions did not persist',
+            'Настройки управляемых входящих подключений не сохранились',
+        )
     with closing(connect()) as db:
         if db.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
-            raise RuntimeError('Working SQLite quick_check failed')
+            raise problem(
+                RuntimeError,
+                'Working SQLite quick_check failed',
+                'Проверка quick_check рабочей базы SQLite не пройдена',
+            )
     if not workers():
-        raise RuntimeError('nginx has no active workers')
+        raise problem(RuntimeError, 'nginx has no active workers', 'У Nginx нет активных рабочих процессов')
     outdated, xray = versions()
     if target and outdated:
-        raise ValueError('Working panel or Xray differs from the verified release')
+        raise problem(
+            ValueError,
+            'Working panel or Xray differs from the verified release',
+            'Работающая панель или Xray отличается от проверенного выпуска',
+        )
     pid = prop('x-ui', 'MainPID')
     if not os.path.samefile(f'/proc/{pid}/exe', PANEL / 'x-ui'):
-        raise ValueError('Unexpected x-ui executable')
+        raise problem(ValueError, 'Unexpected x-ui executable', 'Запущен неожиданный исполняемый файл x-ui')
     if not database.holds_database(Path('/proc') / pid, DB):
-        raise ValueError('Running panel does not have /etc/x-ui/x-ui.db open')
+        raise problem(
+            ValueError,
+            'Running panel does not have /etc/x-ui/x-ui.db open',
+            'Работающая панель не использует /etc/x-ui/x-ui.db',
+        )
     cgroup = Path('/sys/fs/cgroup') / prop('x-ui', 'ControlGroup').lstrip('/')
     pids = (cgroup / 'cgroup.procs').read_text().split()
     xray_pids = []
@@ -461,7 +530,11 @@ def health(state, target=True):
         except FileNotFoundError:
             continue
     if not xray_pids:
-        raise RuntimeError('Bundled Xray is not running in x-ui.service')
+        raise problem(
+            RuntimeError,
+            'Bundled Xray is not running in x-ui.service',
+            'Встроенный Xray не запущен в x-ui.service',
+        )
     run(xray, 'run', '-test', '-c', xray.with_name('config.json'), cwd=xray.parent)
     tcp = run('ss', '-H', '-lntp').decode().splitlines()
     udp = run('ss', '-H', '-lnup').decode().splitlines()
@@ -477,7 +550,12 @@ def health(state, target=True):
             listing = [line for line in lines if line.split()[3].rsplit(':', 1)[-1] == str(row['port'])]
         owners = [pid, *xray_pids] if role == 'amneziawg' else xray_pids
         if not any(f'pid={p},' in line for line in listing for p in owners):
-            raise RuntimeError(f'Managed {role} listener unavailable')
+            raise problem(
+                RuntimeError,
+                'Managed {role} listener unavailable',
+                'Управляемый слушатель {role} недоступен',
+                role=role,
+            )
     domains = module('domains')
     op = domains.Operation('', '')
     panel = state['domains']['panel']
@@ -487,16 +565,24 @@ def health(state, target=True):
         port = state['diagnostics']['mtr_backend_port']
         if run('curl', '-qfsS', '--noproxy', '*', '--max-time', '5',
                f'http://127.0.0.1:{port}/api/st/getip') != b'127.0.0.1':
-            raise ValueError('MTR backend HTTP health check failed')
+            raise problem(
+                ValueError,
+                'MTR backend HTTP health check failed',
+                'Серверная часть MTR не прошла проверку по HTTP',
+            )
     with closing(connect()) as db:
         settings = dict(db.execute('SELECT key,value FROM settings'))
         if op.request(panel, settings['webBasePath'], cert)[0] not in (200, 302):
-            raise RuntimeError('Panel HTTPS unavailable')
+            raise problem(RuntimeError, 'Panel HTTPS unavailable', 'Панель недоступна по HTTPS')
         if settings.get('subEnable', 'true') == 'true' and not any(
             len(line.split()) > 3 and line.split()[3].rsplit(':', 1)[-1] == settings['subPort']
             and f'pid={pid},' in line for line in tcp
         ):
-            raise RuntimeError('Subscription listener is not owned by the running panel')
+            raise problem(
+                RuntimeError,
+                'Subscription listener is not owned by the running panel',
+                'Слушатель подписок не принадлежит работающей панели',
+            )
         subscription_health(op, domains, db, settings, panel, cert, mtr)
     if state['features'].get('adguard') and prop('AdGuardHome', 'ActiveState') == 'active':
         run('bash', DRIVER, 'agh-health')
@@ -511,7 +597,13 @@ def verified_health(state, target=True):
             return
         except (OSError, ValueError, RuntimeError) as error:
             if time.monotonic() >= until:
-                raise RuntimeError(f'Working stack health failed ({type(error).__name__}): {error}') from None
+                en_detail, ru_detail = ui.diagnostics(error)
+                raise problem(
+                    RuntimeError,
+                    'Working stack health failed: {en_detail}',
+                    'Проверка работоспособности стека не пройдена: {ru_detail}',
+                    en_detail=en_detail, ru_detail=ru_detail,
+                ) from None
             time.sleep(0.5)
 
 
@@ -535,7 +627,11 @@ def migrate_schema(binary, db_folder, *extra_env):
     )
     # Upstream setting can return zero on an InitDB error, before printing settings.
     if b'current panel settings as follows:' not in output.splitlines():
-        raise RuntimeError('The verified panel did not complete SQLite schema initialization')
+        raise problem(
+            RuntimeError,
+            'The verified panel did not complete SQLite schema initialization',
+            'Проверенная панель не завершила инициализацию схемы SQLite',
+        )
 
 
 def verify_migration(db, before):
@@ -569,7 +665,12 @@ def verify_migration(db, before):
         if db.execute(
             f'SELECT {columns} FROM previous.{table} EXCEPT SELECT {columns} FROM main.{table} LIMIT 1'
         ).fetchone():
-            raise ValueError(f'Upstream migration changed an existing record in {name}')
+            raise problem(
+                ValueError,
+                'Upstream migration changed an existing record in {name}',
+                'Миграция 3x-ui изменила существующую запись в таблице {name}',
+                name=name,
+            )
 
 
 def start_intent(j, state, change_db):
@@ -581,11 +682,16 @@ def start_intent(j, state, change_db):
 
 
 def commit(j):
+    ui.final_verification()
     restore_services(j)
     refresh_mtr(j)
     verified_health(j['target'])
     if j['active'].get('mtr-backend') and prop('mtr-backend', 'ActiveState') != 'active':
-        raise RuntimeError('MTR backend is not active after Update')
+        raise problem(
+            RuntimeError,
+            'MTR backend is not active after Update',
+            'Серверная часть MTR неактивна после обновления',
+        )
     save(j, 'verified')
     finish_commit(j)
 
@@ -597,12 +703,17 @@ def finish_commit(j):
     restore_services(j)
     archive = j['backup']
     clear(j)
-    print(f'Update verified. Backup: {archive}', flush=True)
+    ui.verified()
+    ui.success(archive)
 
 
 def apply_update(sha):
     if JOURNAL.exists():
-        raise RuntimeError('Recover pending operation first')
+        raise problem(
+            RuntimeError,
+            'Recover pending operation first',
+            'Сначала завершите восстановление незавершённой операции',
+        )
     state = metadata()
     upgrade, _ = versions()
     if WORK.exists():
@@ -611,6 +722,7 @@ def apply_update(sha):
     WORK.mkdir(mode=0o700)
     release = None
     if upgrade:
+        ui.say('  Preparing the 3x-ui and Xray upgrade', '  Подготовка обновления 3x-ui и Xray')
         run('bash', DRIVER, 'release', WORK, timeout=600)
         release = WORK / 'x-ui'
         # Exercise the native migration on a consistent private SQLite backup
@@ -629,7 +741,11 @@ def apply_update(sha):
         )
         with closing(sqlite3.connect((trial / DB.name).as_uri() + '?mode=ro', uri=True)) as db:
             if db.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
-                raise RuntimeError('Trial SQLite migration failed quick_check')
+                raise problem(
+                    RuntimeError,
+                    'Trial SQLite migration failed quick_check',
+                    'Пробная миграция SQLite не прошла проверку quick_check',
+                )
             verify_migration(db, before)
         shutil.rmtree(trial)
     files, edits, missing, params = make_plan(state, release)
@@ -641,9 +757,12 @@ def apply_update(sha):
         or (WORK / 'stage/sysctl.json').exists()
         or state['source_ref'] != sha
     ):
+        ui.checked('Update plan checked', 'План обновления проверен')
+        ui.final_verification()
         verified_health(state)
         shutil.rmtree(WORK)
-        print('Already up to date.', flush=True)
+        ui.verified()
+        ui.up_to_date()
         return
     (WORK / 'before').mkdir()
     (WORK / 'source').symlink_to(ROOT)
@@ -663,18 +782,29 @@ def apply_update(sha):
         old=state,
     )
     if not database.holds_database(Path('/proc') / prop('x-ui', 'MainPID'), DB):
-        raise RuntimeError('Working panel is not using the installed SQLite database')
+        raise problem(
+            RuntimeError,
+            'Working panel is not using the installed SQLite database',
+            'Работающая панель не использует установленную базу SQLite',
+        )
     if not j['active']['nginx'] or not j['active']['x-ui']:
-        raise RuntimeError('Update requires the installed panel and nginx to be running')
+        raise problem(
+            RuntimeError,
+            'Update requires the installed panel and nginx to be running',
+            'Для обновления установленные панель и Nginx должны быть запущены',
+        )
+    ui.checked('Update plan checked', 'План обновления проверен')
+    ui.stage(3, 'CREATING A BACKUP', 'СОЗДАНИЕ РЕЗЕРВНОЙ КОПИИ')
     create_units()
     save(j, 'prepared')
     j['backup'] = backup()
-    print(f'Backup verified: {j["backup"]}', flush=True)
+    ui.checked('Backup created and verified', 'Резервная копия создана и проверена')
+    ui.stage(4, 'APPLYING THE UPDATE', 'ПРИМЕНЕНИЕ ОБНОВЛЕНИЯ')
     save(j, 'draining')
     if j['active']['certbot.timer']:
         service('stop', 'certbot.timer')
     if prop('certbot.service', 'ActiveState') not in ('inactive', 'failed'):
-        raise RuntimeError('Certificate renewal in progress')
+        raise problem(RuntimeError, 'Certificate renewal in progress', 'Выполняется продление сертификата')
     # Plan again after Backup, which restarted the panel and admitted writes.
     state = metadata()
     rows, _, wanted, edits = installation(state)
@@ -697,6 +827,8 @@ def apply_update(sha):
     if tuning.exists():
         j['sysctl'] = json.loads(tuning.read_text())
     save(j, 'switching')
+    if upgrade:
+        ui.say('  Updating 3x-ui and Xray', '  Обновление 3x-ui и Xray')
     if 'sysctl' in j:
         tune_runtime(j['sysctl'], True)
     for name in files:
@@ -725,6 +857,7 @@ def apply_update(sha):
     start_intent(j, state, change_db)
     if restart_panel:
         service('start', 'x-ui')
+    ui.checked('Update applied', 'Обновление применено')
     commit(j)
 
 
@@ -738,7 +871,11 @@ def rollback(j, offline=False):
     if phase == 'target_retained':
         if not offline:
             restore_services(j)
-            raise RuntimeError(f'Target retained. Inspect {WORK} and {JOURNAL} before retrying.')
+            raise problem(
+                RuntimeError,
+                'Target installation retained.',
+                'Сохранено состояние установки после применения обновления.',
+            )
         return
     if j['db']:
         if phase in ('start_intent', 'compare_target'):
@@ -758,26 +895,43 @@ def rollback(j, offline=False):
                 # binaries. Keep them in place if we cannot prove a safe copy.
                 with closing(connect()) as db:
                     if db.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
-                        raise RuntimeError(f'Target SQLite integrity unverified. Recovery retained in {WORK}')
+                        raise problem(
+                            RuntimeError,
+                            'Target SQLite integrity unverified. Recovery retained in {WORK}',
+                            'Целостность целевой базы SQLite не подтверждена. Данные для восстановления сохранены в {WORK}',
+                            WORK=WORK,
+                        )
                 save(j, 'target_retained')
                 if not offline:
                     restore_services(j)
-                    raise RuntimeError(
-                        f'Checkpoint or snapshot unverified. Target DB and WAL retained at {DB}'
+                    raise problem(
+                        RuntimeError,
+                        'Checkpoint or snapshot unverified. Target DB and WAL retained at {DB}',
+                        'Контрольная точка WAL или снимок не подтверждены. Целевая база и WAL сохранены по пути {DB}',
+                        DB=DB,
                     )
                 return
             if j['phase'] == 'target_retained':
                 if offline:
                     return
                 restore_services(j)
-                raise RuntimeError(f'Working SQLite changed after startup. Both versions retained in {WORK}.')
+                raise problem(
+                    RuntimeError,
+                    'Working SQLite changed after startup. Both versions retained in {WORK}.',
+                    'Рабочая база SQLite изменилась после запуска. Оба варианта базы сохранены в {WORK}.',
+                    WORK=WORK,
+                )
         save(j, 'rollback')
         if not offline:
             service('stop', 'x-ui')
         stopped()
         database.assert_no_holders(DB)
         if database.digest(WORK / 'before.db') != j['before_sha']:
-            raise RuntimeError('Damaged SQLite before-image. Recovery files retained.')
+            raise problem(
+                RuntimeError,
+                'Damaged SQLite before-image. Recovery files retained.',
+                'Снимок SQLite до обновления повреждён. Файлы для восстановления сохранены.',
+            )
         # No service has permission to reopen this DB. Rollback may have been
         # interrupted anywhere below, including during a failed upstream migration.
         for suffix in ('-journal', '-wal', '-shm'):
@@ -812,21 +966,26 @@ def finish_old(j):
     refresh_mtr(j)
     verified_health(j['old'], False)
     clear(j)
-    print('ROLLBACK_VERIFIED: previous installation restored.', flush=True)
+    ui.checked('Previous installation restored and checked', 'Предыдущая установка восстановлена и проверена')
+    ui.result('ROLLBACK VERIFIED')
 
 
 def recover(j, offline=False):
     if j['phase'] == 'verified':
         if not offline:
+            ui.final_verification()
             restore_services(j)
             verified_health(j['target'])
             finish_commit(j)
         return
     if j['phase'] == 'committed':
         if not offline:
+            ui.final_verification()
             restore_services(j)
             verified_health(j['target'])
             clear(j)
+            ui.verified()
+            ui.success(j['backup'])
         return
     if j['phase'] == 'start_intent':
         if offline:
@@ -835,9 +994,10 @@ def recover(j, offline=False):
         try:
             commit(j)
             return
-        except Exception:
+        except Exception as error:
             if j['phase'] != 'start_intent':
                 raise
+            ui.failed(error)
     rollback(j, offline)
     if not offline and j['phase'] == 'old_ready':
         finish_old(j)
@@ -857,34 +1017,50 @@ def main():
         return
     if action == 'worker':
         if not re.fullmatch(r'[a-f0-9]{40}', sys.argv[2]):
-            raise ValueError('Expected pinned Update SHA')
+            raise problem(
+                ValueError,
+                'Expected pinned Update SHA',
+                'Ожидается точный SHA коммита для обновления',
+            )
         if j:
-            raise RuntimeError('Recover the pending Update before starting another')
+            raise problem(
+                RuntimeError,
+                'Recover the pending Update before starting another',
+                'Завершите восстановление предыдущего обновления перед запуском нового',
+            )
         try:
             apply_update(sys.argv[2])
-        except Exception:
-            j = record()
-            if j and j['phase'] not in ('verified', 'committed'):
-                rollback(j)
-                finish_old(j)
+        except Exception as error:
+            ui.failed(error)
+            error.update_reported = True
+            try:
+                j = record()
+                if j and j['phase'] not in ('verified', 'committed'):
+                    rollback(j)
+                    finish_old(j)
+            except Exception as recovery_error:
+                if JOURNAL.exists():
+                    ui.rollback_unverified(recovery_error, WORK, JOURNAL)
+                    recovery_error.update_reported = True
+                raise
             raise
         finally:
             if not JOURNAL.exists() and not (SYSTEM / BOOT).exists():
                 clean_source()
     elif j:
-        recover(j, offline=action == 'boot')
+        try:
+            recover(j, offline=action == 'boot')
+        except Exception as error:
+            if j['phase'] not in ('verified', 'committed') and JOURNAL.exists():
+                ui.rollback_unverified(error, WORK, JOURNAL)
+                error.update_reported = True
+            raise
 
 
 if __name__ == '__main__':
     try:
         main()
     except Exception as error:
-        # Keep private values from JSON, subprocesses and SQLite exceptions out of logs.
-        print(
-            f'Update failed: {error}'
-            if isinstance(error, (RuntimeError, ValueError))
-            and type(error) not in (json.JSONDecodeError, UnicodeDecodeError)
-            else f'Update failed at {sys.exc_info()[2].tb_lineno}: {type(error).__name__}',
-            file=sys.stderr,
-        )
+        if not getattr(error, 'update_reported', False):
+            ui.failed(error)
         sys.exit(1)

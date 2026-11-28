@@ -15,6 +15,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+from update_ui import problem
+
 ROOT = Path(__file__).resolve().parents[2]
 DRIVER = ROOT / 'assets/update/driver.sh'
 DB = Path('/etc/x-ui/x-ui.db')
@@ -39,8 +41,16 @@ def run(*args, data=None, timeout=120, lock=False, cwd=None):
     )
     if result.returncode:
         # Upstream stderr and arguments can contain credentials.
-        raise RuntimeError(
-            f'{Path(cmd[0]).name} {Path(cmd[1]).name if len(cmd) > 1 else ""} exited {result.returncode}'
+        command = Path(cmd[0]).name
+        if cmd[1:2] == [str(DRIVER)]:
+            command = f'{DRIVER.name} {cmd[2]}'
+        elif len(cmd) > 1:
+            command += ' ' + Path(cmd[1]).name
+            if cmd[0] == 'systemctl' and len(cmd) > 2:
+                command += ' ' + cmd[2]
+        raise problem(
+            RuntimeError, '{command} exited {status}', '{command} завершилась с кодом {status}',
+            command=command, status=result.returncode,
         )
     return result.stdout
 
@@ -48,7 +58,11 @@ def run(*args, data=None, timeout=120, lock=False, cwd=None):
 def metadata():
     info = MANIFEST.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
-        raise ValueError('Unsafe auto-nginx-managed.json')
+        raise problem(
+            ValueError,
+            'Unsafe auto-nginx-managed.json',
+            'Небезопасный файл auto-nginx-managed.json',
+        )
     state = json.loads(MANIFEST.read_text())
     if (
         state.get('format') != 1
@@ -56,10 +70,14 @@ def metadata():
         or type(state.get('update_contract')) is not int
         or state['update_contract'] != 1
     ):
-        raise ValueError('Update requires update_contract 1')
+        raise problem(
+            ValueError,
+            'Update requires update_contract 1',
+            'Для обновления требуется update_contract 1',
+        )
     for value in (*state['domains'].values(), *state.get('retained_domains', {})):
         if value and not re.fullmatch(r'[a-z0-9-]+(?:\.[a-z0-9-]+)+', value):
-            raise ValueError('Invalid managed domain name')
+            raise problem(ValueError, 'Invalid managed domain name', 'Недопустимое имя управляемого домена')
     return state
 
 
@@ -67,7 +85,12 @@ def version(binary, flag):
     output = run(binary, flag)
     match = re.search(rb'\bv?(\d+)\.(\d+)\.(\d+)\b', output)
     if not match:
-        raise ValueError(f'Cannot establish version of {binary.name}')
+        raise problem(
+            ValueError,
+            'Cannot establish version of {name}',
+            'Не удалось определить версию {name}',
+            name=binary.name,
+        )
     return tuple(map(int, match.groups()))
 
 
@@ -82,8 +105,13 @@ def versions():
         current = version(path, flag)
         target = tuple(map(int, baseline[key].lstrip('v').split('.')))
         if current > target:
-            raise ValueError(
-                f'{path.name} {current} is newer than verified {target}; automatic downgrade refused'
+            raise problem(
+                ValueError,
+                '{name} {current} is newer than verified {target}; automatic downgrade refused',
+                '{name} {current} новее проверенной версии {target}. Автоматическое понижение версии отклонено',
+                name=path.name,
+                current=current,
+                target=target,
             )
         upgrade |= current < target
     return upgrade, xray
@@ -92,7 +120,12 @@ def versions():
 def ensure_parent(path):
     for parent in path.parents:
         if parent.is_symlink():
-            raise ValueError(f'Cannot publish through symlinked directory {parent}')
+            raise problem(
+                ValueError,
+                'Cannot publish through symlinked directory {parent}',
+                'Нельзя записать файл через каталог-символическую ссылку {parent}',
+                parent=parent,
+            )
 
 
 def file_info(path):
@@ -102,7 +135,12 @@ def file_info(path):
         return ('absent',)
     s = path.lstat()
     if not stat.S_ISREG(s.st_mode):
-        raise ValueError(f'Managed file path is occupied: {path}')
+        raise problem(
+            ValueError,
+            'Managed file path is occupied: {path}',
+            'Путь к управляемому файлу занят: {path}',
+            path=path,
+        )
     return ('file', stat.S_IMODE(s.st_mode), s.st_uid, s.st_gid)
 
 
@@ -191,7 +229,11 @@ def render(directory, state, rows, params, release=None):
         site = (NGINX / 'sites-available/vision.conf').read_text()
         listener = re.search(r'^\s*listen 127\.0\.0\.1:(\d+) proxy_protocol;$', site, re.M)
         if not site.startswith(vision.MARKER) or listener is None:
-            raise ValueError('Cannot identify the managed Vision nginx listener')
+            raise problem(
+                ValueError,
+                'Cannot identify the managed Vision nginx listener',
+                'Не удалось определить управляемый слушатель Vision в Nginx',
+            )
         port = int(listener[1])
         (ng / 'sites-available/vision.conf').write_text(
             vision.fallback_config(values['vision'], port, root='/var/www/html/cover-vision', rate_limit=True)
@@ -262,7 +304,12 @@ def render(directory, state, rows, params, release=None):
             live = Path('/') / leaf.relative_to(dest)
             ensure_parent(live)
             if live.is_symlink() and (not leaf.is_symlink() or live.readlink() != leaf.readlink()):
-                raise ValueError(f'Unexpected link at managed destination {live}')
+                raise problem(
+                    ValueError,
+                    'Unexpected link at managed destination {live}',
+                    'Неожиданная ссылка по управляемому пути {live}',
+                    live=live,
+                )
             if not same(live, leaf):
                 changes.append(str(live))
     return changes

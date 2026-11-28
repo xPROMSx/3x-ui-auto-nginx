@@ -3774,23 +3774,41 @@ PYSTATE
 # Resolve mutable sources once and compare this script before fetching code.
 # A release asset differs from source only in its PROJECT_REF default.
 pin_project_source() {
-    local revision=$PROJECT_REF temporary response
+    local revision=$PROJECT_REF temporary response mode=${1:-}
     if [[ ! "$revision" =~ ^[a-fA-F0-9]{40}$ ]]; then
-        response=$(curl -q -fsSL --connect-timeout 10 --max-time 30 "https://api.github.com/repos/xPROMSx/3x-ui-auto-nginx/commits/$revision") || return 69
-        revision=$(printf '%s' "$response" | python3 -c 'import json,re,sys; value=json.load(sys.stdin)["sha"]; print(value) if isinstance(value,str) and re.fullmatch("[0-9a-f]{40}",value) else sys.exit("Invalid project source revision")') || return 1
+        if ! response=$(curl -q -fsSL --connect-timeout 10 --max-time 30 "https://api.github.com/repos/xPROMSx/3x-ui-auto-nginx/commits/$revision"); then
+            [[ $mode != update ]] || update_fail "$(ui_text 'Cannot fetch the selected revision from GitHub.' 'Не удалось получить выбранную ревизию из GitHub.')" 2>&3
+            return 69
+        fi
+        revision=$(printf '%s' "$response" | python3 -c 'import json,re,sys; value=json.load(sys.stdin)["sha"]; print(value) if isinstance(value,str) and re.fullmatch("[0-9a-f]{40}",value) else sys.exit("Invalid project source revision")') || {
+            [[ $mode == update ]] || return 1
+            revision=''
+        }
     fi
-    [[ "$revision" =~ ^[a-fA-F0-9]{40}$ ]] || { msg_err 'Cannot resolve project source revision.'; return 1; }
-    temporary=$(mktemp -d) || return 1
+    if [[ ! "$revision" =~ ^[a-fA-F0-9]{40}$ ]]; then
+        if [[ $mode == update ]]; then update_fail "$(ui_text 'Cannot resolve the project source SHA.' 'Не удалось определить SHA исходников проекта.')" 2>&3
+        else msg_err 'Cannot resolve project source revision.'; fi
+        return 1
+    fi
+    if ! temporary=$(mktemp -d); then
+        [[ $mode != update ]] || update_fail "$(ui_text 'Cannot create a temporary directory to verify the installer.' 'Не удалось создать временный каталог для проверки скрипта установки.')" 2>&3
+        return 1
+    fi
     if ! curl -q -fsSL --connect-timeout 10 --max-time 30 \
         "${GITHUB_RAW%/*}/$revision/x-ui-latest.sh" -o "$temporary/source"; then
         rm -rf "$temporary"
+        [[ $mode != update ]] || update_fail "$(ui_text 'Cannot fetch x-ui-latest.sh for SHA %s.' 'Не удалось загрузить x-ui-latest.sh для SHA %s.' "$revision")" 2>&3
         return 69
     fi
     if ! sed '/^PROJECT_REF=/c\PROJECT_REF=normalized' "$temporary/source" > "$temporary/expected" ||
        ! sed '/^PROJECT_REF=/c\PROJECT_REF=normalized' "${BASH_SOURCE[0]}" > "$temporary/actual" ||
        ! cmp -s "$temporary/expected" "$temporary/actual"; then
         rm -rf -- "$temporary"
-        msg_err 'Installer differs from selected source revision; download a matching installer and retry.'
+        if [[ $mode == update ]]; then
+            update_fail "$(ui_text 'Installer differs from SHA %s. Download the matching installer and retry.' 'Скрипт установки отличается от версии с SHA %s. Загрузите соответствующую версию и повторите обновление.' "$revision")" 2>&3
+        else
+            msg_err 'Installer differs from selected source revision; download a matching installer and retry.'
+        fi
         return 1
     fi
     rm -rf -- "$temporary"
@@ -4153,7 +4171,7 @@ recover_domain_operation() (
     if [[ -L /var/lib/3x-ui-auto-nginx/update/source ]] &&
        python3 -I -c 'import json,sys; sys.exit(json.load(open(sys.argv[1])).get("operation") != "update")' /var/lib/3x-ui-auto-nginx/change-domains/journal.json; then
         [[ ${1:-} != menu ]] || return 0
-        bash /var/lib/3x-ui-auto-nginx/update/source/assets/update/driver.sh recover
+        UI_LANG="$UI_LANG" bash /var/lib/3x-ui-auto-nginx/update/source/assets/update/driver.sh recover
         exit $?
     fi
     acquire_stack_lock || exit $?
@@ -4996,10 +5014,14 @@ server_details_action() {
     ui_wrap '2' "$(ui_text '  Passwords are stored in protected form and cannot be shown.' '  Пароли хранятся только в защищённом виде, показать их нельзя.')"
 }
 
+update_fail() {
+    msg_err "$(ui_text '  Result: FAILED — %s' '  Результат: FAILED — %s' "$1")" >&2
+}
+
 update_action() (
-    (( EUID == 0 )) || { msg_err "$(ui_text 'Run Update as root.' 'Запустите обновление от root.')"; exit 1; }
-    local manifest=/etc/x-ui/auto-nginx-managed.json answer base=/var/lib/3x-ui-auto-nginx stage
-    if ! python3 -I - "$manifest" <<'PYCOMPAT'
+    (( EUID == 0 )) || { update_fail "$(ui_text 'Run Update as root.' 'Запустите обновление от root.')"; exit 1; }
+    local manifest=/etc/x-ui/auto-nginx-managed.json answer base=/var/lib/3x-ui-auto-nginx stage status=0
+    if ! python3 -I - "$manifest" 2>/dev/null <<'PYCOMPAT'
 import json, pathlib, sys
 try:
     state = json.loads(pathlib.Path(sys.argv[1]).read_text())
@@ -5010,25 +5032,35 @@ except (ValueError, OSError):
 sys.exit(0 if ok else 1)
 PYCOMPAT
     then
-        msg_err "$(ui_text 'In-place Update requires update_contract 1 (3.0+). For 2.x use Backup, Installation and Restore clients and subscriptions.' 'Обновление на месте доступно при update_contract 1 (3.0+). Для 2.x сохраните Backup, выполните Установку и выберите «Восстановить клиентов и подписки».')"
+        update_fail "$(ui_text 'In-place Update requires update_contract 1 (3.0+). For 2.x use Backup, Installation and Restore clients and subscriptions.' 'Обновление на месте доступно при update_contract 1 (3.0+). Для 2.x создайте резервную копию, выполните установку и выберите «Восстановить клиентов и подписки».')"
         exit 1
     fi
     ui_title "$(ui_text 'PROJECT UPDATE' 'ОБНОВЛЕНИЕ ПРОЕКТА')"
-    ui_wrap '' "$(ui_text 'Update refreshes managed configuration and preserves panel settings, clients and keys. Managed cover sites may be regenerated. A verified Backup is created before changes. Service may be briefly interrupted and client profiles may need refreshing. Manual edits to managed nginx and transport settings may be replaced.' 'Менеджер обновит конфигурации проекта и сохранит настройки панели, клиентов и ключи. Управляемые сайты-прикрытия могут быть сгенерированы заново. Перед изменениями будет создан и проверен Backup. Возможен краткий перерыв в работе. Может потребоваться обновить клиентские профили. Ручные изменения управляемых конфигураций Nginx и транспортов могут быть заменены.')"
+    ui_wrap '' "$(ui_text 'Update refreshes managed configuration and preserves panel settings, clients and keys. Managed cover sites may be regenerated. A verified backup is created before changes. Service may be briefly interrupted and client profiles may need refreshing. Manual edits to managed nginx and transport settings may be replaced.' 'Менеджер обновит конфигурации проекта и сохранит настройки панели, клиентов и ключи. Управляемые сайты-прикрытия могут быть сгенерированы заново. Перед изменениями будет создана и проверена резервная копия. Возможен краткий перерыв в работе. Может потребоваться обновить клиентские профили. Ручные изменения управляемых конфигураций Nginx и транспортов могут быть заменены.')"
     ui_text 'Continue? [y/N] ' 'Продолжить? [y/N] '
     IFS= read -r answer || exit 0
     [[ $answer == [yY] ]] || exit 0
-    check_os
+    ui_section "$(ui_text '[1/5] COMPATIBILITY CHECK' '[1/5] ПРОВЕРКА СОВМЕСТИМОСТИ')"
+    (check_os) || { status=$?; ui_text '  Result: FAILED\n' '  Результат: FAILED\n' >&2; exit "$status"; }
     recover_domain_operation || exit $?
-    pin_project_source || exit $?
+    msg_ok "$(ui_text '  [✓] Operating system and installation format are supported' '  [✓] ОС и формат установки поддерживаются')"
+    ui_section "$(ui_text '[2/5] PREPARING THE UPDATE' '[2/5] ПОДГОТОВКА ОБНОВЛЕНИЯ')"
+    pin_project_source update 3>&2 2>/dev/null || exit $?
     umask 077
-    [[ ! -L $base ]] || exit 1
-    mkdir -p -m 0700 "$base" || exit 1
-    [[ $(stat -c '%u:%g:%a' "$base") == 0:0:700 ]] || exit 1
-    stage=$(mktemp -d "$base/source.XXXXXXXX") || exit 1
-    curl -q -fsSL --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 \
-        "https://codeload.github.com/xPROMSx/3x-ui-auto-nginx/tar.gz/$PROJECT_SOURCE_SHA" -o "$stage/source.tar.gz" &&
-        python3 -I - "$stage" "$PROJECT_SOURCE_SHA" <<'PYBUNDLE' || { rm -rf -- "$stage"; exit 1; }
+    if [[ -L $base ]] || ! mkdir -p -m 0700 "$base" 2>/dev/null ||
+       [[ $(stat -c '%u:%g:%a' "$base" 2>/dev/null) != 0:0:700 ]] ||
+       ! stage=$(mktemp -d "$base/source.XXXXXXXX" 2>/dev/null); then
+        update_fail "$(ui_text 'Cannot prepare a private source directory under %s.' 'Не удалось создать закрытый каталог для исходников в %s.' "$base")"
+        exit 1
+    fi
+    curl -q -fsL --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 120 \
+        "https://codeload.github.com/xPROMSx/3x-ui-auto-nginx/tar.gz/$PROJECT_SOURCE_SHA" -o "$stage/source.tar.gz" || {
+        status=$?
+        rm -rf -- "$stage"
+        update_fail "$(ui_text 'Cannot download the project archive for SHA %s (curl exit %d).' 'Не удалось загрузить архив проекта для SHA %s (код curl %d).' "$PROJECT_SOURCE_SHA" "$status")"
+        exit 1
+    }
+    if ! python3 -I - "$stage" "$PROJECT_SOURCE_SHA" 2>/dev/null <<'PYBUNDLE'
 import pathlib, shutil, sys, tarfile
 dest = pathlib.Path(sys.argv[1])
 prefix = '3x-ui-auto-nginx-'+sys.argv[2]+'/'
@@ -5046,15 +5078,26 @@ with tarfile.open(dest/'source.tar.gz','r:gz') as tar:
         with path.open('xb') as out:
             shutil.copyfileobj(tar.extractfile(item),out)
 PYBUNDLE
+    then
+        rm -rf -- "$stage"
+        update_fail "$(ui_text 'Cannot unpack the project archive for SHA %s.' 'Не удалось распаковать архив проекта для SHA %s.' "$PROJECT_SOURCE_SHA")"
+        exit 1
+    fi
     rm -f "$stage/source.tar.gz"
-    local status=0 variable
-    local -a environment=()
+    local variable launch_error
+    local -a environment=("--setenv=UI_LANG=$UI_LANG")
     for variable in https_proxy HTTPS_PROXY http_proxy HTTP_PROXY no_proxy NO_PROXY CURL_CA_BUNDLE; do
         [[ ! -v $variable ]] || environment+=("--setenv=$variable")
     done
-    systemd-run "${environment[@]}" --quiet --wait --pipe --collect --unit=xui-in-place-update \
-        --property=OnFailure=xui-update-recover.service --property=UMask=0077 \
-        /bin/bash "$stage/assets/update/driver.sh" worker "$PROJECT_SOURCE_SHA" || status=$?
+    # Keep worker output live. Native systemd errors may contain private details.
+    {
+        launch_error=$(systemd-run "${environment[@]}" --quiet --wait --pipe --collect --unit=xui-in-place-update \
+            --property=OnFailure=xui-update-recover.service --property=UMask=0077 \
+            /bin/bash "$stage/assets/update/driver.sh" worker "$PROJECT_SOURCE_SHA" 2>&1 1>&4) || status=$?
+    } 4>&1
+    if (( status >= 128 )) || { (( status )) && [[ -n "$launch_error" ]]; }; then
+        update_fail "$(ui_text 'systemd-run for xui-in-place-update.service exited %d.' 'systemd-run для xui-in-place-update.service завершилась с кодом %d.' "$status")"
+    fi
     # A disconnected terminal must never remove the worker's recovery code.
     if [[ ! -e "$base/change-domains/journal.json" && ! -e /etc/systemd/system/xui-update-files.service ]] &&
        ! systemctl is-active --quiet xui-in-place-update.service; then rm -rf -- "$stage"; fi
@@ -5116,7 +5159,7 @@ manager_menu() {
                 if (( status == 0 )) && [[ $completion == completed ]]; then return 0; fi ;;
             5) cascade_menu; status=$?; reported=1 ;;
             6) server_details_action; continue ;;
-            7) update_action; status=$? ;;
+            7) update_action; status=$?; (( status == 0 )) || return "$status" ;;
             *) ui_text 'Invalid selection.\n' 'Неверный выбор.\n'; continue ;;
         esac
         if (( status )); then

@@ -7,11 +7,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import ExitStack, closing
+from contextlib import ExitStack, closing, redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
 SOURCE = Path(__file__).resolve().parents[1] / 'assets/update/managed.py'
+INSTALLER = SOURCE.parents[2] / 'x-ui-latest.sh'
 spec = importlib.util.spec_from_file_location('project_update', SOURCE)
 update = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(update)
@@ -40,6 +42,162 @@ class InPlaceUpdate(unittest.TestCase):
                 "INSERT INTO clients VALUES(1,'first');"
                 "INSERT INTO client_inbounds VALUES(1,7,'original flow');"
             )
+
+    def test_ui_noop_reports_plan_and_health_without_backup_or_cutover(self):
+        for lang, heading, result in (
+            ('en', 'UPDATE NOT REQUIRED', 'Result: UP TO DATE'),
+            ('ru', 'ОБНОВЛЕНИЕ НЕ ТРЕБУЕТСЯ', 'Результат: UP TO DATE'),
+        ):
+            with self.subTest(lang=lang):
+                output = StringIO()
+                state = {'source_ref': 'same'}
+
+                def verify(actual):
+                    self.assertIs(actual, state)
+                    self.assertIn('[5/5]', output.getvalue())
+                    self.assertNotIn(result, output.getvalue())
+
+                with (
+                    patch.dict('os.environ', {'UI_LANG': lang}),
+                    patch.object(update, 'WORK', self.root / 'work'),
+                    patch.object(update, 'metadata', return_value=state),
+                    patch.object(update, 'versions', return_value=(False, None)),
+                    patch.object(update, 'make_plan', return_value=([], [], [], {})),
+                    patch.object(update, 'verified_health', side_effect=verify) as health,
+                    patch.object(update, 'backup') as backup,
+                    patch.object(update, 'service') as service,
+                    redirect_stdout(output),
+                ):
+                    update.apply_update('same')
+                health.assert_called_once()
+                backup.assert_not_called()
+                service.assert_not_called()
+                rendered = output.getvalue()
+                self.assertIn(heading, rendered)
+                self.assertIn(result, rendered)
+                for omitted in ('[3/5]', '[4/5]', 'SUCCESS', '\x1b['):
+                    self.assertNotIn(omitted, rendered)
+
+    def test_ui_success_reports_only_after_commit_and_includes_backup(self):
+        output = StringIO()
+        archive = '/var/backups/x-ui/update-fixture.tar.gz'
+        journal = dict(target={'source_ref': 'old'}, sha='new', backup=archive, active={})
+
+        def verify(*args):
+            self.assertIn('[5/5] FINAL VERIFICATION', output.getvalue())
+            self.assertNotIn('SUCCESS', output.getvalue())
+
+        def clear(j):
+            self.assertEqual(j['phase'], 'committed')
+            self.assertNotIn('SUCCESS', output.getvalue())
+
+        with (
+            patch.dict('os.environ', {'UI_LANG': 'en'}),
+            patch.object(update, 'restore_services'),
+            patch.object(update, 'verified_health', side_effect=verify),
+            patch.object(update, 'clear', side_effect=clear) as cleanup,
+            redirect_stdout(output),
+        ):
+            update.commit(journal)
+        cleanup.assert_called_once_with(journal)
+        self.assertEqual(json.loads(update.MANIFEST.read_text())['source_ref'], 'new')
+        rendered = output.getvalue()
+        self.assertIn('UPDATE COMPLETE', rendered)
+        self.assertIn(archive, rendered)
+        self.assertIn('Result: SUCCESS', rendered)
+
+    def test_ui_worker_refusal_is_localized_and_keeps_nonzero_status(self):
+        for lang, result in (({}, 'Result: FAILED'), ({'UI_LANG': 'ru'}, 'Результат: FAILED')):
+            with self.subTest(lang=lang):
+                worker = subprocess.run(
+                    [sys.executable, '-I', SOURCE, 'worker', 'invalid'],
+                    env={**lang, 'TERM': 'dumb', 'NO_COLOR': ''},
+                    capture_output=True, text=True,
+                )
+                self.assertNotEqual(worker.returncode, 0)
+                output = worker.stdout + worker.stderr
+                self.assertIn(result, output)
+                self.assertIn('SHA', output)
+                for omitted in ('ROLLBACK', 'SUCCESS', 'Traceback', '\x1b['):
+                    self.assertNotIn(omitted, output)
+
+    def test_ui_manager_prints_progress_before_pinning_source(self):
+        manifest = self.root / 'compat.json'
+        manifest.write_text(json.dumps(dict(format=1, layout='nginx-stream-v1', update_contract=1)))
+        # Relocate only the root/manifest boundary. Stop before using any live path.
+        action = INSTALLER.read_text().split('\nupdate_action() (\n', 1)[1].split('\n)\n', 1)[0]
+        action = action.replace('(( EUID == 0 ))', ':', 1)
+        action = action.replace('manifest=/etc/x-ui/auto-nginx-managed.json', 'manifest="$2"', 1)
+        shell = '''
+source "$1"
+UI_LANG=ru
+check_os() { echo checking-os; }
+recover_domain_operation() { :; }
+curl() { echo fetching-source >&3; return 22; }
+PROJECT_REF=main
+update_action() (
+''' + action + '''
+)
+update_action "$@"
+'''
+        result = subprocess.run(
+            ['bash', '-c', shell, 'bash', INSTALLER, manifest], input='y\n', text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False, timeout=5,
+        )
+        self.assertEqual(result.returncode, 69)
+        steps = ('[1/5] ПРОВЕРКА СОВМЕСТИМОСТИ', 'checking-os', 'ОС и формат установки поддерживаются',
+                 '[2/5] ПОДГОТОВКА ОБНОВЛЕНИЯ', 'fetching-source', 'Результат: FAILED')
+        positions = [result.stdout.index(step) for step in steps]
+        self.assertEqual(positions, sorted(positions))
+        self.assertEqual(result.stdout.count('FAILED'), 1)
+        self.assertNotIn('[3/5]', result.stdout)
+
+    def test_ui_failed_cutover_reports_actual_recovery_and_redacts_errors(self):
+        for retained in (False, True):
+            with self.subTest(retained=retained):
+                output = StringIO()
+
+                def fail(_):
+                    update.save({'operation': 'update', 'old': {}, 'active': {}}, 'switching')
+                    raise RuntimeError('private update data')
+
+                def rollback(j):
+                    if retained:
+                        update.save(j, 'target_retained')
+                        raise update.problem(
+                            RuntimeError, 'Target DB and WAL retained', 'Целевая база и WAL сохранены',
+                        )
+                    update.save(j, 'old_ready')
+
+                with (
+                    patch.dict('os.environ', {'UI_LANG': 'ru'}),
+                    patch.object(sys, 'argv', ['managed.py', 'worker', 'a' * 40]),
+                    patch.object(update.os, 'umask'),
+                    patch.object(update, 'apply_update', side_effect=fail),
+                    patch.object(update, 'rollback', side_effect=rollback),
+                    patch.object(update, 'run'),
+                    patch.object(update, 'restore_services'),
+                    patch.object(update, 'verified_health') as health,
+                    patch.object(update, 'clear', side_effect=lambda j: update.JOURNAL.unlink()),
+                    patch.object(update, 'SYSTEM', self.root),
+                    redirect_stdout(output),
+                ):
+                    with self.assertRaises(RuntimeError):
+                        update.main()
+                rendered = output.getvalue()
+                self.assertNotIn('private update data', rendered)
+                self.assertNotIn('SUCCESS', rendered)
+                self.assertIn('Результат: FAILED', rendered)
+                if retained:
+                    health.assert_not_called()
+                    self.assertIn('Целевая база и WAL сохранены', rendered)
+                    self.assertIn('Результат: ROLLBACK UNVERIFIED', rendered)
+                    self.assertNotIn('ROLLBACK VERIFIED', rendered)
+                    self.assertEqual(update.record()['phase'], 'target_retained')
+                else:
+                    health.assert_called_once_with({}, False)
+                    self.assertIn('Результат: ROLLBACK VERIFIED', rendered)
+                    self.assertNotIn('ROLLBACK UNVERIFIED', rendered)
 
     def test_killed_wal_writer_requires_checkpoint_before_fingerprint(self):
         script = """import os, sqlite3, sys

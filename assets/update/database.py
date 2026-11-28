@@ -10,6 +10,8 @@ import sqlite3
 from contextlib import closing, contextmanager
 from pathlib import Path
 
+from update_ui import problem
+
 
 def digest(path):
     with path.open('rb') as f:
@@ -48,7 +50,13 @@ def assert_no_holders(path):
                 except FileNotFoundError:
                     continue
                 if (st.st_dev, st.st_ino) in files:
-                    raise RuntimeError(f'Process {proc.name} still has {path.name} open')
+                    raise problem(
+                        RuntimeError,
+                        'Process {pid} still has {name} open',
+                        'Процесс {pid} всё ещё держит открытым файл {name}',
+                        pid=proc.name,
+                        name=path.name,
+                    )
         except (FileNotFoundError, ProcessLookupError):
             continue
 
@@ -69,9 +77,20 @@ def stopped_database(path, confirm_stopped, holders=assert_no_holders):
         expected = (0, 0, 0) if mode == 'wal' else (0, -1, -1)
         wal = Path(str(path) + '-wal')
         if result != expected or (wal.exists() and wal.stat().st_size):
-            raise RuntimeError(f'Uncheckpointed WAL for {path.name}: {result}')
+            raise problem(
+                RuntimeError,
+                'Uncheckpointed WAL for {name}: {result}',
+                'Контрольная точка WAL для {name} не завершена: {result}',
+                name=path.name,
+                result=result,
+            )
         if db.execute('PRAGMA quick_check').fetchall() != [('ok',)]:
-            raise RuntimeError(f'SQLite quick_check failed for {path.name}')
+            raise problem(
+                RuntimeError,
+                'SQLite quick_check failed for {name}',
+                'Проверка SQLite quick_check для {name} не пройдена',
+                name=path.name,
+            )
         confirm_stopped()
         holders(path)
         yield db
@@ -110,7 +129,13 @@ def read_roles(db, state):
     for role, iid in state['inbound_roles'].items():
         row = db.execute('SELECT * FROM inbounds WHERE id=?', (iid,)).fetchone()
         if row is None or row['node_id'] not in (None, 0):
-            raise ValueError(f'Managed local inbound {role} ({iid}) is missing')
+            raise problem(
+                ValueError,
+                'Managed local inbound {role} ({iid}) is missing',
+                'Управляемое локальное подключение {role} ({iid}) отсутствует',
+                role=role,
+                iid=iid,
+            )
         rows[role] = dict(row)
         for key in ('settings', 'stream_settings', 'sniffing'):
             rows[role][key] = json.loads(row[key] or '{}')
@@ -118,7 +143,14 @@ def read_roles(db, state):
             continue
         hid = state['xhttp_cdn']['host']['id'] if role == 'xhttp_cdn' else state['host_roles'][role]
         if not db.execute('SELECT 1 FROM hosts WHERE id=? AND inbound_id=?', (hid, iid)).fetchone():
-            raise ValueError(f'Managed Host {hid} no longer belongs to {role} ({iid})')
+            raise problem(
+                ValueError,
+                'Managed Host {hid} no longer belongs to {role} ({iid})',
+                'Управляемый Host {hid} больше не принадлежит {role} ({iid})',
+                hid=hid,
+                role=role,
+                iid=iid,
+            )
     return rows
 
 
@@ -206,11 +238,21 @@ def changes(rows, wanted):
 def apply(db, edits):
     for iid, column, old, new in edits:
         if column not in ('settings', 'stream_settings', 'sniffing', 'listen', 'port', 'protocol'):
-            raise ValueError('Unknown managed inbound column')
+            raise problem(
+                ValueError,
+                'Unknown managed inbound column',
+                'Неизвестный столбец управляемого входящего подключения',
+            )
         current = db.execute(f'SELECT {column} FROM inbounds WHERE id=?', (iid,)).fetchone()
         encoded = isinstance(new, dict)
         if not current or (json.loads(current[0] or '{}') if encoded else current[0]) != old:
-            raise ValueError(f'Managed inbound {iid} changed in {column}')
+            raise problem(
+                ValueError,
+                'Managed inbound {iid} changed in {column}',
+                'Столбец {column} управляемого входящего подключения {iid} изменился',
+                iid=iid,
+                column=column,
+            )
         db.execute(f'UPDATE inbounds SET {column}=? WHERE id=?', (json.dumps(new) if encoded else new, iid))
 
 

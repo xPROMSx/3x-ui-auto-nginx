@@ -7,11 +7,21 @@ set -eo pipefail
 src=$(cd -- "$(dirname -- "$0")/../.." && pwd)
 action=$1
 shift
+update_lang=${UI_LANG:-en}
 source "$src/x-ui-latest.sh"
 case "$action" in
     worker|recover|boot)
-        if [[ $action == boot ]] && /usr/bin/python3 -I "$src/assets/update/managed.py" boot-ready; then exit 0; fi
-        acquire_stack_lock || exit $?
+        export UI_LANG=$update_lang
+        if [[ $action == boot ]] && /usr/bin/python3 -I "$src/assets/update/managed.py" boot-ready >/dev/null; then exit 0; fi
+        acquire_stack_lock 2>/dev/null || {
+            status=$?
+            if (( status == 75 )); then
+                ui_text '  Result: FAILED — another stack or Backup operation is running (exit %d).\n' '  Результат: FAILED — выполняется другая операция со стеком или резервной копией (код %d).\n' "$status"
+            else
+                ui_text '  Result: FAILED — cannot acquire /run/3x-ui-auto-nginx/operation.lock (exit %d).\n' '  Результат: FAILED — не удалось получить блокировку /run/3x-ui-auto-nginx/operation.lock (код %d).\n' "$status"
+            fi
+            exit "$status"
+        }
         exec /usr/bin/python3 -I "$src/assets/update/managed.py" "$action" "$@"
         ;;
     backup)
