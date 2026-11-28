@@ -886,9 +886,13 @@ def manager_backup():
             'AGH_upstreams_and_nonempty_rewrite_preserved':True}
 
 
-def manager_tty(answers, log, timeout):
+def manager_tty(answers, log, timeout, *, term='dumb', color=False):
     import pty, select
-    env = {**os.environ, **json.loads((ROOT/'environment.json').read_text()), 'TERM':'dumb', 'NO_COLOR':'1'}
+    env = {**os.environ, **json.loads((ROOT/'environment.json').read_text()), 'TERM': term}
+    if color:
+        env.pop('NO_COLOR', None)
+    else:
+        env['NO_COLOR'] = '1'
     master, slave = pty.openpty()
     output = bytearray()
     process = subprocess.Popen(['bash', str(ROOT/'x-ui-latest.sh')], stdin=slave, stdout=slave, stderr=slave, env=env)

@@ -584,16 +584,31 @@ def project_update():
     stages = set(WORK.parent.glob('source.*'))
     backups = Path('/var/backups/x-ui')
     existing = set(backups.glob('*.tar.gz'))
-    output = checks.manager_tty(b'2\n7\ny\n0\n', ROOT / 'update.private.log', 600).decode()
-    steps = [
+    rendered = checks.manager_tty(
+        b'2\n7\ny\n0\n', ROOT / 'update.private.log', 600, term='xterm-256color', color=True,
+    ).decode()
+    headings = (
         '[1/5] ПРОВЕРКА СОВМЕСТИМОСТИ',
         '[2/5] ПОДГОТОВКА ОБНОВЛЕНИЯ',
-        'Подготовка обновления 3x-ui и Xray',
         '[3/5] СОЗДАНИЕ РЕЗЕРВНОЙ КОПИИ',
         '[4/5] ПРИМЕНЕНИЕ ОБНОВЛЕНИЯ',
-        'Обновление 3x-ui и Xray',
         '[5/5] ФИНАЛЬНАЯ ПРОВЕРКА',
         'ОБНОВЛЕНИЕ ЗАВЕРШЕНО',
+    )
+    for heading in headings:
+        assert f'\x1b[1;36m  {heading}\x1b[0m' in rendered
+    checks_rendered = [line for line in rendered.splitlines() if '[✓]' in line]
+    assert checks_rendered and all(
+        line.startswith('\x1b[1;32m  [✓]') and line.endswith('\x1b[0m') for line in checks_rendered
+    )
+    assert '\x1b[38;5;208m  Может потребоваться обновить подписки или клиентские профили.\x1b[0m' in rendered
+    output = re.sub(r'\x1b\[[0-9;]*m', '', rendered)
+    steps = [
+        *headings[:2],
+        'Подготовка обновления 3x-ui и Xray',
+        *headings[2:4],
+        'Обновление 3x-ui и Xray',
+        *headings[4:],
         'Результат: SUCCESS',
     ]
     positions = [output.index(step) for step in steps]
@@ -640,7 +655,7 @@ def project_update():
 
     previous = starts()
     existing = set(backups.glob('*.tar.gz'))
-    output = checks.manager_tty(b'1\n7\ny\n0\n', ROOT / 'repeat.private.log', 300)
+    output = checks.manager_tty(b'1\n7\ny\n0\n', ROOT / 'repeat.private.log', 300, term='xterm-256color')
     assert b'UPDATE NOT REQUIRED' in output and b'Result: UP TO DATE' in output
     assert b'[5/5] FINAL VERIFICATION' in output
     for absent in (b'[3/5]', b'[4/5]', b'Updating 3x-ui and Xray', b'\x1b['):

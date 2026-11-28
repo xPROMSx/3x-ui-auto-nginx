@@ -2,6 +2,8 @@
 
 import importlib.util
 import json
+import os
+import pty
 import sqlite3
 import subprocess
 import sys
@@ -92,7 +94,8 @@ class InPlaceUpdate(unittest.TestCase):
             self.assertNotIn('SUCCESS', output.getvalue())
 
         with (
-            patch.dict('os.environ', {'UI_LANG': 'en'}),
+            patch.dict('os.environ', {'UI_LANG': 'en', 'XUI_UPDATE_COLOR': '1'}),
+            patch.object(output, 'isatty', return_value=True),
             patch.object(update, 'restore_services'),
             patch.object(update, 'verified_health', side_effect=verify),
             patch.object(update, 'clear', side_effect=clear) as cleanup,
@@ -105,13 +108,55 @@ class InPlaceUpdate(unittest.TestCase):
         self.assertIn('UPDATE COMPLETE', rendered)
         self.assertIn(archive, rendered)
         self.assertIn('Result: SUCCESS', rendered)
+        self.assertIn('\x1b[1;36m  [5/5] FINAL VERIFICATION\x1b[0m', rendered)
+        self.assertIn('\x1b[1;36m  UPDATE COMPLETE\x1b[0m', rendered)
+        self.assertIn('\x1b[1;32m  [✓] Backup created and verified\x1b[0m', rendered)
+        self.assertIn('\x1b[38;5;208m  You may need to refresh subscriptions or client profiles.\x1b[0m', rendered)
+
+    def test_ui_up_to_date_uses_installation_palette_only_with_terminal_permission(self):
+        for allowed, tty in ((True, True), (True, False), (False, True), (False, False)):
+            with self.subTest(allowed=allowed, tty=tty):
+                output = StringIO()
+                with (
+                    patch.dict('os.environ', {'UI_LANG': 'en', 'XUI_UPDATE_COLOR': str(int(allowed))}),
+                    patch.object(output, 'isatty', return_value=tty),
+                    redirect_stdout(output),
+                ):
+                    update.ui.up_to_date()
+                rendered = output.getvalue()
+                if allowed and tty:
+                    self.assertIn('\x1b[1;36m  UPDATE NOT REQUIRED\x1b[0m', rendered)
+                    self.assertIn('\x1b[1;32m  [✓] The project is up to date\x1b[0m', rendered)
+                else:
+                    self.assertNotIn('\x1b[', rendered)
+
+    def test_ui_manager_allows_color_only_on_supported_terminal(self):
+        master, terminal = pty.openpty()
+        try:
+            for tty, settings, allowed in (
+                (True, {'TERM': 'xterm-256color'}, True),
+                (True, {'TERM': 'dumb'}, False),
+                (True, {}, False),
+                (True, {'TERM': 'xterm-256color', 'NO_COLOR': ''}, False),
+                (False, {'TERM': 'xterm-256color'}, False),
+            ):
+                with self.subTest(tty=tty, settings=settings):
+                    result = subprocess.run(
+                        ['bash', '-c', 'source "$1"; ui_color_enabled', 'bash', INSTALLER],
+                        env=settings, stdout=terminal if tty else subprocess.PIPE,
+                        check=False, timeout=5,
+                    )
+                    self.assertEqual(result.returncode, 0 if allowed else 1)
+        finally:
+            os.close(terminal)
+            os.close(master)
 
     def test_ui_worker_refusal_is_localized_and_keeps_nonzero_status(self):
         for lang, result in (({}, 'Result: FAILED'), ({'UI_LANG': 'ru'}, 'Результат: FAILED')):
             with self.subTest(lang=lang):
                 worker = subprocess.run(
                     [sys.executable, '-I', SOURCE, 'worker', 'invalid'],
-                    env={**lang, 'TERM': 'dumb', 'NO_COLOR': ''},
+                    env={**lang, 'TERM': 'xterm', 'XUI_UPDATE_COLOR': '1'},
                     capture_output=True, text=True,
                 )
                 self.assertNotEqual(worker.returncode, 0)
@@ -170,7 +215,8 @@ update_action "$@"
                     update.save(j, 'old_ready')
 
                 with (
-                    patch.dict('os.environ', {'UI_LANG': 'ru'}),
+                    patch.dict('os.environ', {'UI_LANG': 'ru', 'XUI_UPDATE_COLOR': '1'}),
+                    patch.object(output, 'isatty', return_value=True),
                     patch.object(sys, 'argv', ['managed.py', 'worker', 'a' * 40]),
                     patch.object(update.os, 'umask'),
                     patch.object(update, 'apply_update', side_effect=fail),
@@ -188,10 +234,12 @@ update_action "$@"
                 self.assertNotIn('private update data', rendered)
                 self.assertNotIn('SUCCESS', rendered)
                 self.assertIn('Результат: FAILED', rendered)
+                self.assertIn('\x1b[1;31m  Результат: FAILED\x1b[0m', rendered)
                 if retained:
                     health.assert_not_called()
                     self.assertIn('Целевая база и WAL сохранены', rendered)
                     self.assertIn('Результат: ROLLBACK UNVERIFIED', rendered)
+                    self.assertIn('\x1b[38;5;208m  Результат: ROLLBACK UNVERIFIED\x1b[0m', rendered)
                     self.assertNotIn('ROLLBACK VERIFIED', rendered)
                     self.assertEqual(update.record()['phase'], 'target_retained')
                 else:

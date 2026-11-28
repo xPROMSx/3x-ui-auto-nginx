@@ -1,38 +1,54 @@
 # 3X-UI AUTO NGINX — Copyright (C) 2026 xPROMSx contributors
 # SPDX-License-Identifier: GPL-3.0-only
 # Additional attribution terms: see docs/NOTICE.md
-"""Plain, flushed output for the Update worker and systemd journal."""
+"""Flushed Update output using the Installation palette on the terminal."""
 
 import os
 import subprocess
+import sys
 import traceback
 from pathlib import Path
+
+INFO = '1;36'
+OK = '1;32'
+ERROR = '1;31'
+WARNING = '38;5;208'
 
 
 def text(en, ru):
     return ru if os.environ.get('UI_LANG') == 'ru' else en
 
 
-def say(en, ru):
-    print(text(en, ru), flush=True)
+def paint(message, color):
+    # systemd-run passes the manager's decision and forwards its stdout.
+    # A journal stream or redirected output must stay plain.
+    if color and os.environ.get('XUI_UPDATE_COLOR') == '1' and sys.stdout.isatty():
+        return f'\x1b[{color}m{message}\x1b[0m'
+    return message
+
+
+def say(en, ru, color=None):
+    print(paint(text(en, ru), color), flush=True)
 
 
 def title(en, ru):
     frame = '=' * 60
-    print(f'\n{frame}\n  {text(en, ru)}\n{frame}\n', flush=True)
+    heading = paint(f'  {text(en, ru)}', INFO)
+    print(f'\n{frame}\n{heading}\n{frame}\n', flush=True)
 
 
 def checked(en, ru):
-    say(f'  [✓] {en}', f'  [✓] {ru}')
+    say(f'  [✓] {en}', f'  [✓] {ru}', OK)
 
 
 def stage(number, en, ru):
     rule = '-' * 60
-    print(f'\n  [{number}/5] {text(en, ru)}\n{rule}', flush=True)
+    heading = paint(f'  [{number}/5] {text(en, ru)}', INFO)
+    print(f'\n{heading}\n{rule}', flush=True)
 
 
-def result(status):
-    say(f'  Result: {status}', f'  Результат: {status}')
+def result(status, color=None):
+    say(f'  Result: {status}', f'  Результат: {status}', color)
 
 
 def final_verification():
@@ -50,8 +66,9 @@ def success(archive):
     checked('Clients and subscriptions preserved', 'Клиенты и подписки сохранены')
     checked('Backup created and verified', 'Резервная копия создана и проверена')
     say(f'\n  Backup:\n  {archive}', f'\n  Резервная копия:\n  {archive}')
-    say('\n  You may need to refresh subscriptions or client profiles.',
-        '\n  Может потребоваться обновить подписки или клиентские профили.')
+    print()
+    say('  You may need to refresh subscriptions or client profiles.',
+        '  Может потребоваться обновить подписки или клиентские профили.', WARNING)
     result('SUCCESS')
 
 
@@ -87,8 +104,8 @@ def diagnostics(error):
 
 def failed(error):
     details = text(*diagnostics(error))
-    say(f'  Update failed: {details}', f'  Не удалось выполнить обновление: {details}')
-    result('FAILED')
+    say(f'  Update failed: {details}', f'  Не удалось выполнить обновление: {details}', ERROR)
+    result('FAILED', ERROR)
 
 
 def rollback_unverified(error, work, journal):
@@ -96,5 +113,5 @@ def rollback_unverified(error, work, journal):
     say(f'  Recovery could not be verified: {details}\n'
         f'  Recovery journal retained at {journal}. Inspect it and {work} before retrying.',
         f'  Восстановление не подтверждено: {details}\n'
-        f'  Журнал восстановления сохранён в {journal}. Перед повтором проверьте его и {work}.')
-    result('ROLLBACK UNVERIFIED')
+        f'  Журнал восстановления сохранён в {journal}. Перед повтором проверьте его и {work}.', WARNING)
+    result('ROLLBACK UNVERIFIED', WARNING)
